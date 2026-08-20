@@ -66,6 +66,9 @@ pub struct DshStatus {
     pub dsh_version: Option<String>,
     pub supported_version: String,
     pub dsh_compatible: bool,
+    /// 实际版本高于 Launcher 验证过的锁定版本（仅兼容时才有意义）：
+    /// 授权插件栈在更新版下未验证，UI 据此提示风险而不阻断流程
+    pub dsh_version_above_supported: bool,
     pub plugins_installed: bool,
     pub dsh_running: bool,
     pub tailscale_installed: bool,
@@ -512,6 +515,36 @@ fn auth_plugins_installed(specs: &DshPluginSpecs) -> bool {
         .unwrap_or(false)
 }
 
+/// web profile 是否仍带授权插件条目（dependencies 或 bundles 任一命中即算）。
+/// 与 auth_plugins_installed 的区别：不关心 spec 是否指向当前内置 tarball，
+/// 用于卸载前的存在性判断与卸载后的残留校验
+fn web_profile_has_auth_plugins() -> bool {
+    let Ok(path) = web_profile_package_path() else {
+        return false;
+    };
+    let Ok(contents) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(package) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return false;
+    };
+    let has_dep = |name: &str| {
+        package
+            .get("dependencies")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|deps| deps.contains_key(name))
+    };
+    let has_bundle = |name: &str| {
+        package
+            .pointer("/dsh/profile/bundles")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(name)))
+    };
+    [CONNECTION_PLUGIN_PACKAGE, AUTH_PLUGIN_PACKAGE]
+        .iter()
+        .any(|name| has_dep(name) || has_bundle(name))
+}
+
 fn install_auth_plugins(app: &tauri::AppHandle) -> Result<DshPluginSpecs, String> {
     let specs = bundled_plugin_specs(app)?;
     if auth_plugins_installed(&specs) {
@@ -600,8 +633,16 @@ fn dsh_version() -> Option<String> {
     if v.is_empty() { None } else { Some(v) }
 }
 
+/// 宽松兼容：实际版本 >= 锁定版本即视为兼容。锁定版本是 Launcher 验证过的
+/// 最低版本（插件栈在此版本下完整跑通），更新版不再被强制回退；高于验证
+/// 版本的风险由 detect 的 dsh_version_above_supported 字段向用户如实披露。
+/// 解析失败按不兼容处理（与原行为一致的安全降级）。
 fn dsh_version_is_compatible(version: Option<&str>) -> bool {
-    version == Some(SUPPORTED_DSH_VERSION)
+    let Some(v) = version else { return false };
+    match (parse_version(v), parse_version(SUPPORTED_DSH_VERSION)) {
+        (Some(actual), Some(min)) => actual >= min,
+        _ => false,
+    }
 }
 
 /// 安装 Launcher 验证过的 dsh 版本，并在 npm 成功后再次校验实际 CLI。
@@ -1048,6 +1089,14 @@ pub async fn dsh_detect(app: tauri::AppHandle) -> Result<DshStatus, String> {
     };
     let version = dsh_version();
     let dsh_compatible = dsh_version_is_compatible(version.as_deref());
+    let dsh_version_above_supported = dsh_compatible
+        && match (
+            version.as_deref().and_then(parse_version),
+            parse_version(SUPPORTED_DSH_VERSION),
+        ) {
+            (Some(actual), Some(min)) => actual > min,
+            _ => false,
+        };
     let (plugins_installed, plugin_error) = match bundled_plugin_specs(&app) {
         Ok(specs) => (auth_plugins_installed(&specs), None),
         Err(error) => {
@@ -1070,6 +1119,7 @@ pub async fn dsh_detect(app: tauri::AppHandle) -> Result<DshStatus, String> {
         dsh_version: version,
         supported_version: SUPPORTED_DSH_VERSION.to_string(),
         dsh_compatible,
+        dsh_version_above_supported,
         plugins_installed,
         dsh_running,
         tailscale_installed: ts.is_some(),
@@ -1742,6 +1792,66 @@ pub async fn dsh_update(app: tauri::AppHandle) -> Result<String, String> {
     Ok(version)
 }
 
+/// 从 web profile 移除授权插件（`dsh plugin --profile web remove`，pnpm 透传，
+/// 同步清理 dependencies 与 bundles）；web 运行中则重启生效。幂等：未安装
+/// 直接返回。卸载后远程授权链路失效，状态链如实停在「插件未安装」；
+/// 纯本地访问不受影响（授权插件只服务远程链路）。
+#[tauri::command]
+pub async fn dsh_remove_plugins() -> Result<(), String> {
+    // 幂等：profile 里两个插件条目都不存在时直接返回（plugin remove 是
+    // pnpm 透传，remove 不存在的包虽不会报错，但会无意义地重写 lockfile）
+    if !web_profile_has_auth_plugins() {
+        return Ok(());
+    }
+    let dsh = resolve_dsh_bin()?.display().to_string();
+    match run_capture(
+        &dsh,
+        &[
+            "plugin",
+            "--profile",
+            "web",
+            "remove",
+            CONNECTION_PLUGIN_PACKAGE,
+            AUTH_PLUGIN_PACKAGE,
+        ],
+    ) {
+        Ok((_, _, true)) if !web_profile_has_auth_plugins() => {}
+        Ok((_, err, true)) => {
+            let e = trf(
+                "dsh plugin remove completed but auth plugins remain in the web profile: {error}",
+                &[("error", err)],
+            );
+            log::error!("[dsh 插件] 卸载后残留: {}", e);
+            return Err(e);
+        }
+        Ok((_, err, false)) => {
+            let e = trf(
+                "Failed to remove dsh auth plugins: {error}",
+                &[(
+                    "error",
+                    if err.is_empty() {
+                        "dsh plugin remove failed".to_string()
+                    } else {
+                        err
+                    },
+                )],
+            );
+            log::error!("[dsh 插件] 卸载失败: {}", e);
+            return Err(e);
+        }
+        Err(error) => {
+            log::error!("[dsh 插件] 执行 dsh plugin remove 失败: {}", error);
+            return Err(error);
+        }
+    }
+    if port_listening(WEB_PORT) {
+        let (login, fqdn) = runtime_auth_context();
+        let auth = resolve_auth_config()?;
+        restart_dsh_web(&login, fqdn.as_deref(), &auth)?;
+    }
+    Ok(())
+}
+
 /// 重启 dsh web，确保新 profile 和授权环境生效。
 fn restart_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) -> Result<(), String> {
     stop_supervised_services();
@@ -2369,6 +2479,7 @@ mod tests {
         plugin_profile_is_current, port_guard_js, render_desktop_entry, render_start_web,
         rpc_request, serve_command, serve_failure_solution, serve_status_targets_web, sh_quote,
         tailscale_login_from_status_json, validate_cap_domain, win_cmd_line, win_quote, AuthConfig,
+        SUPPORTED_DSH_VERSION,
     };
     use crate::i18n::set_current;
     use std::path::Path;
@@ -2599,6 +2710,23 @@ mod tests {
     #[test]
     fn guard_js_targets_loopback() {
         assert!(port_guard_js(3899).contains("net.connect(3899,'127.0.0.1')"));
+    }
+
+    #[test]
+    fn dsh_version_compatibility_is_minimum_not_exact() {
+        use super::dsh_version_is_compatible;
+        // 锁定版本（当前 rc.6）与更新版均兼容：宽松化后装了 rc.7/rc.8/
+        // 未来稳定版的用户不再被强制回退
+        assert!(dsh_version_is_compatible(Some(SUPPORTED_DSH_VERSION)));
+        assert!(dsh_version_is_compatible(Some("0.1.0-rc.7")));
+        assert!(dsh_version_is_compatible(Some("0.1.0-rc.10")));
+        assert!(dsh_version_is_compatible(Some("0.1.0")));
+        assert!(dsh_version_is_compatible(Some("1.0.0")));
+        // 低于锁定版本 / 未安装 / 解析失败 → 不兼容（安全降级与原行为一致）
+        assert!(!dsh_version_is_compatible(Some("0.1.0-rc.5")));
+        assert!(!dsh_version_is_compatible(Some("0.0.1-rc.5")));
+        assert!(!dsh_version_is_compatible(Some("not-a-version")));
+        assert!(!dsh_version_is_compatible(None));
     }
 
     #[test]

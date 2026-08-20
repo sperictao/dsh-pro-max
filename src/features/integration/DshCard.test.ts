@@ -8,6 +8,7 @@ const ready: DshStatus = {
   dshVersion: "0.1.0-rc.6",
   supportedVersion: "0.1.0-rc.6",
   dshCompatible: true,
+  dshVersionAboveSupported: false,
   pluginsInstalled: true,
   dshRunning: true,
   tailscaleInstalled: true,

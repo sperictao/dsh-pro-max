@@ -317,6 +317,29 @@ export function DshCard() {
     }
   };
 
+  // 卸载授权插件：纯本地用户可摆脱 rc 钉版插件；远程授权链路随之失效，
+  // 状态链会如实停在「插件未安装」。卸载后回到状态驱动时间轴
+  const removePlugins = async () => {
+    if (busy) return;
+    setStartBusy(true);
+    try {
+      await cmd.dshRemovePlugins();
+      toast(t("Authorization plugins removed"), "success");
+    } catch (e) {
+      toast(t("Failed to remove authorization plugins: {{error}}", { error: String(e) }), "error");
+    } finally {
+      setStartBusy(false);
+      setHasRunSetup(false);
+      try {
+        const s = await cmd.dshDetect();
+        setStatus(s);
+        setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
+      } catch (e) {
+        toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
+      }
+    }
+  };
+
   const toggleAutostart = async () => {
     if (!status) return;
     const next = !status.autostartEnabled;
@@ -351,13 +374,25 @@ export function DshCard() {
               {status.dshVersion}
             </span>
           )}
-          {status && (!status.dshCompatible || !status.pluginsInstalled) && (
+          {/* 修复只在版本不兼容时出现：回退到 Launcher 锁定栈（装回 rc 钉版 + 插件）。
+              版本够但缺插件不再强制降级 dsh，由下方状态行引导走一键启动安装插件 */}
+          {status && !status.dshCompatible && (
             <button
               className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground whitespace-nowrap transition-colors outline-none hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
               disabled={busy}
               onClick={() => void repair()}
             >
               {t("Repair dsh stack ({{version}})", { version: status.supportedVersion })}
+            </button>
+          )}
+          {/* 卸载授权插件：摆脱 rc 钉版插件的纯本地入口；远程授权链路随之失效 */}
+          {status?.pluginsInstalled && (
+            <button
+              className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+              disabled={busy}
+              onClick={() => void removePlugins()}
+            >
+              {t("Remove authorization plugins")}
             </button>
           )}
         </div>
@@ -368,6 +403,11 @@ export function DshCard() {
         {status?.error && !busy && (
           <div className="mt-1 text-xs text-destructive">
             {t("dsh integration check failed: {{error}}", { error: status.error })}
+          </div>
+        )}
+        {status?.dshVersionAboveSupported && !busy && (
+          <div className="mt-1 text-xs opacity-60">
+            {t("Newer than the verified stack ({{version}}); authorization plugins may be incompatible", { version: status.supportedVersion })}
           </div>
         )}
         {isRemote ? (

@@ -35,6 +35,7 @@ export const dshSetup = () => invokeTyped<void>("dsh_setup");
 export const dshStartWeb = () => invokeTyped<string>("dsh_start_web");
 export const dshStop = () => invokeTyped<void>("dsh_stop");
 export const dshUpdate = () => invokeTyped<string>("dsh_update");
+export const dshRemovePlugins = () => invokeTyped<void>("dsh_remove_plugins");
 export const dshSetAutostart = (enabled: boolean) => invokeTyped<void>("dsh_set_autostart", { enabled });
 
 // ============ 更新 ============

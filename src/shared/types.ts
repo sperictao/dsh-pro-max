@@ -14,6 +14,8 @@ export interface DshStatus {
   dshVersion: string | null;
   supportedVersion: string;
   dshCompatible: boolean;
+  // 实际版本高于 Launcher 验证过的锁定版本：授权插件栈在更新版下未验证，UI 提示风险不阻断
+  dshVersionAboveSupported: boolean;
   pluginsInstalled: boolean;
   dshRunning: boolean;
   tailscaleInstalled: boolean;
