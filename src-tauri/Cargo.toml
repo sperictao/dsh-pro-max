@@ -1,0 +1,36 @@
+[package]
+name = "dsh-pro-max"
+version = "0.1.0"
+description = "Desktop launcher for DeepSeek Harness with one-click Tailscale remote access"
+authors = ["dsh-pro-max"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-shell = "2"
+tauri-plugin-process = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-log = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+log = "0.4"
+sys-locale = "0.3"
+# dsh web 启动等待：unix 侧 kill(pid,0) 探活（进程已死则提前带日志报错，不干等超时）
+libc = "0.2"
+
+# dsh web Windows 侧按命令行模式匹配停进程
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
