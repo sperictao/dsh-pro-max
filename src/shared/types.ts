@@ -38,12 +38,19 @@ export interface DshStepEvent {
   solution: string | null;
 }
 
-// dsh 最新版本检测（npm registry dist-tag latest）
+// dsh dist-tag 行（latest/next 等）
+export interface DshDistTag {
+  tag: string;
+  version: string;
+  isInstalled: boolean;
+  aboveSupported: boolean;
+}
+
+// dsh 版本检测（npm registry 全部 dist-tag）
 export interface DshLatestInfo {
-  latestVersion: string | null;
+  tags: DshDistTag[];
   installedVersion: string | null;
   supportedVersion: string;
-  hasUpdate: boolean;
   error: string | null;
 }
 

@@ -38,6 +38,7 @@ export const dshStop = () => invokeTyped<void>("dsh_stop");
 export const dshUpdate = () => invokeTyped<string>("dsh_update");
 export const dshRemovePlugins = () => invokeTyped<void>("dsh_remove_plugins");
 export const dshCheckLatest = () => invokeTyped<DshLatestInfo>("dsh_check_latest");
+export const dshInstallVersion = (version: string) => invokeTyped<string>("dsh_install_version", { version });
 export const dshSetAutostart = (enabled: boolean) => invokeTyped<void>("dsh_set_autostart", { enabled });
 
 // ============ 更新 ============

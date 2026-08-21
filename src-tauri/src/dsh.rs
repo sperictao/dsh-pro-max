@@ -1852,23 +1852,35 @@ pub async fn dsh_remove_plugins() -> Result<(), String> {
     Ok(())
 }
 
-/// dsh 最新版本检测结果（设置页版本卡）
+/// 一个 dist-tag 的版本行（latest/next 等）
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DshDistTag {
+    /// dist-tag 名（latest / next / …）
+    pub tag: String,
+    /// 该 tag 当前指向的版本
+    pub version: String,
+    /// 本机已装版本即此版本
+    pub is_installed: bool,
+    /// 高于 Launcher 验证栈（授权插件未验证）
+    pub above_supported: bool,
+}
+
+/// dsh 版本检测结果（设置页版本卡）：全部 dist-tag + 本机安装版本
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DshLatestInfo {
-    /// npm registry 上的最新版本（dist-tag latest；网络/解析失败为 None）
-    pub latest_version: Option<String>,
+    /// registry 上所有 dist-tag（查询失败为空 vec）
+    pub tags: Vec<DshDistTag>,
     /// 本机安装版本（未安装为 None）
     pub installed_version: Option<String>,
     /// Launcher 验证过的最低兼容版本（插件栈锁定）
     pub supported_version: String,
-    /// 已安装且有更新可用（installed < latest）
-    pub has_update: bool,
     /// 查询失败原因（网络不通 / npm 不可用 / 输出无法解析）
     pub error: Option<String>,
 }
 
-/// 查询 npm registry 上 dsh 的最新版本（dist-tag latest）。
+/// 查询 npm registry 上 dsh 的所有 dist-tag（latest/next 各自指向的版本）。
 /// run_capture 无超时机制，npm view 走网络可能挂住，故放独立线程 + 超时回收；
 /// 线程泄漏只发生在 npm 挂死路径（下次查询新建线程，进程退出即清）
 #[tauri::command]
@@ -1876,21 +1888,11 @@ pub async fn dsh_check_latest() -> Result<DshLatestInfo, String> {
     let installed = dsh_version();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result = run_capture(&npm_bin(), &["view", "@deepseek-ai/dsh", "version"]);
+        let result = run_capture(&npm_bin(), &["view", "@deepseek-ai/dsh", "dist-tags", "--json"]);
         let _ = tx.send(result);
     });
     let queried = match rx.recv_timeout(Duration::from_secs(15)) {
-        Ok(Ok((out, _, true))) => {
-            let v = normalize_version(&out);
-            if parse_version(&v).is_some() {
-                Ok(Some(v))
-            } else {
-                Err(trf(
-                    "Cannot parse the latest dsh version from npm output: {output}",
-                    &[("output", out)],
-                ))
-            }
-        }
+        Ok(Ok((out, _, true))) => parse_dist_tags(&out),
         Ok(Ok((_, err, false))) => Err(trf(
             "npm query failed: {error}",
             &[(
@@ -1905,24 +1907,104 @@ pub async fn dsh_check_latest() -> Result<DshLatestInfo, String> {
         Ok(Err(error)) => Err(error),
         Err(_) => Err(tr("npm query timed out (15s); check your network or npm registry mirror")),
     };
-    let (latest_version, error) = match queried {
-        Ok(v) => (v, None),
+    let (tags, error) = match queried {
+        Ok(t) => (t, None),
         Err(e) => {
-            log::warn!("[dsh 检测] 查询 npm 最新版本失败: {}", e);
-            (None, Some(e))
+            log::warn!("[dsh 检测] 查询 npm dist-tags 失败: {}", e);
+            (Vec::new(), Some(e))
         }
     };
-    let has_update = match (&latest_version, &installed) {
-        (Some(latest), Some(cur)) => crate::version::is_newer(latest, cur),
-        _ => false,
-    };
+    let supported = parse_version(SUPPORTED_DSH_VERSION);
+    let installed_parsed = installed.as_deref().and_then(parse_version);
+    let tags = tags
+        .into_iter()
+        .map(|(tag, version)| {
+            let parsed = parse_version(&version);
+            DshDistTag {
+                tag,
+                is_installed: installed_parsed.is_some() && parsed == installed_parsed,
+                above_supported: match (&parsed, &supported) {
+                    (Some(v), Some(min)) => v > min,
+                    _ => false,
+                },
+                version,
+            }
+        })
+        .collect();
     Ok(DshLatestInfo {
-        latest_version,
+        tags,
         installed_version: installed,
         supported_version: SUPPORTED_DSH_VERSION.to_string(),
-        has_update,
         error,
     })
+}
+
+/// 解析 npm view dist-tags --json 输出：{"latest":"x","next":"y"} → [(tag, version)]。
+/// 过滤掉非 semver 值（防御 registry 返回杂质）；保持 JSON 源顺序
+fn parse_dist_tags(out: &str) -> Result<Vec<(String, String)>, String> {
+    let obj: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(out).map_err(|_| {
+            trf(
+                "Cannot parse npm dist-tags output: {output}",
+                &[("output", out.chars().take(200).collect())],
+            )
+        })?;
+    Ok(obj
+        .into_iter()
+        .filter_map(|(tag, v)| {
+            let version = v.as_str()?.to_string();
+            parse_version(&version).map(|_| (tag, version))
+        })
+        .collect())
+}
+
+/// 安装指定版本的 dsh（设置页版本卡的「安装」按钮）：参数化的安装管道，
+/// 与 install_supported_dsh 同构（npm install -g + 安装后版本校验），
+/// 装完若 web 正在运行则重启。允许装低于验证栈的版本——用户显式选择，
+/// 版本卡上的 above_supported 警示已如实披露风险。
+#[tauri::command]
+pub async fn dsh_install_version(version: String) -> Result<String, String> {
+    if parse_version(&version).is_none() {
+        return Err(trf("Invalid dsh version: {version}", &[("version", version)]));
+    }
+    let was_running = port_listening(WEB_PORT);
+    let package = format!("@deepseek-ai/dsh@{version}");
+    resolve_node_bin()?;
+    match run_capture(&npm_bin(), &["install", "-g", &package]) {
+        Ok((_, _, true)) => {}
+        Ok((_, err, false)) => {
+            let error = if err.is_empty() {
+                format!("npm install -g {package} failed")
+            } else {
+                err
+            };
+            log::error!("[dsh 安装] npm install -g {} 失败: {}", package, error);
+            return Err(trf("Install failed: {error}", &[("error", error)]));
+        }
+        Err(error) => {
+            log::error!("[dsh 安装] 执行 npm install 失败: {}", error);
+            return Err(error);
+        }
+    }
+    let actual = dsh_version().ok_or_else(|| {
+        let err = tr("dsh installed but cannot be located in PATH");
+        log::error!("[dsh 安装] 安装后无法在 PATH 定位 dsh");
+        err
+    })?;
+    if parse_version(&actual) != parse_version(&version) {
+        let err = trf(
+            "Installed dsh version {actual}, expected {expected}",
+            &[("actual", actual), ("expected", version.clone())],
+        );
+        log::error!("[dsh 安装] 版本校验失败: {}", err);
+        return Err(err);
+    }
+    if was_running {
+        let (login, fqdn) = runtime_auth_context();
+        let auth = resolve_auth_config()?;
+        restart_dsh_web(&login, fqdn.as_deref(), &auth)?;
+    }
+    Ok(version)
 }
 
 /// 重启 dsh web，确保新 profile 和授权环境生效。
@@ -2783,6 +2865,22 @@ mod tests {
     #[test]
     fn guard_js_targets_loopback() {
         assert!(port_guard_js(3899).contains("net.connect(3899,'127.0.0.1')"));
+    }
+
+    #[test]
+    fn parse_dist_tags_filters_non_semver_and_keeps_order() {
+        use super::parse_dist_tags;
+        let tags = parse_dist_tags(r#"{"latest":"0.1.0-rc.7","next":"0.1.0-rc.8","junk":"not-a-version"}"#).unwrap();
+        assert_eq!(
+            tags,
+            vec![
+                ("latest".to_string(), "0.1.0-rc.7".to_string()),
+                ("next".to_string(), "0.1.0-rc.8".to_string()),
+            ]
+        );
+        // 非 JSON / 空对象
+        assert!(parse_dist_tags("not json").is_err());
+        assert_eq!(parse_dist_tags("{}").unwrap(), Vec::<(String, String)>::new());
     }
 
     #[test]

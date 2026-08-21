@@ -294,6 +294,7 @@ pub fn run() {
             dsh::dsh_update,
             dsh::dsh_remove_plugins,
             dsh::dsh_check_latest,
+            dsh::dsh_install_version,
             updater::get_updater_config_health,
             updater::get_updater_help_paths,
             updater::check_update,

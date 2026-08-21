@@ -1,12 +1,13 @@
-// dsh 分区：版本检测卡（本机安装 / npm 最新 / Launcher 验证栈）+ 开机自启开关。
-// 版本卡挂载自动查一次（npm view 15s 超时，失败原因持久展示），不阻断其余操作；
-// 自启开关从集成卡片迁入——自启是配置项而非流程操作，归设置页
+// dsh 分区：版本卡（全部 dist-tag 一览 + 逐版本安装）+ 开机自启开关。
+// 版本卡挂载自动查一次（npm view dist-tags 15s 超时，失败原因持久展示）；
+// 安装按钮允许切换到任意 tag 指向的版本——高于验证栈的行有警示，
+// 风险如实披露但不阻断用户选择（授权插件只影响远程链路）
 
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
-import { BTN, TOGGLE } from "@/shared/lib/ui";
+import { BTN, BTN_SM, TOGGLE } from "@/shared/lib/ui";
 import type { DshLatestInfo } from "@/shared/types";
 
 export function DshSection() {
@@ -14,6 +15,8 @@ export function DshSection() {
   const toast = useAppStore((s) => s.toast);
   const [info, setInfo] = useState<DshLatestInfo | null>(null);
   const [checkBusy, setCheckBusy] = useState(false);
+  // 正在安装的版本（防并发；null = 空闲）
+  const [installing, setInstalling] = useState<string | null>(null);
   // 自启开关的本地状态：null = 尚未拿到检测结果（开关禁用）
   const [autostart, setAutostart] = useState<boolean | null>(null);
   const [autostartBusy, setAutostartBusy] = useState(false);
@@ -23,13 +26,7 @@ export function DshSection() {
     try {
       setInfo(await cmd.dshCheckLatest());
     } catch (e) {
-      setInfo({
-        latestVersion: null,
-        installedVersion: null,
-        supportedVersion: "",
-        hasUpdate: false,
-        error: String(e),
-      });
+      setInfo({ tags: [], installedVersion: null, supportedVersion: "", error: String(e) });
     } finally {
       setCheckBusy(false);
     }
@@ -42,6 +39,21 @@ export function DshSection() {
       .then((s) => setAutostart(s.autostartEnabled))
       .catch(() => setAutostart(null));
   }, [check]);
+
+  const install = async (version: string) => {
+    if (installing) return;
+    setInstalling(version);
+    try {
+      await cmd.dshInstallVersion(version);
+      toast(t("dsh updated to {{version}}", { version }), "success");
+      // 装完刷新：isInstalled 徽标与检测数据都需要更新
+      await check();
+    } catch (e) {
+      toast(t("Install failed: {{error}}", { error: String(e) }), "error");
+    } finally {
+      setInstalling(null);
+    }
+  };
 
   const toggleAutostart = async () => {
     if (autostart === null || autostartBusy) return;
@@ -58,53 +70,72 @@ export function DshSection() {
     }
   };
 
+  const busy = checkBusy || installing !== null;
+
   return (
     <section className="settings-section" id="section-dsh">
-      <h2 className="mb-4 text-base font-semibold">{t("DeepSeek Harness")}</h2>
+      <h2 className="mb-1 text-base font-semibold">{t("DeepSeek Harness")}</h2>
+      <p className="mb-4 max-w-2xl text-xs opacity-60">
+        {t("dsh is the DeepSeek Harness CLI; this app bundles a verified compatibility stack (CLI + authorization plugins) for one-click local & remote access.")}
+      </p>
 
-      {/* 版本检测卡：已安装 / npm 最新 / 验证栈三行并列——三者关系是版本困惑的根源 */}
+      {/* 版本卡：全部 dist-tag 一览，每行可安装；已安装行标记，高于验证栈的行警示 */}
       <div className="flex max-w-2xl flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
         <div className="flex items-center justify-between gap-3">
           <div className="text-sm font-medium">{t("dsh Version")}</div>
-          <button className={BTN} id="btn-check-dsh-latest" disabled={checkBusy} onClick={() => void check()}>
+          <button className={BTN} id="btn-check-dsh-latest" disabled={busy} onClick={() => void check()}>
             {checkBusy ? t("Checking...") : t("Check Latest")}
           </button>
         </div>
 
-        <div className="flex flex-col gap-1 text-sm">
-          <div className="flex items-center justify-between gap-3">
-            <span className="opacity-70">{t("Installed")}</span>
-            <span className="font-mono">{info?.installedVersion ?? t("Not installed")}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="opacity-70">{t("Latest on npm")}</span>
-            <span className="font-mono">
-              {info?.error ? "—" : (info?.latestVersion ?? (checkBusy ? t("Checking...") : "—"))}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="opacity-70">{t("Verified stack")}</span>
-            <span className="font-mono opacity-70">{info?.supportedVersion || "—"}</span>
-          </div>
+        <div className="flex items-baseline justify-between gap-3 text-sm">
+          <span className="shrink-0 opacity-70">{t("Installed")}</span>
+          <span className="font-mono">{info?.installedVersion ?? t("Not installed")}</span>
         </div>
+
+        {info && info.tags.length > 0 && (
+          <div className="flex flex-col gap-1.5 border-t border-border/50 pt-2">
+            {info.tags.map((tag) => (
+              <div className="flex items-center justify-between gap-3 text-sm" key={tag.tag}>
+                <span className="flex min-w-0 items-baseline gap-2">
+                  <span className="shrink-0 rounded border border-border px-1.5 py-px font-mono text-xs opacity-70">{tag.tag}</span>
+                  <span className="font-mono">{tag.version}</span>
+                  {tag.isInstalled && (
+                    <span className="shrink-0 text-xs text-primary">{t("installed")}</span>
+                  )}
+                  {tag.aboveSupported && !tag.isInstalled && (
+                    <span className="shrink-0 text-xs opacity-50">{t("unverified")}</span>
+                  )}
+                </span>
+                {!tag.isInstalled && (
+                  <button
+                    className={BTN_SM}
+                    disabled={busy}
+                    onClick={() => void install(tag.version)}
+                  >
+                    {installing === tag.version ? t("Installing…") : t("Install")}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-xs opacity-50">
+          {t("The verified stack is {{version}} — the dsh version this app's bundled authorization plugins are tested against. Versions marked unverified work for local access but remote authorization is untested.", { version: info?.supportedVersion || "…" })}
+        </p>
 
         {info?.error && (
           <div className="text-xs text-destructive">
             {t("Check failed: {{error}}", { error: info.error })}
           </div>
         )}
-        {info?.hasUpdate && (
-          <div className="text-xs">
-            {t("A newer dsh is available (v{{latest}}). The bundled authorization plugins are verified against the stack above; upgrade via npm if you do not rely on remote access.", { latest: info.latestVersion })}
-          </div>
-        )}
       </div>
 
       {/* 开机自启：开启时若 dsh 版本过低会自动装回验证栈并安装授权插件（Rust 侧保证） */}
-      <div className="mt-4 max-w-2xl">
-        <div className="mb-2 text-sm font-medium">{t("Boot Auto-start")}</div>
+      <div className="mt-4 flex max-w-2xl flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
+        <div className="text-sm font-medium">{t("Boot Auto-start")}</div>
         <label
-          className="flex flex-1 cursor-pointer items-center justify-between gap-4 rounded-lg border border-border p-3"
+          className="flex flex-1 cursor-pointer items-center justify-between gap-4"
           id="dsh-autostart-row"
         >
           <span className="flex flex-col gap-0.5">

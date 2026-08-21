@@ -78,12 +78,10 @@ export function AboutSection() {
 
   return (
     <section className="settings-section" id="section-about">
-      <h2 className="mb-4 text-base font-semibold">{t("About")}</h2>
-
-      <div className="flex items-start gap-4 border-b border-border py-3">
-        <span className="w-36 shrink-0 text-sm font-medium">{t("App Version")}</span>
-        <span className="font-mono text-sm" id="about-version">{appVersion}</span>
-      </div>
+      <h2 className="mb-1 text-base font-semibold">{t("About")}</h2>
+      <p className="mb-4 max-w-2xl font-mono text-xs opacity-60" id="about-version">
+        {t("App Version")} v{appVersion}
+      </p>
 
       {/* 更新状态聚合卡 */}
       <div className="mt-3 flex max-w-2xl flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
@@ -149,11 +147,14 @@ export function AboutSection() {
         )}
       </div>
 
-      <div className="mt-3 flex items-start gap-4 border-t border-border py-3">
-        <span className="w-36 shrink-0 text-sm font-medium">GitHub</span>
-        <a className="cursor-pointer text-sm text-primary underline-offset-4 hover:underline" onClick={() => void openRepo()}>
-          {t("Open in Browser")}
-        </a>
+      <div className="mt-3 flex max-w-2xl flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium">GitHub</span>
+          <a className="cursor-pointer text-sm text-primary underline-offset-4 hover:underline" onClick={() => void openRepo()}>
+            {t("Open in Browser")}
+          </a>
+        </div>
+        <p className="text-xs opacity-60">{t("Source code, issue tracker, and release history.")}</p>
       </div>
     </section>
   );
