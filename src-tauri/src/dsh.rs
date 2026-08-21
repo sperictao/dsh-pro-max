@@ -30,13 +30,15 @@ use crate::config;
 use crate::i18n::{current, tr, trf};
 use crate::version::parse_version;
 
-/// Launcher 锁定的 dsh/auth 插件兼容栈。
+/// dsh 包名与 Launcher 首次验证兼容栈时的最低版本。dsh 上游滚动后由
+/// profile 内插件的依赖声明接管（见 compose_verified_min），这里的常量
+/// 只兜底首次安装前的空 profile 状态。
+const DSH_PACKAGE: &str = "@deepseek-ai/dsh";
 const SUPPORTED_DSH_VERSION: &str = "0.1.0-rc.6";
-const SUPPORTED_DSH_PACKAGE: &str = "@deepseek-ai/dsh@0.1.0-rc.6";
 const CONNECTION_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-client-connection-authz";
 const AUTH_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-auth-tailscale";
-const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-873c465f1403.tgz";
-const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-ea7ca9fa3db4.tgz";
+const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-62ab96c0b126.tgz";
+const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-01666104af53.tgz";
 const TAILSCALE_LOGIN_ENV: &str = "DSH_TAILSCALE_ALLOWED_LOGINS";
 const LOCAL_ONLY_LOGIN: &str = "local-only@localhost.invalid";
 /// 远程特权接口（settings/credentials/host 等 loopback authority）与普通远程
@@ -675,26 +677,65 @@ fn dsh_version() -> Option<String> {
     if v.is_empty() { None } else { Some(v) }
 }
 
+/// 从当前 web profile 提取授权插件声明的 dsh 依赖下限，作为已验证兼容的
+/// 版本下限。优先级：node_modules 里 authz 插件的 dependencies → profile
+/// package.json 的 dependencies → 全局常量。rc 阶段 npm 预发布语义下
+/// ^0.1.0-rc.8 不覆盖 rc.9+，取下限是最保守且不会误判的提取方式。
+fn compose_verified_min() -> Option<String> {
+    let profile = dsh_dir().ok()?.join("profiles").join("web");
+    let candidates = [
+        profile.join("node_modules/@dsh-external/dsh-client-connection-authz/package.json"),
+        profile.join("package.json"),
+    ];
+    for path in candidates {
+        let Ok(contents) = fs::read_to_string(&path) else { continue };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) else { continue };
+        let spec = json
+            .pointer("/dependencies/@deepseek-ai/dsh-attachment")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| {
+                json.pointer("/dependencies/@deepseek-ai/dsh")
+                    .and_then(serde_json::Value::as_str)
+            });
+        if let Some(spec) = spec {
+            // 剥离范围前缀与空白；file:/git+/workspace: 等非 semver spec 解析
+            // 失败后继续下一个候选，不产生 None 崩溃
+            let cleaned = spec
+                .trim()
+                .trim_start_matches(['^', '~'])
+                .trim();
+            if parse_version(cleaned).is_some() {
+                return Some(cleaned.to_string());
+            }
+        }
+    }
+    parse_version(SUPPORTED_DSH_VERSION).map(|_| SUPPORTED_DSH_VERSION.to_string())
+}
+
 /// 宽松兼容：实际版本 >= 锁定版本即视为兼容。锁定版本是 Launcher 验证过的
 /// 最低版本（插件栈在此版本下完整跑通），更新版不再被强制回退；高于验证
 /// 版本的风险由 detect 的 dsh_version_above_supported 字段向用户如实披露。
 /// 解析失败按不兼容处理（与原行为一致的安全降级）。
 fn dsh_version_is_compatible(version: Option<&str>) -> bool {
     let Some(v) = version else { return false };
-    match (parse_version(v), parse_version(SUPPORTED_DSH_VERSION)) {
+    let min = compose_verified_min().unwrap_or_else(|| SUPPORTED_DSH_VERSION.to_string());
+    match (parse_version(v), parse_version(&min)) {
         (Some(actual), Some(min)) => actual >= min,
         _ => false,
     }
 }
 
-/// 安装 Launcher 验证过的 dsh 版本，并在 npm 成功后再次校验实际 CLI。
+/// 安装 Launcher 跟随的 dsh 版本（@next dist-tag），并在 npm 成功后再次校验
+/// 实际 CLI。跟随 @next 而非固定版本：dsh 上游 rc 阶段每次滚动都要求 Launcher
+/// 同步常量并重新发版，这条链路易碎；@next 由 dsh 发布流程本身维护。
 fn install_supported_dsh() -> Result<String, String> {
     resolve_node_bin()?;
-    match run_capture(&npm_bin(), &["install", "-g", SUPPORTED_DSH_PACKAGE]) {
+    let package = format!("{DSH_PACKAGE}@next");
+    match run_capture(&npm_bin(), &["install", "-g", &package]) {
         Ok((_, _, true)) => {}
         Ok((_, err, false)) => {
             let error = if err.is_empty() {
-                format!("npm install -g {SUPPORTED_DSH_PACKAGE} failed")
+                format!("npm install -g {package} failed")
             } else {
                 err
             };
@@ -715,14 +756,18 @@ fn install_supported_dsh() -> Result<String, String> {
         let err = trf(
             "Installed dsh version {actual}, but this Launcher requires {expected}",
             &[
-                ("actual", version),
-                ("expected", SUPPORTED_DSH_VERSION.to_string()),
+                ("actual", version.clone()),
+                ("expected", compose_verified_min().unwrap_or_else(|| SUPPORTED_DSH_VERSION.to_string())),
             ],
         );
         log::error!("[dsh 安装] 版本不兼容: {}", err);
         return Err(err);
     }
-    Ok(SUPPORTED_DSH_VERSION.to_string())
+    // 仅在版本校验成功后写 profile patch，避免失败安装留下持久残留。
+    // authz 插件的依赖范围（^rc.8）不覆盖 dsh 下一个 rc 的 peer（^rc.9），
+    // 装新版本后需要让 profile 的插件依赖也跟着滚。
+    rewrite_web_profile_patch(&version);
+    Ok(version)
 }
 
 /// 定位 dsh 可执行：先 probe PATH，再经 `npm prefix -g` 推 npm 全局 bin
@@ -1409,23 +1454,22 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
         };
         let current = dsh_version();
         if dsh_version_is_compatible(current.as_deref()) {
+            // 显示实际版本而非锁定版本：宽松化后兼容版本可以是 rc.7/rc.8，
+            // 显示 SUPPORTED_DSH_VERSION 会让用户误以为被装回了旧版
             ctx.done(&trf(
                 "Compatible dsh is installed: {version}",
-                &[("version", SUPPORTED_DSH_VERSION.to_string())],
+                &[("version", current.clone().unwrap_or_default())],
             ));
         } else {
-            ctx.running(&trf(
-                "Installing compatible dsh {version}…",
-                &[("version", SUPPORTED_DSH_VERSION.to_string())],
-            ));
+            ctx.running(&tr("Installing the latest dsh (@next)…"));
             match install_supported_dsh() {
                 Ok(version) => ctx.done(&trf("Installed {version}", &[("version", version)])),
                 Err(error) => {
                     return ctx.fail(
                         &error,
                         &trf(
-                            "Check your network and npm settings, then run npm install -g {package} and retry",
-                            &[("package", SUPPORTED_DSH_PACKAGE.to_string())],
+                            "Check your network and npm settings, then run npm install -g {package}@next and retry",
+                            &[("package", DSH_PACKAGE.to_string())],
                         ),
                         &remaining_after(1),
                     )
@@ -1719,15 +1763,13 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
         };
         let current = dsh_version();
         if dsh_version_is_compatible(current.as_deref()) {
+            // 显示实际版本而非锁定版本（同 dsh_setup 的修复）
             ctx.done(&trf(
                 "Compatible dsh is installed: {version}",
-                &[("version", SUPPORTED_DSH_VERSION.to_string())],
+                &[("version", current.clone().unwrap_or_default())],
             ));
         } else {
-            ctx.running(&trf(
-                "Installing compatible dsh {version}…",
-                &[("version", SUPPORTED_DSH_VERSION.to_string())],
-            ));
+            ctx.running(&tr("Installing the latest dsh (@next)…"));
             match install_supported_dsh() {
                 Ok(version) => ctx.done(&trf("Installed {version}", &[("version", version)])),
                 Err(error) => {
@@ -1815,7 +1857,7 @@ fn runtime_auth_context() -> (String, Option<String>) {
     }
 }
 
-/// 修复 Launcher 锁定的 dsh + 授权插件兼容栈；若 web 正在运行则重启。
+/// 修复 Launcher 跟随的 dsh + 授权插件兼容栈；若 web 正在运行则重启。
 #[tauri::command]
 pub async fn dsh_update(app: tauri::AppHandle) -> Result<String, String> {
     let was_running = port_listening(WEB_PORT);
@@ -1835,6 +1877,113 @@ pub async fn dsh_update(app: tauri::AppHandle) -> Result<String, String> {
         restart_dsh_web(&login, fqdn.as_deref(), &auth)?;
     }
     Ok(version)
+}
+
+/// 安装新版 dsh 后重写 web profile 的 cordis.patch.yml：让 dsh CLI 自己
+/// 把 profile 里的 dsh-* 依赖滚到与新 CLI 兼容的版本。authz 插件的依赖
+/// 范围（如 ^0.1.0-rc.8）不覆盖 dsh 下一个 rc 的 peer（^0.1.0-rc.9），
+/// 不重写则 boot 时 pnpm 解出旧版 attachment 崩（rc.6→rc.8 的教训）。
+/// 失败只记日志不打断安装——dsh 本身可能兼容，重写只是预防性兜底。
+const WEB_PROFILE_COMPAT_ID_LINE: &str = "- id: dsh-pro-max-compat";
+
+fn insert_web_profile_compat_entry(contents: &str, installed_version: &str) -> String {
+    let newline = if contents.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut lines: Vec<String> = contents.lines().map(str::to_string).collect();
+    let compat_index = lines
+        .iter()
+        .position(|line| line == WEB_PROFILE_COMPAT_ID_LINE);
+
+    if let Some(compat_index) = compat_index {
+        // 修复旧实现可能留下的 `[]` + list item 非法组合。
+        if let Some(empty_index) = lines[..compat_index]
+            .iter()
+            .rposition(|line| line == "[]")
+        {
+            lines.remove(empty_index);
+        }
+    } else {
+        let entry = [
+            WEB_PROFILE_COMPAT_ID_LINE.to_string(),
+            "  name: '@deepseek-ai/dsh-attachment'".to_string(),
+            "  config: {}".to_string(),
+            format!("  # Launcher managed: installed dsh CLI is {installed_version}"),
+        ];
+        if let Some(empty_index) = lines.iter().position(|line| line == "[]") {
+            lines.splice(empty_index..=empty_index, entry);
+        } else {
+            while lines.last().is_some_and(|line| line.is_empty()) {
+                lines.pop();
+            }
+            lines.extend(entry);
+        }
+    }
+
+    format!("{}{newline}", lines.join(newline))
+}
+
+fn remove_web_profile_compat_entry(contents: &str) -> String {
+    let newline = if contents.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut lines: Vec<String> = contents.lines().map(str::to_string).collect();
+    let Some(start) = lines
+        .iter()
+        .position(|line| line == WEB_PROFILE_COMPAT_ID_LINE)
+    else {
+        return contents.to_string();
+    };
+    let mut end = start + 1;
+    while end < lines.len() {
+        let line = &lines[end];
+        if line.is_empty() || line.starts_with([' ', '\t']) {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    lines.drain(start..end);
+    while lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
+    if !lines.iter().any(|line| line.starts_with("- "))
+        && !lines.iter().any(|line| line == "[]")
+    {
+        lines.push("[]".to_string());
+    }
+    format!("{}{newline}", lines.join(newline))
+}
+
+fn rewrite_web_profile_patch(installed_version: &str) {
+    let patch_path = match dsh_dir() {
+        Ok(d) => d.join("profiles").join("web").join("cordis.patch.yml"),
+        Err(_) => return,
+    };
+    if !patch_path.is_file() {
+        return;
+    }
+    let Ok(contents) = fs::read_to_string(&patch_path) else { return };
+    let updated = insert_web_profile_compat_entry(&contents, installed_version);
+    if updated == contents {
+        return;
+    }
+    if let Err(e) = fs::write(&patch_path, updated) {
+        log::warn!("[dsh 安装] 重写 web profile patch 失败: {}", e);
+    }
+}
+
+/// 清掉 patch 里的 compat 条目（用户显式安装旧版 dsh 后调用，让下次
+/// install_supported_dsh 重新写入）。幂等：无条目或文件不存在直接返回。
+fn clear_web_profile_compat_entry() {
+    let patch_path = match dsh_dir() {
+        Ok(d) => d.join("profiles").join("web").join("cordis.patch.yml"),
+        Err(_) => return,
+    };
+    let Ok(contents) = fs::read_to_string(&patch_path) else { return };
+    let updated = remove_web_profile_compat_entry(&contents);
+    if updated == contents {
+        return;
+    }
+    if let Err(e) = fs::write(&patch_path, updated) {
+        log::warn!("[dsh 安装] 清理 web profile patch compat 条目失败: {}", e);
+    }
 }
 
 /// 从 web profile 移除授权插件（`dsh plugin --profile web remove`，pnpm 透传，
@@ -2069,6 +2218,9 @@ pub async fn dsh_install_version(version: String) -> Result<String, String> {
         log::error!("[dsh 安装] 版本校验失败: {}", err);
         return Err(err);
     }
+    // 显式安装旧版后 patch 里的 compat 条目已过时，清掉让下次
+    // install_supported_dsh 重新写入（幂等：无条目直接返回）
+    clear_web_profile_compat_entry();
     if was_running {
         let (login, fqdn) = runtime_auth_context();
         let auth = resolve_auth_config()?;
@@ -2700,7 +2852,9 @@ fn render_desktop_entry(name: &str, script: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        dsh_web_cmd_pattern, ere_to_ps_wildcards, normalize_version, parse_extra_logins,
+        compose_verified_min, dsh_version_is_compatible, dsh_web_cmd_pattern,
+        ere_to_ps_wildcards, insert_web_profile_compat_entry, normalize_version,
+        parse_extra_logins, parse_version, remove_web_profile_compat_entry,
         plugin_profile_is_current, port_guard_js, render_desktop_entry, render_start_web,
         rpc_request, serve_command, serve_failure_solution, serve_status_targets_web, sh_quote,
         tailscale_login_from_status_json, validate_cap_domain, win_cmd_line, win_quote, AuthConfig,
@@ -2843,6 +2997,74 @@ mod tests {
     }
 
     #[test]
+    fn compose_verified_min_fallbacks_to_constant_without_profile() {
+        // 无 profile（首次安装前）时 compose_verified_min 必须回退到
+        // SUPPORTED_DSH_VERSION，不能返回 None 导致兼容判断崩溃
+        let min = compose_verified_min();
+        assert!(min.is_some(), "compose_verified_min 不能返回 None");
+        let min = min.unwrap();
+        assert!(
+            parse_version(&min).is_some(),
+            "回退值必须是合法版本号: {min}"
+        );
+        // 回退值要么等于常量，要么等于 profile 里插件声明的版本（更高）
+        let floor = parse_version(SUPPORTED_DSH_VERSION).unwrap();
+        let actual = parse_version(&min).unwrap();
+        assert!(
+            actual >= floor,
+            "compose_verified_min ({min}) 不能低于 SUPPORTED_DSH_VERSION ({SUPPORTED_DSH_VERSION})"
+        );
+    }
+
+    #[test]
+    fn dsh_version_compatible_uses_composed_floor() {
+        // 兼容下限是动态的：profile 存在时以插件声明为准，否则以常量为准。
+        // 无论哪种情况，常量和高于常量的版本都必须兼容。
+        assert!(dsh_version_is_compatible(Some(SUPPORTED_DSH_VERSION)));
+        assert!(dsh_version_is_compatible(Some("0.1.0-rc.7")));
+        assert!(dsh_version_is_compatible(Some("0.1.0-rc.10")));
+        assert!(dsh_version_is_compatible(Some("0.1.0")));
+        assert!(dsh_version_is_compatible(Some("1.0.0")));
+        // 低于常量或无法解析的版本不兼容
+        assert!(!dsh_version_is_compatible(Some("0.1.0-rc.5")));
+        assert!(!dsh_version_is_compatible(Some("0.0.1-rc.5")));
+        assert!(!dsh_version_is_compatible(Some("not-a-version")));
+        assert!(!dsh_version_is_compatible(None));
+    }
+
+    #[test]
+    fn web_profile_compat_entry_replaces_commented_empty_array() {
+        let header = "# Your patch layer for this dsh profile\n# applied after every bundle layer\n";
+        let empty = format!("{header}[]\n");
+        let expected = format!("{header}- id: dsh-pro-max-compat\n  name: '@deepseek-ai/dsh-attachment'\n  config: {{}}\n  # Launcher managed: installed dsh CLI is 0.1.1-rc.2\n");
+        let inserted = insert_web_profile_compat_entry(&empty, "0.1.1-rc.2");
+        assert_eq!(inserted, expected);
+        assert_eq!(
+            insert_web_profile_compat_entry(&inserted, "0.1.1-rc.2"),
+            inserted
+        );
+        let invalid_old_output = format!("{empty}{}", inserted.strip_prefix(header).unwrap());
+        assert_eq!(
+            insert_web_profile_compat_entry(&invalid_old_output, "0.1.1-rc.2"),
+            inserted
+        );
+        let multi_document = format!("{invalid_old_output}---\n[]\n");
+        assert_eq!(
+            insert_web_profile_compat_entry(&multi_document, "0.1.1-rc.2"),
+            format!("{inserted}---\n[]\n")
+        );
+        assert_eq!(remove_web_profile_compat_entry(&inserted), empty);
+    }
+
+    #[test]
+    fn web_profile_compat_removal_preserves_other_entries() {
+        let contents = "# profile patch\n- id: existing\n  name: existing-plugin\n  config: {}\n- id: dsh-pro-max-compat\n  name: '@deepseek-ai/dsh-attachment'\n  config: {}\n  # Launcher managed: installed dsh CLI is 0.1.1-rc.2\n- id: following\n  name: following-plugin\n  config: {}\n";
+        let expected = "# profile patch\n- id: existing\n  name: existing-plugin\n  config: {}\n- id: following\n  name: following-plugin\n  config: {}\n";
+        assert_eq!(remove_web_profile_compat_entry(contents), expected);
+        assert_eq!(remove_web_profile_compat_entry(expected), expected);
+    }
+
+    #[test]
     fn tailscale_login_maps_self_user_id_exactly() {
         let status = r#"{
           "Self": { "UserID": 42 },
@@ -2970,23 +3192,6 @@ mod tests {
         // 数组多元素 / 数组包非对象 → 解析失败
         assert!(parse_dist_tags("[{},{}]").is_err());
         assert!(parse_dist_tags("[\"x\"]").is_err());
-    }
-
-    #[test]
-    fn dsh_version_compatibility_is_minimum_not_exact() {
-        use super::dsh_version_is_compatible;
-        // 锁定版本（当前 rc.6）与更新版均兼容：宽松化后装了 rc.7/rc.8/
-        // 未来稳定版的用户不再被强制回退
-        assert!(dsh_version_is_compatible(Some(SUPPORTED_DSH_VERSION)));
-        assert!(dsh_version_is_compatible(Some("0.1.0-rc.7")));
-        assert!(dsh_version_is_compatible(Some("0.1.0-rc.10")));
-        assert!(dsh_version_is_compatible(Some("0.1.0")));
-        assert!(dsh_version_is_compatible(Some("1.0.0")));
-        // 低于锁定版本 / 未安装 / 解析失败 → 不兼容（安全降级与原行为一致）
-        assert!(!dsh_version_is_compatible(Some("0.1.0-rc.5")));
-        assert!(!dsh_version_is_compatible(Some("0.0.1-rc.5")));
-        assert!(!dsh_version_is_compatible(Some("not-a-version")));
-        assert!(!dsh_version_is_compatible(None));
     }
 
     #[test]

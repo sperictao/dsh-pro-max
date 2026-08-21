@@ -14,13 +14,13 @@ const lockDir = resolve(root, ".artifacts/dsh-plugins.lock");
 const plugins = [
   {
     source: "vendor/dsh-client-connection-authz",
-    commit: "873c465f140310e5ecc54ff797932e27bccb8f0e",
-    output: "dsh-client-connection-authz-873c465f1403.tgz",
+    commit: "62ab96c0b1260aeb851e409aef95f23830e61096",
+    output: "dsh-client-connection-authz-62ab96c0b126.tgz",
   },
   {
     source: "vendor/dsh-auth-tailscale",
-    commit: "ea7ca9fa3db4ef237cb6f9194bb34e4ee3593ada",
-    output: "dsh-auth-tailscale-ea7ca9fa3db4.tgz",
+    commit: "01666104af5391c78be563611b33d90a081a2c49",
+    output: "dsh-auth-tailscale-01666104af53.tgz",
   },
 ];
 
@@ -71,18 +71,44 @@ function gitHead(sourceDir) {
   return result.stdout.trim();
 }
 
+function gitStatus(sourceDir) {
+  const result = spawnSync(
+    "git",
+    ["-C", sourceDir, "status", "--porcelain=v1", "--untracked-files=all"],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
+  if (result.error) fail(`git failed: ${result.error.message}`);
+  if (result.status !== 0) {
+    fail(`cannot inspect ${sourceDir}: ${result.stderr.trim()}`);
+  }
+  return result.stdout.trim();
+}
+
+function assertPinnedSource(plugin) {
+  const sourceDir = resolve(root, plugin.source);
+  const actualCommit = gitHead(sourceDir);
+  if (actualCommit !== plugin.commit) {
+    fail(`${plugin.source} is at ${actualCommit}; expected pinned commit ${plugin.commit}`);
+  }
+  const status = gitStatus(sourceDir);
+  if (status !== "") {
+    fail(`${plugin.source} has local changes; refuse to build a tarball labeled ${plugin.commit}\n${status}`);
+  }
+}
+
 function main() {
   acquireLock();
   try {
+    for (const plugin of plugins) assertPinnedSource(plugin);
+
     rmSync(outputDir, { recursive: true, force: true });
     mkdirSync(outputDir, { recursive: true });
 
     for (const plugin of plugins) {
       const sourceDir = resolve(root, plugin.source);
-      const actualCommit = gitHead(sourceDir);
-      if (actualCommit !== plugin.commit) {
-        fail(`${plugin.source} is at ${actualCommit}; expected pinned commit ${plugin.commit}`);
-      }
       const packDir = join(outputDir, `.pack-${plugin.output}`);
       mkdirSync(packDir, { recursive: true });
       try {

@@ -11,10 +11,11 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outputDir = mkdtempSync(join(tmpdir(), "dashi-theme-test-"));
 process.on("exit", () => rmSync(outputDir, { recursive: true, force: true }));
 
-// tsc 会跟随 import 把 theme-families.ts 一并编译进 outDir
+// tsc 会跟随 import 把 theme-families.ts 一并编译进 outDir；rootDir 由 tsc
+// 推断为 src/shared，产物打平在 outDir 根下
 execFileSync(process.execPath, [
   join(root, "node_modules/typescript/bin/tsc"),
-  join(root, "src/theme.ts"),
+  join(root, "src/shared/theme.ts"),
   "--target",
   "ES2022",
   "--module",
