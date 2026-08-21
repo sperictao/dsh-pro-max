@@ -245,8 +245,24 @@ fn which(program: &str) -> Option<String> {
         if !out.status.success() {
             return None;
         }
-        let first = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
-        if first.is_empty() { None } else { Some(first) }
+        // where 返回全部匹配（按 PATH 顺序），每行一个。cmd /c 只能直接执行
+        // .cmd/.bat/.exe——.ps1 经 cmd 执行会失败（实机回归：where dsh 返回
+        // dsh.ps1 在前，run_capture 跑 dsh.ps1 --version 失败 → 误判未安装
+        // → 一键启动装回锁定版本）。优先挑 cmd 可直接执行的扩展名
+        let lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        let executable = |p: &str| {
+            let lower = p.to_lowercase();
+            lower.ends_with(".cmd") || lower.ends_with(".bat") || lower.ends_with(".exe")
+        };
+        lines
+            .iter()
+            .find(|p| executable(p))
+            .or_else(|| lines.first())
+            .cloned()
     }
 }
 
@@ -550,10 +566,36 @@ fn install_auth_plugins(app: &tauri::AppHandle) -> Result<DshPluginSpecs, String
     if auth_plugins_installed(&specs) {
         return Ok(specs);
     }
-    let dsh = resolve_dsh_bin()?;
-    let dsh = dsh.display().to_string();
+    let dsh = resolve_dsh_bin()?.display().to_string();
+    // 首次安装失败时，先清掉 profile 里的残留条目再重试一次：
+    // pnpm 在 profile 目录的 node_modules/lockfile 状态损坏（跨版本/跨安装源
+    // 复用时硬链接失效，Windows 上尤为常见）会导致 add 失败但 stderr 没有
+    // 有效信息（实机回归：「pnpm failed in profile directory」无详情）。
+    // remove 是幂等的（无残留时 pnpm 直接成功），清理后 add 走干净路径
+    match run_plugin_add(&dsh, &specs) {
+        Ok(()) => Ok(specs),
+        Err(first_err) => {
+            log::warn!("[dsh 插件] 首次安装失败，清理 profile 后重试: {}", first_err);
+            let _ = run_capture(
+                &dsh,
+                &[
+                    "plugin",
+                    "--profile",
+                    "web",
+                    "remove",
+                    CONNECTION_PLUGIN_PACKAGE,
+                    AUTH_PLUGIN_PACKAGE,
+                ],
+            );
+            run_plugin_add(&dsh, &specs).map(|()| specs)
+        }
+    }
+}
+
+/// 执行一次 dsh plugin --profile web add 并校验结果；失败带完整 stderr
+fn run_plugin_add(dsh: &str, specs: &DshPluginSpecs) -> Result<(), String> {
     match run_capture(
-        &dsh,
+        dsh,
         &[
             "plugin",
             "--profile",
@@ -563,7 +605,7 @@ fn install_auth_plugins(app: &tauri::AppHandle) -> Result<DshPluginSpecs, String
             &specs.auth,
         ],
     ) {
-        Ok((_, _, true)) if auth_plugins_installed(&specs) => Ok(specs),
+        Ok((_, _, true)) if auth_plugins_installed(specs) => Ok(()),
         Ok((_, err, true)) => {
             let e = trf(
                 "dsh plugin install completed but the web profile is incomplete: {error}",
