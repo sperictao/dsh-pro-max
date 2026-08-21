@@ -15,7 +15,7 @@ import type {
 } from "./types";
 
 export type View = "integration" | "settings";
-export type SettingsSection = "general" | "appearance" | "about";
+export type SettingsSection = "general" | "appearance" | "dsh" | "about";
 export type ToastType = "success" | "error" | "info";
 
 export interface ToastItem {

@@ -1852,6 +1852,79 @@ pub async fn dsh_remove_plugins() -> Result<(), String> {
     Ok(())
 }
 
+/// dsh 最新版本检测结果（设置页版本卡）
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DshLatestInfo {
+    /// npm registry 上的最新版本（dist-tag latest；网络/解析失败为 None）
+    pub latest_version: Option<String>,
+    /// 本机安装版本（未安装为 None）
+    pub installed_version: Option<String>,
+    /// Launcher 验证过的最低兼容版本（插件栈锁定）
+    pub supported_version: String,
+    /// 已安装且有更新可用（installed < latest）
+    pub has_update: bool,
+    /// 查询失败原因（网络不通 / npm 不可用 / 输出无法解析）
+    pub error: Option<String>,
+}
+
+/// 查询 npm registry 上 dsh 的最新版本（dist-tag latest）。
+/// run_capture 无超时机制，npm view 走网络可能挂住，故放独立线程 + 超时回收；
+/// 线程泄漏只发生在 npm 挂死路径（下次查询新建线程，进程退出即清）
+#[tauri::command]
+pub async fn dsh_check_latest() -> Result<DshLatestInfo, String> {
+    let installed = dsh_version();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = run_capture(&npm_bin(), &["view", "@deepseek-ai/dsh", "version"]);
+        let _ = tx.send(result);
+    });
+    let queried = match rx.recv_timeout(Duration::from_secs(15)) {
+        Ok(Ok((out, _, true))) => {
+            let v = normalize_version(&out);
+            if parse_version(&v).is_some() {
+                Ok(Some(v))
+            } else {
+                Err(trf(
+                    "Cannot parse the latest dsh version from npm output: {output}",
+                    &[("output", out)],
+                ))
+            }
+        }
+        Ok(Ok((_, err, false))) => Err(trf(
+            "npm query failed: {error}",
+            &[(
+                "error",
+                if err.is_empty() {
+                    "npm view exited non-zero".to_string()
+                } else {
+                    err
+                },
+            )],
+        )),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err(tr("npm query timed out (15s); check your network or npm registry mirror")),
+    };
+    let (latest_version, error) = match queried {
+        Ok(v) => (v, None),
+        Err(e) => {
+            log::warn!("[dsh 检测] 查询 npm 最新版本失败: {}", e);
+            (None, Some(e))
+        }
+    };
+    let has_update = match (&latest_version, &installed) {
+        (Some(latest), Some(cur)) => crate::version::is_newer(latest, cur),
+        _ => false,
+    };
+    Ok(DshLatestInfo {
+        latest_version,
+        installed_version: installed,
+        supported_version: SUPPORTED_DSH_VERSION.to_string(),
+        has_update,
+        error,
+    })
+}
+
 /// 重启 dsh web，确保新 profile 和授权环境生效。
 fn restart_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) -> Result<(), String> {
     stop_supervised_services();

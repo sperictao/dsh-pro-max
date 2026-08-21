@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { log } from "./logger";
 import type {
+  DshLatestInfo,
   DshStatus,
   LauncherConfig,
   UpdateInfo,
@@ -36,6 +37,7 @@ export const dshStartWeb = () => invokeTyped<string>("dsh_start_web");
 export const dshStop = () => invokeTyped<void>("dsh_stop");
 export const dshUpdate = () => invokeTyped<string>("dsh_update");
 export const dshRemovePlugins = () => invokeTyped<void>("dsh_remove_plugins");
+export const dshCheckLatest = () => invokeTyped<DshLatestInfo>("dsh_check_latest");
 export const dshSetAutostart = (enabled: boolean) => invokeTyped<void>("dsh_set_autostart", { enabled });
 
 // ============ 更新 ============

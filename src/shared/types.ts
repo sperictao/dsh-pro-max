@@ -38,6 +38,15 @@ export interface DshStepEvent {
   solution: string | null;
 }
 
+// dsh 最新版本检测（npm registry dist-tag latest）
+export interface DshLatestInfo {
+  latestVersion: string | null;
+  installedVersion: string | null;
+  supportedVersion: string;
+  hasUpdate: boolean;
+  error: string | null;
+}
+
 export interface UpdaterConfigHealth {
   configured: boolean;
   message: string;

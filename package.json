@@ -1,7 +1,7 @@
 {
   "name": "dsh-pro-max",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -12,6 +12,7 @@
     "tauri": "node scripts/tauri.mjs",
     "build:updater": "node scripts/build-updater.mjs",
     "build:dsh-plugins": "node scripts/build-dsh-plugins.mjs",
+    "check:i18n": "node scripts/check-i18n.mjs",
     "check:release": "node scripts/check-release.mjs"
   },
   "dependencies": {

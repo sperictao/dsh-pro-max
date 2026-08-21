@@ -4,6 +4,7 @@ import { useAppStore, type SettingsSection } from "@/shared/store";
 import { BTN_PRIMARY } from "@/shared/lib/ui";
 import { GeneralSection } from "./GeneralSection";
 import { AppearanceSection } from "./AppearanceSection";
+import { DshSection } from "./DshSection";
 import { AboutSection } from "@/features/updater/AboutSection";
 
 // 设置视图：侧栏 6 分区 + 内容区 + 保存 footer（外观/看守/关于隐藏，旧 switchSection 行为）
@@ -23,6 +24,13 @@ const SECTIONS: { id: SettingsSection; labelKey: string; icon: ReactNode }[] = [
     ),
   },
   {
+    id: "dsh",
+    labelKey: "DeepSeek Harness",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" /></svg>
+    ),
+  },
+  {
     id: "about",
     labelKey: "About",
     icon: (
@@ -36,8 +44,8 @@ export function SettingsView() {
   const section = useAppStore((s) => s.settingsSection);
   const setSettingsSection = useAppStore((s) => s.setSettingsSection);
   const saveConfig = useAppStore((s) => s.saveConfig);
-  // 保存 footer 仅在外观/看守/关于分区隐藏（旧 switchSection 行为）
-  const footerHidden = section === "about" || section === "appearance";
+  // 保存 footer 仅在外观/dsh/关于分区隐藏（dsh 分区操作即时生效，无可保存草稿）
+  const footerHidden = section === "about" || section === "appearance" || section === "dsh";
 
   return (
     <main className="min-h-0 flex-1" id="settings-view">
@@ -58,6 +66,7 @@ export function SettingsView() {
         <div className="flex-1 overflow-y-auto p-6">
           {section === "general" && <GeneralSection />}
           {section === "appearance" && <AppearanceSection />}
+          {section === "dsh" && <DshSection />}
           {section === "about" && <AboutSection />}
           {!footerHidden && (
             <div className="mt-4 flex justify-end border-t border-border pt-4" id="settings-footer">

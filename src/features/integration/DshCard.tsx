@@ -154,6 +154,10 @@ export function DshCard() {
   const [mode, setMode] = useState<DshAccessMode>(readStoredMode);
 
   const isRemote = mode === "remote";
+  // 运行中锁定访问模式：切换只决定「下次启动走哪条流程」，不会改变运行中
+  // 服务的实际形态（本地回环 vs Tailscale serve），允许切换只会造成
+  // 「切了没反应」的困惑；明确禁用并给出解锁路径（先停止）
+  const modeLocked = !!status?.dshRunning;
 
   // 远程授权配置（集成卡片内联编辑，仅远程模式显示）：本地草稿 + 一次性灌入，
   // onChange 同步写 store 草稿，点保存才落盘（与设置页 NetworkSection 同模式）
@@ -340,18 +344,7 @@ export function DshCard() {
     }
   };
 
-  const toggleAutostart = async () => {
-    if (!status) return;
-    const next = !status.autostartEnabled;
-    try {
-      await cmd.dshSetAutostart(next);
-      setStatus({ ...status, autostartEnabled: next });
-      toast(next ? t("Auto-start enabled") : t("Auto-start disabled"), "success");
-    } catch (e) {
-      toast(t("Failed to change auto-start: {{error}}", { error: String(e) }), "error");
-    }
-  };
-
+  // 自启开关已迁移到设置页 dsh 分区（配置项归设置，集成卡片只管流程操作）
   // 当前模式的访问地址：本地模式在 dsh web 运行时显示 loopback 地址，
   // 远程模式在 serve 就绪且有 URL 时显示 tailnet HTTPS 地址
   const activeUrl = !busy
@@ -439,7 +432,7 @@ export function DshCard() {
       </div>
 
       <label
-        className="flex flex-1 cursor-pointer items-center justify-between gap-4 rounded-lg border border-border p-3"
+        className={`flex flex-1 items-center justify-between gap-4 rounded-lg border border-border p-3${modeLocked ? "" : " cursor-pointer"}`}
         id="dsh-remote-access-row"
       >
         <span className="flex flex-col gap-0.5">
@@ -448,7 +441,9 @@ export function DshCard() {
             {t(isRemote ? "Remote access mode" : "Local access mode")}
           </span>
           <span className="text-xs opacity-60">
-            {t("Switching the access mode only selects the setup/close flow; click Start or Stop below to apply it. It does not start or stop anything by itself.")}
+            {modeLocked
+              ? t("dsh web is running; stop it before switching the access mode.")
+              : t("Switching the access mode only selects the setup/close flow; click Start or Stop below to apply it. It does not start or stop anything by itself.")}
           </span>
         </span>
         <input
@@ -456,7 +451,7 @@ export function DshCard() {
           className={TOGGLE}
           id="toggle-dsh-remote-access"
           checked={isRemote}
-          disabled={busy}
+          disabled={busy || modeLocked}
           onChange={(e) => switchMode(e.target.checked ? "remote" : "local")}
         />
       </label>
@@ -547,20 +542,6 @@ export function DshCard() {
             </div>
           ))}
         </div>
-      </div>
-
-      <div className="border-t border-border pt-3">
-        <div className="mb-2 text-sm font-medium">{t("Boot Auto-start")}</div>
-        <label className="flex flex-1 cursor-pointer items-center justify-between gap-4 rounded-lg border border-border p-3" id="dsh-autostart-row">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-sm">{t("Auto-start the authorized dsh web service in the background at login")}</span>
-            <span className="text-xs opacity-60">
-              {t("Keeps remote access available without opening this app. Tailscale serve is managed by the Tailscale app itself.")}
-            </span>
-          </span>
-          <input type="checkbox" className={TOGGLE} id="toggle-dsh-autostart"
-            checked={status?.autostartEnabled ?? false} onChange={() => void toggleAutostart()} />
-        </label>
       </div>
     </div>
   );

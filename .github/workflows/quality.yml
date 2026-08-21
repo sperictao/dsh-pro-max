@@ -21,6 +21,8 @@ jobs:
       - run: pnpm install
       - run: pnpm exec tsc --noEmit
       - run: pnpm exec vitest run
+      - name: i18n coverage
+        run: node scripts/check-i18n.mjs
 
   rust:
     runs-on: ubuntu-latest
