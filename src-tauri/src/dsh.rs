@@ -1942,19 +1942,41 @@ pub async fn dsh_check_latest() -> Result<DshLatestInfo, String> {
     })
 }
 
-/// 解析 npm view dist-tags --json 输出：{"latest":"x","next":"y"} → [(tag, version)]。
-/// 容忍 UTF-8 BOM 与首尾空白（Windows cmd /c 包装的 npm 输出会带 BOM 或
-/// 前导换行——实机回归：Windows 上 \"检查失败: 无法解析 npm dist-tags 输出\"）。
+/// 解析 npm view dist-tags --json 输出 → [(tag, version)]。
+/// 容忍三种形态（按出现顺序）：
+///   1. 对象：{"latest":"x","next":"y"}（macOS/Linux 的 npm）
+///   2. 单元素数组：[{"next":"x","latest":"y"}]（部分 Windows npm/shim 的
+///      --json 输出——实机回归 v0.3.1：「无法解析 npm dist-tags 输出」）
+///   3. 上述两种带 UTF-8 BOM / 首尾空白（Windows cmd /c 包装）
+///
 /// 过滤掉非 semver 值（防御 registry 返回杂质）；保持 JSON 源顺序
 fn parse_dist_tags(out: &str) -> Result<Vec<(String, String)>, String> {
     let cleaned = out.trim_start_matches('\u{feff}').trim();
-    let obj: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_str(cleaned).map_err(|_| {
-            trf(
+    let value: serde_json::Value = serde_json::from_str(cleaned).map_err(|_| {
+        trf(
+            "Cannot parse npm dist-tags output: {output}",
+            &[("output", out.chars().take(200).collect())],
+        )
+    })?;
+    // 统一为对象：数组形态取第一个对象元素
+    let obj = match value {
+        serde_json::Value::Object(m) => m,
+        serde_json::Value::Array(mut a) if a.len() == 1 => match a.remove(0) {
+            serde_json::Value::Object(m) => m,
+            _ => {
+                return Err(trf(
+                    "Cannot parse npm dist-tags output: {output}",
+                    &[("output", out.chars().take(200).collect())],
+                ))
+            }
+        },
+        _ => {
+            return Err(trf(
                 "Cannot parse npm dist-tags output: {output}",
                 &[("output", out.chars().take(200).collect())],
-            )
-        })?;
+            ))
+        }
+    };
     Ok(obj
         .into_iter()
         .filter_map(|(tag, v)| {
@@ -2892,6 +2914,20 @@ mod tests {
             parse_dist_tags("\u{feff}\r\n{\"latest\":\"0.1.0-rc.7\"}\r\n").unwrap(),
             vec![("latest".to_string(), "0.1.0-rc.7".to_string())]
         );
+        // Windows 回归（v0.3.1 实机）：部分 npm/shim 的 --json 输出是数组包对象。
+        // 数组形态的对象 key 顺序经 serde Map 重排，按无序集合断言
+        let mut arr_tags = parse_dist_tags("[\n  {\n    \"next\": \"0.1.0-rc.8\",\n    \"latest\": \"0.1.0-rc.7\"\n  }\n]").unwrap();
+        arr_tags.sort();
+        assert_eq!(
+            arr_tags,
+            vec![
+                ("latest".to_string(), "0.1.0-rc.7".to_string()),
+                ("next".to_string(), "0.1.0-rc.8".to_string()),
+            ]
+        );
+        // 数组多元素 / 数组包非对象 → 解析失败
+        assert!(parse_dist_tags("[{},{}]").is_err());
+        assert!(parse_dist_tags("[\"x\"]").is_err());
     }
 
     #[test]
