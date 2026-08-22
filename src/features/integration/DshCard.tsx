@@ -26,6 +26,20 @@ function storeMode(mode: DshAccessMode): void {
   localStorage.setItem(ACCESS_MODE_KEY, mode);
 }
 
+export function proxyBypassHostForRemoteUrl(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname;
+    return host || null;
+  } catch {
+    return null;
+  }
+}
+
+export function verifiedRemoteUrl(status: DshStatus): string | null {
+  return status.remoteUrlAccess === "ready" ? status.url : null;
+}
+
 // 远程时间轴步骤顺序（与 Rust dsh_setup 的 index 一一对应）
 const STEP_IDS = ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] as const;
 
@@ -55,6 +69,9 @@ export function statusTextKey(s: DshStatus): string {
   // 授权插件只服务于远程访问链路；纯本地用 dsh 不需要，故放在运行之后
   if (!s.pluginsInstalled) return "dsh auth plugins not installed";
   if (!s.serveConfigured) return "Tailscale serve not configured";
+  if (s.remoteUrlAccess === "proxy_interference") return "Local proxy bypass required";
+  if (s.remoteUrlAccess === "endpoint_failure") return "Remote endpoint check failed";
+  if (s.remoteUrlAccess !== "ready") return "Remote access not verified";
   return "Remote access ready";
 }
 
@@ -71,7 +88,8 @@ export function localStatusTextKey(s: DshStatus): string {
 export function timelineFromStatus(s: DshStatus): DshStepEvent[] {
   const allReady =
     s.nodeAvailable && s.dshInstalled && s.dshCompatible && s.pluginsInstalled &&
-    s.dshRunning && s.tailscaleOnline && s.magicDnsEnabled && s.serveConfigured;
+    s.dshRunning && s.tailscaleOnline && s.magicDnsEnabled && s.serveConfigured &&
+    s.remoteUrlAccess === "ready";
   const done = (ok: boolean): DshStepEvent["state"] => (ok ? "done" : "pending");
   const step = (index: number, id: string, ok: boolean): DshStepEvent => ({
     index, id, state: done(ok), detail: null, problem: null, solution: null,
@@ -122,17 +140,19 @@ function AddressRow({
   url,
   onCopy,
   onOpen,
+  openDisabled = false,
 }: {
   url: string;
   onCopy: (u: string) => void;
   onOpen: (u: string) => void;
+  openDisabled?: boolean;
 }) {
   const { t } = useTranslation();
   return (
     <div className="flex flex-wrap items-center justify-end gap-1.5">
       <span className="shrink-0 rounded-full bg-primary/15 px-2.5 py-0.5 font-mono text-xs text-primary">{url}</span>
       <button className={BTN_SM} onClick={() => void onCopy(url)}>{t("Copy")}</button>
-      <button className={BTN_SM} onClick={() => void onOpen(url)}>{t("Open")}</button>
+      <button className={BTN_SM} disabled={openDisabled} onClick={() => void onOpen(url)}>{t("Open")}</button>
     </div>
   );
 }
@@ -146,7 +166,8 @@ export function DshCard() {
   // 启动/修复与停止各自维护 busy（同主页 Start All / Stop All 语义），互斥防并发
   const [startBusy, setStartBusy] = useState(false);
   const [stopBusy, setStopBusy] = useState(false);
-  const busy = startBusy || stopBusy;
+  const [recheckBusy, setRecheckBusy] = useState(false);
+  const busy = startBusy || stopBusy || recheckBusy;
   // 是否跑过一键流程：跑过则时间轴以事件流为准，否则用检测结果渲染就绪视图
   const [hasRunSetup, setHasRunSetup] = useState(false);
   // 当前访问模式：local（127.0.0.1:3899 本地访问）或 remote（Tailscale HTTPS 远程访问）。
@@ -183,7 +204,7 @@ export function DshCard() {
 
   const refresh = useCallback(async () => {
     try {
-      const s = await cmd.dshDetect();
+      const s = await cmd.dshDetect(isRemote);
       setStatus(s);
       if (!hasRunSetup) {
         setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
@@ -200,13 +221,23 @@ export function DshCard() {
   }, []);
 
   // 切换访问模式：仅选择，不执行任何启动/停止；时间轴切到对应模式的就绪视图
-  const switchMode = (next: DshAccessMode) => {
+  const switchMode = async (next: DshAccessMode) => {
     if (next === mode || busy) return;
     setMode(next);
     storeMode(next);
     setHasRunSetup(false);
-    if (status) {
-      setDshTimeline(next === "remote" ? timelineFromStatus(status) : localTimelineFromStatus(status));
+    setRecheckBusy(true);
+    if (next === "remote") {
+      setStatus((current) => current ? { ...current, remoteUrlAccess: null } : current);
+    }
+    try {
+      const s = await cmd.dshDetect(next === "remote");
+      setStatus(s);
+      setDshTimeline(next === "remote" ? timelineFromStatus(s) : localTimelineFromStatus(s));
+    } catch (e) {
+      toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
+    } finally {
+      setRecheckBusy(false);
     }
   };
 
@@ -228,9 +259,17 @@ export function DshCard() {
       if (isRemote) {
         await cmd.dshSetup();
         // dsh_setup 返回 void：serve 配置完成后远程地址由 detect 给出。三个授权参数
-        // 留空也能正常 serve（普通远程访问只靠身份 allowlist），故成功即打开远程地址
-        const s = await cmd.dshDetect();
-        if (s.url) await open(s.url);
+        // 留空也能正常 serve（普通远程访问只靠身份 allowlist）。只有
+        // HTTPS + WebSocket + 本机代理路径都复查通过才打开远程地址。
+        const s = await cmd.dshDetect(true);
+        setStatus(s);
+        const url = verifiedRemoteUrl(s);
+        if (!url) {
+          setDshTimeline(timelineFromStatus(s));
+          toast(t(statusTextKey(s)), "error");
+          return;
+        }
+        await openUrl(url);
         toast(t("Remote access ready"), "success");
       } else {
         const url = await cmd.dshStartWeb();
@@ -245,7 +284,7 @@ export function DshCard() {
       // 成功后回到状态驱动视图；失败时保留事件时间轴（问题+解决方案持续可见）
       if (succeeded) setHasRunSetup(false);
       try {
-        const s = await cmd.dshDetect();
+        const s = await cmd.dshDetect(isRemote);
         setStatus(s);
         if (succeeded) {
           setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
@@ -271,7 +310,7 @@ export function DshCard() {
       // 停止后回到状态驱动时间轴，避免事件时间轴残留「已就绪」的历史状态
       setHasRunSetup(false);
       try {
-        const s = await cmd.dshDetect();
+        const s = await cmd.dshDetect(isRemote);
         setStatus(s);
         setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
       } catch (e) {
@@ -299,6 +338,37 @@ export function DshCard() {
     }
   };
 
+  const copyProxyBypassHost = async (host: string) => {
+    try {
+      await navigator.clipboard.writeText(host);
+      toast(t("Proxy bypass host copied"), "info");
+    } catch (e) {
+      toast(t("Failed to copy: {{error}}", { error: String(e) }), "error");
+    }
+  };
+
+  const recheckRemoteAccess = async () => {
+    if (busy) return;
+    setRecheckBusy(true);
+    try {
+      const s = await cmd.dshDetect(true);
+      setStatus(s);
+      const url = verifiedRemoteUrl(s);
+      if (url) {
+        setHasRunSetup(false);
+        setDshTimeline(timelineFromStatus(s));
+        toast(t("Remote access ready"), "success");
+        await openUrl(url);
+        return;
+      }
+      toast(t(statusTextKey(s)), "error");
+    } catch (e) {
+      toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
+    } finally {
+      setRecheckBusy(false);
+    }
+  };
+
   const repair = async () => {
     if (busy) return;
     setStartBusy(true);
@@ -312,7 +382,7 @@ export function DshCard() {
       // 更新流程不走 dsh-step 事件流：回到状态驱动时间轴
       setHasRunSetup(false);
       try {
-        const s = await cmd.dshDetect();
+        const s = await cmd.dshDetect(isRemote);
         setStatus(s);
         setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
       } catch (e) {
@@ -335,7 +405,7 @@ export function DshCard() {
       setStartBusy(false);
       setHasRunSetup(false);
       try {
-        const s = await cmd.dshDetect();
+        const s = await cmd.dshDetect(isRemote);
         setStatus(s);
         setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
       } catch (e) {
@@ -354,6 +424,7 @@ export function DshCard() {
         ? status?.localUrl ?? "http://127.0.0.1:3899"
         : null
     : null;
+  const proxyBypassHost = proxyBypassHostForRemoteUrl(status?.url ?? null);
 
   const statusText = busy ? t("Working…") : status ? t(isRemote ? statusTextKey(status) : localStatusTextKey(status)) : t("Detecting…");
 
@@ -408,9 +479,27 @@ export function DshCard() {
             <div className="mt-1 text-xs opacity-60">
               {t("Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Tailscale identity is authorized by bundled dsh plugins; remote privileged APIs stay denied.")}
             </div>
-            {status?.url && !busy && (
+            {status?.remoteUrlAccess === "proxy_interference" && proxyBypassHost ? (
+              <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-local-proxy-warning">
+                <div className="font-medium text-destructive">
+                  {t("This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.")}
+                </div>
+                <div className="mt-1 opacity-70">
+                  {t("Add this host to the macOS proxy bypass list. In Shadowrocket: General → Skip Proxy:")}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <code className="rounded bg-muted px-2 py-1 font-mono text-xs">{proxyBypassHost}</code>
+                  <button className={BTN_SM} disabled={busy} onClick={() => void copyProxyBypassHost(proxyBypassHost)}>
+                    {t("Copy bypass host")}
+                  </button>
+                  <button className={BTN_SM} disabled={busy} onClick={() => void recheckRemoteAccess()}>
+                    {recheckBusy ? t("Rechecking...") : t("Recheck and open")}
+                  </button>
+                </div>
+              </div>
+            ) : status?.url && status.remoteUrlAccess === "ready" && !busy && (
               <div className="mt-1 text-xs opacity-60">
-                {t("URL won't open? Proxy tools (Shadowrocket / Clash / Surge) often hijack *.ts.net traffic — add a DIRECT rule for it on the client device.")}{" "}
+                {t("URL won't open? On the host Mac, use proxy bypass / skip-proxy; on another client device, use a DIRECT rule.")}{" "}
                 <a
                   className="underline underline-offset-2 hover:opacity-80"
                   href="https://github.com/sperictao/dsh-pro-max/blob/main/docs/dsh-remote-access.md"
@@ -452,7 +541,7 @@ export function DshCard() {
           id="toggle-dsh-remote-access"
           checked={isRemote}
           disabled={busy || modeLocked}
-          onChange={(e) => switchMode(e.target.checked ? "remote" : "local")}
+          onChange={(e) => void switchMode(e.target.checked ? "remote" : "local")}
         />
       </label>
 
@@ -516,7 +605,12 @@ export function DshCard() {
         </button>
         <div className="ml-auto flex min-w-0 flex-col items-end gap-1.5">
           {activeUrl && (
-            <AddressRow url={activeUrl} onCopy={copyUrl} onOpen={open} />
+            <AddressRow
+              url={activeUrl}
+              onCopy={copyUrl}
+              onOpen={open}
+              openDisabled={isRemote && status?.remoteUrlAccess !== "ready"}
+            />
           )}
         </div>
       </div>

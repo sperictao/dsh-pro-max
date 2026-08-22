@@ -162,7 +162,7 @@ grants 示例（`dst` 需匹配运行 dsh 的节点，未打 tag 可用该节点
 5. MagicDNS / HTTPS Certificates
 6. dsh 监听 `127.0.0.1:3899`
 7. Tailscale Serve 直接指向 3899
-8. 本地 HTTP、远程 HTTPS / WSS 和本地特权 API 验证
+8. 本地 HTTP、远程 HTTPS / WSS、本机浏览器代理路径和本地特权 API 验证
 
 手动排查可用：
 
@@ -182,7 +182,7 @@ tailscale serve status
 | 保存时报"Tailscale login name contains unsupported characters" | 登录名含非法字符（如空格、中文）。只允许 ASCII 字母数字及 `@._+-` |
 | 启动时间轴卡在最后一步 / 远程打开提示无权限 | capability 只配了卡片没配 grants，或 grants 里 capability 名与卡片域名不一致。核对第 6 节 |
 | serve 报 `unknown flag: --accept-app-caps` | Tailscale 版本过旧，需 1.92+。升级 Tailscale |
-| 另一台设备打不开 `https://<hostname>.ts.net` | 多被 Shadowrocket / Clash / Surge 或系统代理抢走 tailnet 流量，访问端加 `DOMAIN-SUFFIX,ts.net,DIRECT` 直连规则（详见 dsh-remote-access.md 的排查节） |
+| 本机或另一台设备打不开 `https://<hostname>.ts.net` | 多被 Shadowrocket / Clash / Surge 或系统代理抢走 tailnet 流量；宿主 Mac 上把 Launcher 显示的精确主机名加入 Shadowrocket“通用 → 跳过代理（skip-proxy）”，其他访问端设备再配置精确 `DOMAIN,<hostname>.<tailnet>.ts.net,DIRECT`（详见 dsh-remote-access.md 的排查节） |
 | 远程管理接口（settings / credentials）始终 403 | Admin capability 未配置或未在 grants 下发。确认 `dsh_admin_cap_domain` 已填、grants 里给了 `<域名>/cap/dsh-admin` |
 
 > 能力最小、最安全的起点是场景 A（个人最简使用）或场景 C（多用户最小配置）：

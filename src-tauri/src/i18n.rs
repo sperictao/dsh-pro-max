@@ -116,6 +116,8 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "Tailscale Serve is not targeting 127.0.0.1:3899" => "Tailscale Serve 未指向 127.0.0.1:3899",
         "HTTPS endpoint is not responding: {url}" => "HTTPS 端点无响应: {url}",
         "WebSocket handshake failed: {url}/api/events.host" => "WebSocket 握手失败: {url}/api/events.host",
+        "The local proxy is intercepting the Tailscale address: {url}" => "本机代理正在拦截 Tailscale 地址: {url}",
+        "Add {host} to this machine's proxy bypass / skip-proxy list, then retry" => "请把 {host} 加入本机代理的绕过列表（Shadowrocket：通用 → 跳过代理 / skip-proxy），然后重试",
         "Local privileged API access failed on 127.0.0.1:3899" => "127.0.0.1:3899 上的本地特权 API 访问失败",
         "Repair failed: {error}" => "修复失败: {error}",
         "npm query failed: {error}" => "npm 查询失败: {error}",

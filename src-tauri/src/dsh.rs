@@ -79,11 +79,37 @@ pub struct DshStatus {
     /// 本机回环地址（dsh web 正在运行且授权栈就绪时可用）
     pub local_url: Option<String>,
     pub url: Option<String>,
+    /// 当前 Mac 用同一个 tailnet HTTPS 地址访问时的真实路径状态。
+    /// None 表示远程栈尚未形成 URL；ready / proxy_interference /
+    /// endpoint_failure 分别表示可用、被本机代理截获、服务端链路失败。
+    pub remote_url_access: Option<RemoteUrlAccess>,
     pub magic_dns_enabled: bool,
     pub serve_configured: bool,
     pub autostart_enabled: bool,
     /// 检测过程中的错误信息（无则 None）
     pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteUrlAccess {
+    Ready,
+    ProxyInterference,
+    EndpointFailure,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MacosHttpsProxy {
+    server: String,
+    port: u16,
+    exceptions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RemoteUrlProbe {
+    access: RemoteUrlAccess,
+    direct_https_ok: bool,
+    direct_ws_ok: bool,
 }
 
 /// 时间轴节点事件（dsh-step），由 dsh_setup 逐步发出
@@ -213,6 +239,10 @@ fn run_capture(program: &str, args: &[&str]) -> Result<(String, String, bool), S
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     Ok((stdout, stderr, output.status.success()))
+}
+
+fn string_args(args: &[String]) -> Vec<&str> {
+    args.iter().map(String::as_str).collect()
 }
 
 /// 在 probe PATH 中定位可执行文件（unix: command -v；windows: where）
@@ -1167,7 +1197,10 @@ fn rpc_ok(port: u16, method: &str) -> bool {
 // ============ 检测 ============
 
 #[tauri::command]
-pub async fn dsh_detect(app: tauri::AppHandle) -> Result<DshStatus, String> {
+pub async fn dsh_detect(
+    app: tauri::AppHandle,
+    verify_remote_url: Option<bool>,
+) -> Result<DshStatus, String> {
     let (hostname, url) = resolve_host_and_url();
     let ts = tailscale_path();
     let (magic, _) = match &ts {
@@ -1200,6 +1233,10 @@ pub async fn dsh_detect(app: tauri::AppHandle) -> Result<DshStatus, String> {
     } else {
         None
     };
+    let remote_url_access = verify_remote_url
+        .unwrap_or(false)
+        .then(|| url.as_deref().map(|url| probe_remote_url(url).access))
+        .flatten();
     Ok(DshStatus {
         node_available: which("node").is_some(),
         dsh_installed: version.is_some(),
@@ -1214,6 +1251,7 @@ pub async fn dsh_detect(app: tauri::AppHandle) -> Result<DshStatus, String> {
         hostname,
         local_url,
         url,
+        remote_url_access,
         magic_dns_enabled: magic,
         serve_configured,
         autostart_enabled: autostart_enabled(),
@@ -1665,11 +1703,39 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
             .map(|specs| auth_plugins_installed(&specs))
             .unwrap_or(false);
         let serve_ok = serve_configured(&tailscale.0);
-        let https_ok = url.as_deref().map(https_endpoint_ok).unwrap_or(false);
-        let ws_ok = url.as_deref().map(ws_endpoint_ok).unwrap_or(false);
+        let remote_probe = url.as_deref().map(probe_remote_url);
+        let https_ok = remote_probe
+            .as_ref()
+            .map(|probe| probe.direct_https_ok)
+            .unwrap_or(false);
+        let ws_ok = remote_probe
+            .as_ref()
+            .map(|probe| probe.direct_ws_ok)
+            .unwrap_or(false);
+        let remote_url_access = remote_probe.map(|probe| probe.access);
         let local_privileged_ok = rpc_ok(WEB_PORT, "settings.describe");
 
-        if web_ok && plugins_ok && serve_ok && https_ok && ws_ok && local_privileged_ok {
+        let remote_stack_ok =
+            web_ok && plugins_ok && serve_ok && https_ok && ws_ok && local_privileged_ok;
+        if remote_stack_ok && remote_url_access == Some(RemoteUrlAccess::ProxyInterference) {
+            let host = url
+                .as_deref()
+                .and_then(proxy_bypass_host)
+                .unwrap_or("<hostname>.ts.net");
+            return ctx.fail(
+                &trf(
+                    "The local proxy is intercepting the Tailscale address: {url}",
+                    &[("url", url_text)],
+                ),
+                &trf(
+                    "Add {host} to this machine's proxy bypass / skip-proxy list, then retry",
+                    &[("host", host.to_string())],
+                ),
+                &remaining_after(7),
+            );
+        }
+
+        if remote_stack_ok && remote_url_access == Some(RemoteUrlAccess::Ready) {
             ctx.done(&trf("Remote access is ready: {url}", &[("url", url_text)]));
         } else {
             let mut checks = Vec::new();
@@ -1696,6 +1762,12 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
             }
             if !local_privileged_ok {
                 checks.push(tr("Local privileged API access failed on 127.0.0.1:3899"));
+            }
+            if remote_url_access == Some(RemoteUrlAccess::ProxyInterference) {
+                checks.push(trf(
+                    "The local proxy is intercepting the Tailscale address: {url}",
+                    &[("url", url_text.clone())],
+                ));
             }
             let separator = if current() == "zh-CN" { "；" } else { "; " };
             return ctx.fail(
@@ -2257,20 +2329,159 @@ fn restart_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) -> Result
     Ok(())
 }
 
-/// 真实 HTTPS 端点检查：curl -k 请求本机自己的 tailnet 域名。
-/// Windows 10 1803+ 自带 curl.exe；macOS/Linux 标配 curl。
-/// 返回是否拿到 2xx/3xx 响应
-fn https_endpoint_ok(url: &str) -> bool {
+fn curl_direct_args(url: &str) -> Vec<String> {
     let null_dev = if cfg!(windows) { "NUL" } else { "/dev/null" };
-    match run_capture(
-        "curl",
-        &["-sk", "--max-time", "10", "-o", null_dev, "-w", "%{http_code}", url],
-    ) {
+    [
+        "-sk",
+        "--noproxy",
+        "*",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "6",
+        "-o",
+        null_dev,
+        "-w",
+        "%{http_code}",
+        url,
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+fn curl_proxy_args(url: &str, proxy: &MacosHttpsProxy) -> Vec<String> {
+    let null_dev = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    [
+        "-sk".to_string(),
+        "--proxy".to_string(),
+        format!("http://{}:{}", proxy.server, proxy.port),
+        "--connect-timeout".to_string(),
+        "2".to_string(),
+        "--max-time".to_string(),
+        "4".to_string(),
+        "-o".to_string(),
+        null_dev.to_string(),
+        "-w".to_string(),
+        "%{http_code}".to_string(),
+        url.to_string(),
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// 真实 HTTPS 端点检查：显式绕过代理后请求本机自己的 tailnet 域名。
+/// Windows 10 1803+ 自带 curl.exe；macOS/Linux 标配 curl。
+/// 返回是否拿到 2xx/3xx 响应。
+fn https_endpoint_ok(url: &str) -> bool {
+    let args = curl_direct_args(url);
+    match run_capture("curl", &string_args(&args)) {
         Ok((out, _, ok)) => {
             let code = out.trim();
             ok && (code.starts_with('2') || code.starts_with('3'))
         }
         Err(_) => false,
+    }
+}
+
+fn https_endpoint_ok_via_proxy(url: &str, proxy: &MacosHttpsProxy) -> bool {
+    let args = curl_proxy_args(url, proxy);
+    match run_capture("curl", &string_args(&args)) {
+        Ok((out, _, ok)) => {
+            let code = out.trim();
+            ok && (code.starts_with('2') || code.starts_with('3'))
+        }
+        Err(_) => false,
+    }
+}
+
+fn parse_macos_https_proxy(output: &str) -> Option<MacosHttpsProxy> {
+    let mut enabled = false;
+    let mut server = None;
+    let mut port = None;
+    let mut exceptions = Vec::new();
+    let mut in_exceptions = false;
+
+    for raw in output.lines() {
+        let line = raw.trim();
+        if line.starts_with("ExceptionsList : <array>") {
+            in_exceptions = true;
+            continue;
+        }
+        if in_exceptions {
+            if line == "}" {
+                in_exceptions = false;
+                continue;
+            }
+            if let Some((index, value)) = line.split_once(" : ") {
+                if index.chars().all(|c| c.is_ascii_digit()) {
+                    exceptions.push(value.trim().to_string());
+                }
+            }
+            continue;
+        }
+        if line == "HTTPSEnable : 1" {
+            enabled = true;
+        } else if let Some(value) = line.strip_prefix("HTTPSProxy : ") {
+            server = Some(value.trim().to_string());
+        } else if let Some(value) = line.strip_prefix("HTTPSPort : ") {
+            port = value.trim().parse::<u16>().ok();
+        }
+    }
+
+    if !enabled {
+        return None;
+    }
+    Some(MacosHttpsProxy {
+        server: server.filter(|value| !value.is_empty())?,
+        port: port?,
+        exceptions,
+    })
+}
+
+fn proxy_bypasses_host(host: &str, exceptions: &[String]) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    exceptions.iter().any(|entry| {
+        let entry = entry.trim().trim_end_matches('.').to_ascii_lowercase();
+        if entry == host {
+            return true;
+        }
+        let suffix = entry.strip_prefix("*.").or_else(|| entry.strip_prefix('.'));
+        suffix.is_some_and(|suffix| host == suffix || host.ends_with(&format!(".{suffix}")))
+    })
+}
+
+fn remote_url_host(url: &str) -> Option<&str> {
+    url.strip_prefix("https://")?
+        .split(['/', ':'])
+        .next()
+        .filter(|host| !host.is_empty())
+}
+
+#[cfg(target_os = "macos")]
+fn active_macos_https_proxy() -> Option<MacosHttpsProxy> {
+    let (out, _, ok) = run_capture("/usr/sbin/scutil", &["--proxy"]).ok()?;
+    ok.then(|| parse_macos_https_proxy(&out)).flatten()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn active_macos_https_proxy() -> Option<MacosHttpsProxy> {
+    None
+}
+
+fn classify_remote_url_access(
+    direct_https_ok: bool,
+    direct_ws_ok: bool,
+    uses_proxy: bool,
+    proxied_https_ok: bool,
+    proxied_ws_ok: bool,
+) -> RemoteUrlAccess {
+    if !direct_https_ok || !direct_ws_ok {
+        RemoteUrlAccess::EndpointFailure
+    } else if uses_proxy && (!proxied_https_ok || !proxied_ws_ok) {
+        RemoteUrlAccess::ProxyInterference
+    } else {
+        RemoteUrlAccess::Ready
     }
 }
 
@@ -2307,6 +2518,82 @@ fn ws_endpoint_ok(url: &str) -> bool {
     let Some(node) = which("node") else { return true };
     let ws_url = format!("{}/api/events.host", url.replacen("https://", "wss://", 1));
     ws_probe_ok(&node, &ws_url)
+}
+
+fn ws_endpoint_ok_via_proxy(url: &str, proxy: &MacosHttpsProxy) -> bool {
+    let endpoint = format!("{}/api/events.host", url.trim_end_matches('/'));
+    let proxy_url = format!("http://{}:{}", proxy.server, proxy.port);
+    let args = [
+        "-sk",
+        "--http1.1",
+        "--proxy",
+        proxy_url.as_str(),
+        "--connect-timeout",
+        "2",
+        "--max-time",
+        "4",
+        "-D",
+        "-",
+        "-o",
+        if cfg!(windows) { "NUL" } else { "/dev/null" },
+        "-H",
+        "Connection: Upgrade",
+        "-H",
+        "Upgrade: websocket",
+        "-H",
+        "Sec-WebSocket-Version: 13",
+        "-H",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+        endpoint.as_str(),
+    ];
+    match run_capture("curl", &args) {
+        Ok((out, _, _)) => out
+            .lines()
+            .any(|line| line.trim_start().starts_with("HTTP/1.1 101")),
+        Err(_) => false,
+    }
+}
+
+fn probe_remote_url(url: &str) -> RemoteUrlProbe {
+    let direct_https_ok = https_endpoint_ok(url);
+    let direct_ws_ok = ws_endpoint_ok(url);
+    let Some(proxy) = active_macos_https_proxy() else {
+        return RemoteUrlProbe {
+            access: classify_remote_url_access(direct_https_ok, direct_ws_ok, false, false, false),
+            direct_https_ok,
+            direct_ws_ok,
+        };
+    };
+    let Some(host) = remote_url_host(url) else {
+        return RemoteUrlProbe {
+            access: RemoteUrlAccess::EndpointFailure,
+            direct_https_ok,
+            direct_ws_ok,
+        };
+    };
+    let uses_proxy = !proxy_bypasses_host(host, &proxy.exceptions);
+    let (proxied_https_ok, proxied_ws_ok) = if uses_proxy && direct_https_ok && direct_ws_ok {
+        let https_ok = https_endpoint_ok_via_proxy(url, &proxy);
+        let ws_ok = https_ok && ws_endpoint_ok_via_proxy(url, &proxy);
+        (https_ok, ws_ok)
+    } else {
+        (false, false)
+    };
+    RemoteUrlProbe {
+        access: classify_remote_url_access(
+            direct_https_ok,
+            direct_ws_ok,
+            uses_proxy,
+            proxied_https_ok,
+            proxied_ws_ok,
+        ),
+        direct_https_ok,
+        direct_ws_ok,
+    }
+}
+
+fn proxy_bypass_host(url: &str) -> Option<&str> {
+    remote_url_host(url)
 }
 
 // ============ 停止 ============
@@ -2852,13 +3139,15 @@ fn render_desktop_entry(name: &str, script: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        compose_verified_min, dsh_version_is_compatible, dsh_web_cmd_pattern,
-        ere_to_ps_wildcards, insert_web_profile_compat_entry, normalize_version,
-        parse_extra_logins, parse_version, remove_web_profile_compat_entry,
-        plugin_profile_is_current, port_guard_js, render_desktop_entry, render_start_web,
-        rpc_request, serve_command, serve_failure_solution, serve_status_targets_web, sh_quote,
-        tailscale_login_from_status_json, validate_cap_domain, win_cmd_line, win_quote, AuthConfig,
-        SUPPORTED_DSH_VERSION,
+        classify_remote_url_access, compose_verified_min, curl_direct_args,
+        dsh_version_is_compatible, dsh_web_cmd_pattern, ere_to_ps_wildcards,
+        insert_web_profile_compat_entry, normalize_version, parse_extra_logins,
+        parse_macos_https_proxy, parse_version, plugin_profile_is_current, port_guard_js,
+        proxy_bypass_host, proxy_bypasses_host, remove_web_profile_compat_entry,
+        render_desktop_entry,
+        render_start_web, rpc_request, serve_command, serve_failure_solution,
+        serve_status_targets_web, sh_quote, tailscale_login_from_status_json, validate_cap_domain,
+        win_cmd_line, win_quote, AuthConfig, RemoteUrlAccess, SUPPORTED_DSH_VERSION,
     };
     use crate::i18n::set_current;
     use std::path::Path;
@@ -3284,6 +3573,69 @@ mod tests {
         let url = "https://etmacmini.taildde4.ts.net";
         let ws_url = format!("{}/api/events.host", url.replacen("https://", "wss://", 1));
         assert_eq!(ws_url, "wss://etmacmini.taildde4.ts.net/api/events.host");
+    }
+
+    #[test]
+    fn remote_url_access_classifies_local_proxy_interference() {
+        assert_eq!(
+            classify_remote_url_access(true, true, true, false, false),
+            RemoteUrlAccess::ProxyInterference
+        );
+        assert_eq!(
+            classify_remote_url_access(true, true, true, true, true),
+            RemoteUrlAccess::Ready
+        );
+        assert_eq!(
+            classify_remote_url_access(false, true, true, false, false),
+            RemoteUrlAccess::EndpointFailure
+        );
+    }
+
+    #[test]
+    fn macos_proxy_requires_an_explicit_tailnet_bypass() {
+        let output = r#"<dictionary> {
+  ExceptionsList : <array> {
+    0 : localhost
+    1 : 10.0.0.0/8
+    2 : *.local
+  }
+  HTTPSEnable : 1
+  HTTPSPort : 1082
+  HTTPSProxy : 127.0.0.1
+}"#;
+        let proxy = parse_macos_https_proxy(output).expect("enabled HTTPS proxy");
+        assert_eq!(proxy.server, "127.0.0.1");
+        assert_eq!(proxy.port, 1082);
+        assert!(!proxy_bypasses_host(
+            "etmacminim4.taildde4.ts.net",
+            &proxy.exceptions
+        ));
+
+        let exact = vec!["etmacminim4.taildde4.ts.net".to_string()];
+        assert!(proxy_bypasses_host("etmacminim4.taildde4.ts.net", &exact));
+        let suffix = vec!["*.taildde4.ts.net".to_string()];
+        assert!(proxy_bypasses_host("etmacminim4.taildde4.ts.net", &suffix));
+        let tailscale_cidr = vec!["100.64.0.0/10".to_string()];
+        assert!(!proxy_bypasses_host(
+            "etmacminim4.taildde4.ts.net",
+            &tailscale_cidr
+        ));
+    }
+
+    #[test]
+    fn proxy_bypass_uses_only_the_exact_remote_host() {
+        assert_eq!(
+            proxy_bypass_host("https://etmacminim4.taildde4.ts.net"),
+            Some("etmacminim4.taildde4.ts.net")
+        );
+        assert_eq!(proxy_bypass_host("not-a-remote-url"), None);
+    }
+
+    #[test]
+    fn direct_https_probe_explicitly_ignores_proxy_settings() {
+        let args = curl_direct_args("https://etmacminim4.taildde4.ts.net");
+        let no_proxy = args.iter().position(|arg| arg == "--noproxy").unwrap();
+        assert_eq!(args[no_proxy + 1], "*");
     }
 
     #[test]

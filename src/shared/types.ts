@@ -23,6 +23,7 @@ export interface DshStatus {
   hostname: string | null;
   localUrl: string | null;
   url: string | null;
+  remoteUrlAccess: "ready" | "proxy_interference" | "endpoint_failure" | null;
   magicDnsEnabled: boolean;
   serveConfigured: boolean;
   autostartEnabled: boolean;

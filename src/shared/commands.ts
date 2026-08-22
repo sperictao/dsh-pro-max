@@ -31,7 +31,8 @@ export const autostartSet = (enabled: boolean) => invokeTyped<void>("autostart_s
 export const getLogDir = () => invokeTyped<string>("get_log_dir");
 
 // ============ dsh ============
-export const dshDetect = () => invokeTyped<DshStatus>("dsh_detect");
+export const dshDetect = (verifyRemoteUrl = false) =>
+  invokeTyped<DshStatus>("dsh_detect", { verifyRemoteUrl });
 export const dshSetup = () => invokeTyped<void>("dsh_setup");
 export const dshStartWeb = () => invokeTyped<string>("dsh_start_web");
 export const dshStop = () => invokeTyped<void>("dsh_stop");

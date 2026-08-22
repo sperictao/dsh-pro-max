@@ -96,7 +96,7 @@ capability 与 allowlist 注入 dsh web / 自启脚本。剩下的一环是 tail
 5. MagicDNS / HTTPS Certificates；
 6. dsh 监听 `127.0.0.1:3899`；
 7. Tailscale Serve 直接指向 3899；
-8. 本地 HTTP、远程 HTTPS/WSS 和本地特权 API 验证。
+8. 本地 HTTP、远程 HTTPS/WSS、本机浏览器代理路径和本地特权 API 验证。
 
 手动排查可使用：
 
@@ -112,9 +112,29 @@ profile 中的插件 tarball 与 Launcher 锁定值不一致；点击修复会�
 
 ## 访问端代理工具拦截
 
-如果 Launcher 已验证通过，但另一台设备打不开 `https://<hostname>.ts.net`，最常见
-原因是 Shadowrocket、Clash、Surge 或系统代理抢走了 tailnet 流量。访问端应让以下
-规则直连：
+如果本机或另一台设备打不开 `https://<hostname>.ts.net`，但关闭代理后可用，原因是
+Shadowrocket、Clash、Surge 或系统代理抢走了 tailnet 流量。Launcher 会分别验证
+直连和本机代理路径。
+
+宿主 Mac 上使用 Shadowrocket 时，必须让 macOS 在流量进入 Shadowrocket 之前跳过
+HTTP/HTTPS 代理。出现“本机代理需要配置绕过主机”时，把 Launcher 显示的精确主机名
+加入 Shadowrocket 的“通用 → 跳过代理（skip-proxy）”，例如：
+
+```text
+<hostname>.<tailnet>.ts.net
+```
+
+保存后可用 `scutil --proxy` 确认该主机已进入 `ExceptionsList`，然后点击“复查并打开”。
+仅添加 Shadowrocket 内部的 `DOMAIN,...,DIRECT` 规则并不足以保证宿主 Mac 可用，因为
+该流量仍可能留在 Shadowrocket 的 Packet Tunnel 内，无法交给本机 Tailscale 路由。
+
+另一台访问端设备若同时运行代理工具和 Tailscale，可先添加精确 DIRECT 规则：
+
+```text
+DOMAIN,<hostname>.<tailnet>.ts.net,DIRECT
+```
+
+需要为访问端整个 tailnet 配置通用规则时再使用较宽的范围：
 
 ```text
 DOMAIN-SUFFIX,ts.net,DIRECT
@@ -129,6 +149,8 @@ rules:
   - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
 ```
 
-Surge 使用同名 `[Rule]` 项。macOS / Windows 系统代理可把 `*.ts.net` 加入 bypass。
-iOS 通常只能同时运行一个 Packet Tunnel VPN；若 Shadowrocket 与 Tailscale 冲突，
-断开 Shadowrocket，只保留 Tailscale。
+Surge 使用同名 `[Rule]` 项。macOS / Windows 的手工系统代理可把精确主机或
+`*.ts.net` 加入 bypass。PAC、Shadowrocket 等 Network Extension 的规则是各自配置
+的事实来源，Launcher 只给出精确主机名，不会静默改写它们。iOS 通常只能
+同时运行一个 Packet Tunnel VPN；若 Shadowrocket 与 Tailscale 冲突，断开
+Shadowrocket，只保留 Tailscale。
