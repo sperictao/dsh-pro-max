@@ -14,8 +14,8 @@ const lockDir = resolve(root, ".artifacts/dsh-plugins.lock");
 const plugins = [
   {
     source: "vendor/dsh-client-connection-authz",
-    commit: "62ab96c0b1260aeb851e409aef95f23830e61096",
-    output: "dsh-client-connection-authz-62ab96c0b126.tgz",
+    commit: "2fccf0d593b12a714bfa5b8f8977e1e265d8f8ad",
+    output: "dsh-client-connection-authz-2fccf0d593b1.tgz",
   },
   {
     source: "vendor/dsh-auth-tailscale",

@@ -130,6 +130,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "Invalid dsh version: {version}" => "无效的 dsh 版本: {version}",
         "Installed dsh version {actual}, expected {expected}" => "已安装 dsh {actual}，与目标版本 {expected} 不符",
         "Failed to create directory: {error}" => "创建目录失败: {error}",
+        "Failed to read {path}: {error}" => "读取 {path} 失败: {error}",
         "Failed to write {path}: {error}" => "写入 {path} 失败: {error}",
         "Failed to remove dsh auth plugins: {error}" => "卸载 dsh 授权插件失败: {error}",
         "dsh plugin remove completed but auth plugins remain in the web profile: {error}" => "dsh 插件卸载完成但 web profile 仍有残留: {error}",

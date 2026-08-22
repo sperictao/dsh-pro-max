@@ -20,6 +20,7 @@
 - 自启动（dsh web 开机自起）事实来源是 OS 注册项（launchd / 启动文件夹 / autostart desktop），本应用不在配置里存布尔值。
 - 本应用不写 tailnet 侧任何配置：MagicDNS / HTTPS Certificates / Serve 授权都要求用户在 Tailscale 管理页自行开启，应用只检测并在失败步骤给出指引。
 - serve flag 与 tailnet grants 必须与所配 capability 同名——配置教程见 `docs/dsh-remote-access-setup.md`。
+- authz replacement 的浏览器 `connection.isLoopback` 只表示“允许尝试 Host-authority RPC”，不是授权结论；本地旁路仍要求 loopback Host + loopback peer，远程每个特权请求仍由 Host authorizer 的 admin capability 独立裁决。客户端不得再用页面 hostname 建第二套权限事实。
 
 ## 界面多语言（i18n）
 

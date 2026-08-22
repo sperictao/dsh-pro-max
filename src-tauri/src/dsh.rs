@@ -37,7 +37,7 @@ const DSH_PACKAGE: &str = "@deepseek-ai/dsh";
 const SUPPORTED_DSH_VERSION: &str = "0.1.0-rc.6";
 const CONNECTION_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-client-connection-authz";
 const AUTH_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-auth-tailscale";
-const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-62ab96c0b126.tgz";
+const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-2fccf0d593b1.tgz";
 const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-01666104af53.tgz";
 const TAILSCALE_LOGIN_ENV: &str = "DSH_TAILSCALE_ALLOWED_LOGINS";
 const LOCAL_ONLY_LOGIN: &str = "local-only@localhost.invalid";
@@ -616,7 +616,10 @@ fn install_auth_plugins(app: &tauri::AppHandle) -> Result<DshPluginSpecs, String
     // 有效信息（实机回归：「pnpm failed in profile directory」无详情）。
     // remove 是幂等的（无残留时 pnpm 直接成功），清理后 add 走干净路径
     match run_plugin_add(&dsh, &specs) {
-        Ok(()) => Ok(specs),
+        Ok(()) => {
+            ensure_web_profile_compat_patch()?;
+            Ok(specs)
+        }
         Err(first_err) => {
             log::warn!("[dsh 插件] 首次安装失败，清理 profile 后重试: {}", first_err);
             let _ = run_capture(
@@ -630,7 +633,9 @@ fn install_auth_plugins(app: &tauri::AppHandle) -> Result<DshPluginSpecs, String
                     AUTH_PLUGIN_PACKAGE,
                 ],
             );
-            run_plugin_add(&dsh, &specs).map(|()| specs)
+            run_plugin_add(&dsh, &specs)?;
+            ensure_web_profile_compat_patch()?;
+            Ok(specs)
         }
     }
 }
@@ -807,7 +812,9 @@ fn install_supported_dsh() -> Result<String, String> {
     // 仅在版本校验成功后写 profile patch，避免失败安装留下持久残留。
     // authz 插件的依赖范围（^rc.8）不覆盖 dsh 下一个 rc 的 peer（^rc.9），
     // 装新版本后需要让 profile 的插件依赖也跟着滚。
-    rewrite_web_profile_patch(&version);
+    if let Err(error) = rewrite_web_profile_patch(&version) {
+        log::warn!("[dsh 安装] 重写 web profile patch 失败: {}", error);
+    }
     Ok(version)
 }
 
@@ -1340,6 +1347,12 @@ impl StepCtx<'_> {
 /// 失败返回 (problem, solution) 供时间轴与更新流程分别展示针对性排障提示。
 /// dsh_setup 与 dsh_update 共用
 fn spawn_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) -> Result<u32, (String, String)> {
+    if web_profile_has_auth_plugins() {
+        ensure_web_profile_compat_patch().map_err(|error| {
+            log::error!("[dsh 启动] 修复 web profile patch 失败: {}", error);
+            (error, tr("Check the log at ~/.dsh/dsh-web.log"))
+        })?;
+    }
     let dsh_bin = match resolve_dsh_bin() {
         Ok(b) => b,
         Err(e) => {
@@ -2023,7 +2036,6 @@ pub async fn dsh_update(app: tauri::AppHandle) -> Result<String, String> {
 /// 把 profile 里的 dsh-* 依赖滚到与新 CLI 兼容的版本。authz 插件的依赖
 /// 范围（如 ^0.1.0-rc.8）不覆盖 dsh 下一个 rc 的 peer（^0.1.0-rc.9），
 /// 不重写则 boot 时 pnpm 解出旧版 attachment 崩（rc.6→rc.8 的教训）。
-/// 失败只记日志不打断安装——dsh 本身可能兼容，重写只是预防性兜底。
 const WEB_PROFILE_COMPAT_ID_LINE: &str = "- id: dsh-pro-max-compat";
 
 fn insert_web_profile_compat_entry(contents: &str, installed_version: &str) -> String {
@@ -2091,22 +2103,58 @@ fn remove_web_profile_compat_entry(contents: &str) -> String {
     format!("{}{newline}", lines.join(newline))
 }
 
-fn rewrite_web_profile_patch(installed_version: &str) {
-    let patch_path = match dsh_dir() {
-        Ok(d) => d.join("profiles").join("web").join("cordis.patch.yml"),
-        Err(_) => return,
+fn ensure_web_profile_compat_patch() -> Result<(), String> {
+    let version =
+        dsh_version().ok_or_else(|| tr("dsh installed but cannot be located in PATH"))?;
+    rewrite_web_profile_patch(&version)
+}
+
+fn rewrite_web_profile_patch(installed_version: &str) -> Result<(), String> {
+    let patch_path = dsh_dir()?
+        .join("profiles")
+        .join("web")
+        .join("cordis.patch.yml");
+    rewrite_web_profile_patch_at(&patch_path, installed_version)
+}
+
+fn rewrite_web_profile_patch_at(
+    patch_path: &Path,
+    installed_version: &str,
+) -> Result<(), String> {
+    let contents = match fs::read_to_string(patch_path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "[]\n".to_string(),
+        Err(error) => {
+            return Err(trf(
+                "Failed to read {path}: {error}",
+                &[
+                    ("path", patch_path.display().to_string()),
+                    ("error", error.to_string()),
+                ],
+            ))
+        }
     };
-    if !patch_path.is_file() {
-        return;
-    }
-    let Ok(contents) = fs::read_to_string(&patch_path) else { return };
     let updated = insert_web_profile_compat_entry(&contents, installed_version);
     if updated == contents {
-        return;
+        return Ok(());
     }
-    if let Err(e) = fs::write(&patch_path, updated) {
-        log::warn!("[dsh 安装] 重写 web profile patch 失败: {}", e);
+    if let Some(parent) = patch_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            trf(
+                "Failed to create directory: {error}",
+                &[("error", error.to_string())],
+            )
+        })?;
     }
+    fs::write(patch_path, updated).map_err(|error| {
+        trf(
+            "Failed to write {path}: {error}",
+            &[
+                ("path", patch_path.display().to_string()),
+                ("error", error.to_string()),
+            ],
+        )
+    })
 }
 
 /// 清掉 patch 里的 compat 条目（用户显式安装旧版 dsh 后调用，让下次
@@ -3313,10 +3361,11 @@ mod tests {
         parse_macos_https_proxy, parse_version, plugin_profile_is_current, port_guard_js,
         proxy_bypass_host, proxy_bypasses_host, remove_web_profile_compat_entry,
         render_desktop_entry,
-        render_start_web, rpc_request, serve_command, serve_failure_solution,
+        render_start_web, rewrite_web_profile_patch_at, rpc_request, serve_command,
+        serve_failure_solution,
         serve_status_targets_web, sh_quote, tailscale_login_from_status_json, validate_cap_domain,
         win_cmd_line, win_quote, AuthConfig, RemoteRpcAccess, RemoteUrlAccess,
-        SUPPORTED_DSH_VERSION,
+        SUPPORTED_DSH_VERSION, WEB_PROFILE_COMPAT_ID_LINE,
     };
     use crate::i18n::set_current;
     use std::path::Path;
@@ -3512,6 +3561,26 @@ mod tests {
             format!("{inserted}---\n[]\n")
         );
         assert_eq!(remove_web_profile_compat_entry(&inserted), empty);
+    }
+
+    #[test]
+    fn plugin_add_postcondition_recreates_the_compat_patch() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-pro-max-compat-{}-{unique}",
+            std::process::id()
+        ));
+        let patch = dir.join("cordis.patch.yml");
+
+        rewrite_web_profile_patch_at(&patch, "0.1.1-rc.2").unwrap();
+
+        let contents = std::fs::read_to_string(&patch).unwrap();
+        assert!(contents.contains(WEB_PROFILE_COMPAT_ID_LINE));
+        assert!(contents.contains("installed dsh CLI is 0.1.1-rc.2"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
