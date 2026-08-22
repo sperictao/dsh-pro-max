@@ -1029,10 +1029,22 @@ fn tailscale_login_from_status_json(raw: &str) -> Result<String, String> {
             return Err(err);
         }
     };
+    // Tailscale 客户端演进后 User 表的 key 与条目内 ID 字段不再一致
+    // （实测 2026-08：Self.UserID 匹配的是条目的 ID 字段，不是表 key）。
+    // 先按条目 ID 匹配；条目无 ID 字段的旧形态退回按表 key 匹配。
     let login = status
         .get("User")
         .and_then(serde_json::Value::as_object)
-        .and_then(|users| users.get(&user_id))
+        .and_then(|users| {
+            users
+                .values()
+                .find(|user| {
+                    user.get("ID")
+                        .map(|id| id.to_string().trim_matches('"') == user_id)
+                        .unwrap_or(false)
+                })
+                .or_else(|| users.get(&user_id))
+        })
         .and_then(|user| user.get("LoginName"))
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
@@ -3629,6 +3641,24 @@ mod tests {
         }"#;
         assert_eq!(
             tailscale_login_from_status_json(status).unwrap(),
+            "owner@example.com"
+        );
+
+        // 新形态：User 表的 key 与条目 ID 字段不一致，Self.UserID 匹配
+        // 条目 ID（实测 Tailscale 客户端演进后的 status 输出）。按表 key
+        // 查找会落空 → 一键启动在身份步骤失败、spawn 静默降级到
+        // local-only allowlist，远程访问整体 403 而「本地正常」
+        let drifted = r#"{
+          "Self": { "UserID": 70594654120136504 },
+          "User": {
+            "70594654120136503": {
+              "ID": 70594654120136504,
+              "LoginName": "owner@example.com"
+            }
+          }
+        }"#;
+        assert_eq!(
+            tailscale_login_from_status_json(drifted).unwrap(),
             "owner@example.com"
         );
 
