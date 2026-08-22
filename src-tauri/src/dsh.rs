@@ -2395,6 +2395,7 @@ fn https_endpoint_ok_via_proxy(url: &str, proxy: &MacosHttpsProxy) -> bool {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn parse_macos_https_proxy(output: &str) -> Option<MacosHttpsProxy> {
     let mut enabled = false;
     let mut server = None;
