@@ -69,6 +69,7 @@ export function statusTextKey(s: DshStatus): string {
   // 授权插件只服务于远程访问链路；纯本地用 dsh 不需要，故放在运行之后
   if (!s.pluginsInstalled) return "dsh auth plugins not installed";
   if (!s.serveConfigured) return "Tailscale serve not configured";
+  if (s.remoteUrlAccess === "capability_denied") return "Remote capability grant denied";
   if (s.remoteUrlAccess === "proxy_interference") return "Local proxy bypass required";
   if (s.remoteUrlAccess === "endpoint_failure") return "Remote endpoint check failed";
   if (s.remoteUrlAccess !== "ready") return "Remote access not verified";
@@ -477,9 +478,18 @@ export function DshCard() {
         {isRemote ? (
           <>
             <div className="mt-1 text-xs opacity-60">
-              {t("Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Tailscale identity is authorized by bundled dsh plugins; remote privileged APIs stay denied.")}
+              {t("Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Remote settings and credentials require the configured admin capability in tailnet grants.")}
             </div>
-            {status?.remoteUrlAccess === "proxy_interference" && proxyBypassHost ? (
+            {status?.remoteUrlAccess === "capability_denied" ? (
+              <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-capability-warning">
+                <div className="font-medium text-destructive">
+                  {t("Remote capability grant denied")}
+                </div>
+                <div className="mt-1 opacity-70">
+                  {t("Grant the configured use/admin capabilities to this identity and dsh node in tailnet grants, then stop and run one-click start again.")}
+                </div>
+              </div>
+            ) : status?.remoteUrlAccess === "proxy_interference" && proxyBypassHost ? (
               <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-local-proxy-warning">
                 <div className="font-medium text-destructive">
                   {t("This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.")}
@@ -552,6 +562,9 @@ export function DshCard() {
             <button className={BTN_SM} id="btn-save-remote-auth" disabled={busy} onClick={() => void saveRemoteAuth()}>
               {t("Save")}
             </button>
+          </div>
+          <div className="text-xs opacity-60">
+            {t("After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.")}
           </div>
 
           <div className="flex flex-col gap-1">

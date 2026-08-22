@@ -84,14 +84,16 @@ settings / credentials。**需要配置**，完整链条如下：
    - **Extra allowed logins** 通常无需填（本机账号已包含，且身份是账号级、覆盖你
      任何设备）；仅当你用其它不同 Tailscale 账号访问时才填
    - 点 **Save**
+   - 修改授权后，先关闭正在运行的 dsh Web，再点 **一键启动**，让新的进程环境与
+     `tailscale serve --accept-app-caps` 同时生效
 3. **tailnet grants**（admin console，capability 生效的必须一环，见第 6 节）：
    - `src` 填你本人（账号或你所在的组）
    - `dst` 填 `autogroup:member`（个人场景最省事，不必给节点打 tag）
    - `app` 里给 `<域名>/cap/dsh` 与 `<域名>/cap/dsh-admin`
 
-> 注意：一键启动时间轴的最后一步 verify **只验证本机 loopback 特权 API 与
-> HTTPS/WSS 可达**，并不会用远程身份真正试一次 capability 授权。所以 grants 配完
-> 后，最后要**从另一台设备实际访问一下**确认管理接口能打开，才算真正生效。
+> 一键启动时间轴的最后一步 verify 会按已配置项验证远程普通 API 与远程
+> `settings.describe`，并在 capability 未下发时直接指向 tailnet grants。仍建议最后
+> 从另一台设备实际访问一次，覆盖该设备自己的身份与代理路径。
 
 ### 场景 C：只想给同事开远程访问，不开放管理（多用户最小配置）
 
@@ -162,7 +164,8 @@ grants 示例（`dst` 需匹配运行 dsh 的节点，未打 tag 可用该节点
 5. MagicDNS / HTTPS Certificates
 6. dsh 监听 `127.0.0.1:3899`
 7. Tailscale Serve 直接指向 3899
-8. 本地 HTTP、远程 HTTPS / WSS、本机浏览器代理路径和本地特权 API 验证
+8. 本地 HTTP、远程 HTTPS / WSS、已配置 capability 对应的远程 API、
+   本机浏览器代理路径和本地特权 API 验证
 
 手动排查可用：
 

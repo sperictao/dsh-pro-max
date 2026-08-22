@@ -1,6 +1,6 @@
 [package]
 name = "dsh-pro-max"
-version = "0.3.6"
+version = "0.3.7"
 description = "Desktop launcher for DeepSeek Harness with one-click Tailscale remote access"
 authors = ["dsh-pro-max"]
 edition = "2021"

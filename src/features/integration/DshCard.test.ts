@@ -95,6 +95,13 @@ describe("dsh auth plugin readiness", () => {
     expect(timelineFromStatus(blocked).at(-1)?.state).toBe("pending");
   });
 
+  it("reports a denied remote capability separately from endpoint failure", () => {
+    const denied = { ...ready, remoteUrlAccess: "capability_denied" as const };
+    expect(statusTextKey(denied)).toBe("Remote capability grant denied");
+    expect(timelineFromStatus(denied).at(-1)?.state).toBe("pending");
+    expect(verifiedRemoteUrl(denied)).toBeNull();
+  });
+
   it("does not report or open remote access before the URL probe succeeds", () => {
     expect(statusTextKey({ ...ready, remoteUrlAccess: null }))
       .toBe("Remote access not verified");
@@ -144,6 +151,42 @@ describe("local mode status text", () => {
 });
 
 describe("remote URL verification flow", () => {
+  it("explains that saved authorization changes require another one-click start", async () => {
+    localStorage.setItem("dsh-access-mode", "remote");
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue(ready);
+    useAppStore.setState({
+      config: {
+        minimize_to_tray_on_close: false,
+        language: "en",
+        dsh_admin_cap_domain: "example.com",
+        dsh_use_cap_domain: "example.com",
+        dsh_extra_allowed_logins: "",
+      },
+    });
+
+    render(createElement(DshCard));
+
+    expect(await screen.findByText(
+      "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.",
+    )).toBeInTheDocument();
+  });
+
+  it("shows the tailnet grants action when a capability probe is denied", async () => {
+    localStorage.setItem("dsh-access-mode", "remote");
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue({
+      ...ready,
+      remoteUrlAccess: "capability_denied",
+    });
+
+    render(createElement(DshCard));
+
+    expect(await screen.findAllByText("Remote capability grant denied")).toHaveLength(2);
+    expect(screen.getByText(
+      "Grant the configured use/admin capabilities to this identity and dsh node in tailnet grants, then stop and run one-click start again.",
+    )).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open" })).toBeDisabled();
+  });
+
   it("shows the exact skip-proxy host and keeps remote open disabled", async () => {
     localStorage.setItem("dsh-access-mode", "remote");
     const blocked = { ...ready, remoteUrlAccess: "proxy_interference" as const };

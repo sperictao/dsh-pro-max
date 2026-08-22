@@ -79,7 +79,7 @@ export const en = {
 
   // —— DeepSeek Harness 远程访问 ——
   "DeepSeek Harness": "DeepSeek Harness",
-  "Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Tailscale identity is authorized by bundled dsh plugins; remote privileged APIs stay denied.": "Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Tailscale identity is authorized by bundled dsh plugins; remote privileged APIs stay denied.",
+  "Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Remote settings and credentials require the configured admin capability in tailnet grants.": "Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Remote settings and credentials require the configured admin capability in tailnet grants.",
   "Remote access": "Remote access",
   "Switching the access mode only selects the setup/close flow; click Start or Stop below to apply it. It does not start or stop anything by itself.": "Switching the access mode only selects the setup/close flow; click Start or Stop below to apply it. It does not start or stop anything by itself.",
   "dsh web is running; stop it before switching the access mode.": "dsh web is running; stop it before switching the access mode.",
@@ -104,6 +104,8 @@ export const en = {
   "Proxy bypass host copied": "Proxy bypass host copied",
   "Local proxy bypass required": "Local proxy bypass required",
   "Remote endpoint check failed": "Remote endpoint check failed",
+  "Remote capability grant denied": "Remote capability grant denied",
+  "Grant the configured use/admin capabilities to this identity and dsh node in tailnet grants, then stop and run one-click start again.": "Grant the configured use/admin capabilities to this identity and dsh node in tailnet grants, then stop and run one-click start again.",
   "This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.": "This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.",
   "Add this host to the macOS proxy bypass list. In Shadowrocket: General → Skip Proxy:": "Add this host to the macOS proxy bypass list. In Shadowrocket: General → Skip Proxy:",
   "Copy bypass host": "Copy bypass host",
@@ -142,6 +144,7 @@ export const en = {
   "Empty = plain remote access only needs identity allowlist": "Empty = plain remote access only needs identity allowlist",
   "Comma-separated; the current user on this machine is always allowed": "Comma-separated; the current user on this machine is always allowed",
   "Remote authorization saved": "Remote authorization saved",
+  "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.": "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.",
 
   // —— 更新 ——
   "Check failed: {{error}}": "Check failed: {{error}}",

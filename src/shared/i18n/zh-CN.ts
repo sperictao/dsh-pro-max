@@ -81,7 +81,7 @@ export const zhCN: Record<I18nKey, string> = {
 
   // —— DeepSeek Harness 远程访问 ——
   "DeepSeek Harness": "DeepSeek Harness",
-  "Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Tailscale identity is authorized by bundled dsh plugins; remote privileged APIs stay denied.": "通过 Tailscale HTTPS 远程访问 dsh Web UI：https://<hostname>.ts.net → dsh web :3899。内置 dsh 插件校验 Tailscale 身份，远程特权 API 保持禁用。",
+  "Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Remote settings and credentials require the configured admin capability in tailnet grants.": "通过 Tailscale HTTPS 远程访问 dsh Web UI：https://<hostname>.ts.net → dsh web :3899。远程设置与凭据需要在 tailnet grants 中授予已配置的 admin capability。",
   "Remote access": "远程访问",
   "Switching the access mode only selects the setup/close flow; click Start or Stop below to apply it. It does not start or stop anything by itself.": "切换访问模式只会改变安装与关闭流程，不会自动执行任何启动或停止操作；请用下方的启动/关闭按钮执行。",
   "dsh web is running; stop it before switching the access mode.": "dsh web 正在运行；请先停止，再切换访问模式。",
@@ -106,6 +106,8 @@ export const zhCN: Record<I18nKey, string> = {
   "Proxy bypass host copied": "代理绕过主机名已复制",
   "Local proxy bypass required": "本机代理需要配置绕过主机",
   "Remote endpoint check failed": "远程端点验证失败",
+  "Remote capability grant denied": "远程 capability 授权被拒绝",
+  "Grant the configured use/admin capabilities to this identity and dsh node in tailnet grants, then stop and run one-click start again.": "请在 tailnet grants 中把已配置的 use/admin capability 授给当前身份到此 dsh 节点的连接，然后先关闭再重新一键启动。",
   "This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.": "本机直连服务正常，但代理拦截了同一个 Tailscale 地址。",
   "Add this host to the macOS proxy bypass list. In Shadowrocket: General → Skip Proxy:": "请把此主机名加入 macOS 代理绕过列表。Shadowrocket 路径：通用 → 跳过代理：",
   "Copy bypass host": "复制绕过主机名",
@@ -144,6 +146,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Empty = plain remote access only needs identity allowlist": "留空 = 普通远程访问只需身份 allowlist",
   "Comma-separated; the current user on this machine is always allowed": "逗号分隔；本机当前用户始终允许",
   "Remote authorization saved": "远程授权已保存",
+  "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.": "修改远程授权后，请重新一键启动以应用；若 dsh Web 正在运行，请先关闭。",
 
   // —— 更新 ——
   "Check failed: {{error}}": "检查失败: {{error}}",

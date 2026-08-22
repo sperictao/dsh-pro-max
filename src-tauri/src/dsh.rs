@@ -80,8 +80,9 @@ pub struct DshStatus {
     pub local_url: Option<String>,
     pub url: Option<String>,
     /// 当前 Mac 用同一个 tailnet HTTPS 地址访问时的真实路径状态。
-    /// None 表示远程栈尚未形成 URL；ready / proxy_interference /
-    /// endpoint_failure 分别表示可用、被本机代理截获、服务端链路失败。
+    /// None 表示远程栈尚未形成 URL；ready / capability_denied /
+    /// proxy_interference / endpoint_failure 分别表示可用、远程 capability
+    /// 被拒、被本机代理截获、服务端链路失败。
     pub remote_url_access: Option<RemoteUrlAccess>,
     pub magic_dns_enabled: bool,
     pub serve_configured: bool,
@@ -94,8 +95,16 @@ pub struct DshStatus {
 #[serde(rename_all = "snake_case")]
 pub enum RemoteUrlAccess {
     Ready,
+    CapabilityDenied,
     ProxyInterference,
     EndpointFailure,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteRpcAccess {
+    Ready,
+    Denied,
+    Failed,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +119,8 @@ struct RemoteUrlProbe {
     access: RemoteUrlAccess,
     direct_https_ok: bool,
     direct_ws_ok: bool,
+    remote_use_access: Option<RemoteRpcAccess>,
+    remote_settings_access: Option<RemoteRpcAccess>,
 }
 
 /// 时间轴节点事件（dsh-step），由 dsh_setup 逐步发出
@@ -1156,11 +1167,15 @@ fn http_ok(line: Option<&str>) -> bool {
 
 /// 构造 JSON-RPC POST 请求（本地验证用）。Host 为 loopback、不带 Origin，
 /// 专门验证「本机仍可访问特权 API」这条不变式。
-fn rpc_request(method: &str) -> String {
-    let body = format!(
+fn rpc_body(method: &str) -> String {
+    format!(
         r#"{{"type":"client-request","rpcId":"t1","method":"{}","payload":{{}}}}"#,
         method
-    );
+    )
+}
+
+fn rpc_request(method: &str) -> String {
+    let body = rpc_body(method);
     format!(
         "POST /api/{} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         method,
@@ -1201,6 +1216,7 @@ pub async fn dsh_detect(
     app: tauri::AppHandle,
     verify_remote_url: Option<bool>,
 ) -> Result<DshStatus, String> {
+    let verify_remote_url = verify_remote_url.unwrap_or(false);
     let (hostname, url) = resolve_host_and_url();
     let ts = tailscale_path();
     let (magic, _) = match &ts {
@@ -1233,10 +1249,12 @@ pub async fn dsh_detect(
     } else {
         None
     };
-    let remote_url_access = verify_remote_url
-        .unwrap_or(false)
-        .then(|| url.as_deref().map(|url| probe_remote_url(url).access))
-        .flatten();
+    let remote_url_access = if verify_remote_url {
+        let auth = resolve_auth_config()?;
+        url.as_deref().map(|url| probe_remote_url(url, &auth).access)
+    } else {
+        None
+    };
     Ok(DshStatus {
         node_available: which("node").is_some(),
         dsh_installed: version.is_some(),
@@ -1703,7 +1721,7 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
             .map(|specs| auth_plugins_installed(&specs))
             .unwrap_or(false);
         let serve_ok = serve_configured(&tailscale.0);
-        let remote_probe = url.as_deref().map(probe_remote_url);
+        let remote_probe = url.as_deref().map(|url| probe_remote_url(url, &auth));
         let https_ok = remote_probe
             .as_ref()
             .map(|probe| probe.direct_https_ok)
@@ -1712,11 +1730,29 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
             .as_ref()
             .map(|probe| probe.direct_ws_ok)
             .unwrap_or(false);
+        let remote_use_access = remote_probe
+            .as_ref()
+            .and_then(|probe| probe.remote_use_access);
+        let remote_settings_access = remote_probe
+            .as_ref()
+            .and_then(|probe| probe.remote_settings_access);
+        let remote_use_ok = remote_use_access
+            .map(|access| access == RemoteRpcAccess::Ready)
+            .unwrap_or(true);
+        let remote_settings_ok = remote_settings_access
+            .map(|access| access == RemoteRpcAccess::Ready)
+            .unwrap_or(true);
         let remote_url_access = remote_probe.map(|probe| probe.access);
         let local_privileged_ok = rpc_ok(WEB_PORT, "settings.describe");
 
-        let remote_stack_ok =
-            web_ok && plugins_ok && serve_ok && https_ok && ws_ok && local_privileged_ok;
+        let remote_stack_ok = web_ok
+            && plugins_ok
+            && serve_ok
+            && https_ok
+            && ws_ok
+            && remote_use_ok
+            && remote_settings_ok
+            && local_privileged_ok;
         if remote_stack_ok && remote_url_access == Some(RemoteUrlAccess::ProxyInterference) {
             let host = url
                 .as_deref()
@@ -1759,6 +1795,38 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
                     "WebSocket handshake failed: {url}/api/events.host",
                     &[("url", url_text.clone())],
                 ));
+            }
+            match remote_use_access {
+                Some(RemoteRpcAccess::Denied) => checks.push(trf(
+                    "Remote use capability was denied; grant {capability} to this identity for the dsh node in tailnet grants, then run one-click setup again",
+                    &[(
+                        "capability",
+                        auth.use_capability
+                            .clone()
+                            .unwrap_or_else(|| "<domain>/cap/dsh".to_string()),
+                    )],
+                )),
+                Some(RemoteRpcAccess::Failed) => checks.push(trf(
+                    "Remote provider API is not responding: {url}/api/llm.providers",
+                    &[("url", url_text.clone())],
+                )),
+                _ => {}
+            }
+            match remote_settings_access {
+                Some(RemoteRpcAccess::Denied) => checks.push(trf(
+                    "Remote admin capability was denied; grant {capability} to this identity for the dsh node in tailnet grants, then run one-click setup again",
+                    &[(
+                        "capability",
+                        auth.admin_capability
+                            .clone()
+                            .unwrap_or_else(|| "<domain>/cap/dsh-admin".to_string()),
+                    )],
+                )),
+                Some(RemoteRpcAccess::Failed) => checks.push(trf(
+                    "Remote settings API is not responding: {url}/api/settings.describe",
+                    &[("url", url_text.clone())],
+                )),
+                _ => {}
             }
             if !local_privileged_ok {
                 checks.push(tr("Local privileged API access failed on 127.0.0.1:3899"));
@@ -2350,6 +2418,55 @@ fn curl_direct_args(url: &str) -> Vec<String> {
     .collect()
 }
 
+fn curl_remote_rpc_args(url: &str, method: &str) -> Vec<String> {
+    vec![
+        "-sk".to_string(),
+        "--noproxy".to_string(),
+        "*".to_string(),
+        "--connect-timeout".to_string(),
+        "3".to_string(),
+        "--max-time".to_string(),
+        "6".to_string(),
+        "-H".to_string(),
+        "Content-Type: application/json".to_string(),
+        "--data-binary".to_string(),
+        rpc_body(method),
+        "-w".to_string(),
+        "\n%{http_code}".to_string(),
+        format!("{}/api/{method}", url.trim_end_matches('/')),
+    ]
+}
+
+fn classify_remote_rpc_response(output: &str, command_ok: bool) -> RemoteRpcAccess {
+    if !command_ok {
+        return RemoteRpcAccess::Failed;
+    }
+    let Some((body, status)) = output.rsplit_once('\n') else {
+        return RemoteRpcAccess::Failed;
+    };
+    let rpc_ok = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|response| {
+            response
+                .pointer("/result/ok")
+                .and_then(serde_json::Value::as_bool)
+        })
+        == Some(true);
+    match status.trim() {
+        "401" | "403" => RemoteRpcAccess::Denied,
+        code if code.starts_with('2') && rpc_ok => RemoteRpcAccess::Ready,
+        _ => RemoteRpcAccess::Failed,
+    }
+}
+
+fn remote_rpc_access(url: &str, method: &str) -> RemoteRpcAccess {
+    let args = curl_remote_rpc_args(url, method);
+    match run_capture("curl", &string_args(&args)) {
+        Ok((out, _, ok)) => classify_remote_rpc_response(&out, ok),
+        Err(_) => RemoteRpcAccess::Failed,
+    }
+}
+
 fn curl_proxy_args(url: &str, proxy: &MacosHttpsProxy) -> Vec<String> {
     let null_dev = if cfg!(windows) { "NUL" } else { "/dev/null" };
     [
@@ -2473,11 +2590,16 @@ fn active_macos_https_proxy() -> Option<MacosHttpsProxy> {
 fn classify_remote_url_access(
     direct_https_ok: bool,
     direct_ws_ok: bool,
+    remote_rpc_access: Option<RemoteRpcAccess>,
     uses_proxy: bool,
     proxied_https_ok: bool,
     proxied_ws_ok: bool,
 ) -> RemoteUrlAccess {
-    if !direct_https_ok || !direct_ws_ok {
+    if !direct_https_ok {
+        RemoteUrlAccess::EndpointFailure
+    } else if remote_rpc_access == Some(RemoteRpcAccess::Denied) {
+        RemoteUrlAccess::CapabilityDenied
+    } else if remote_rpc_access == Some(RemoteRpcAccess::Failed) || !direct_ws_ok {
         RemoteUrlAccess::EndpointFailure
     } else if uses_proxy && (!proxied_https_ok || !proxied_ws_ok) {
         RemoteUrlAccess::ProxyInterference
@@ -2555,14 +2677,53 @@ fn ws_endpoint_ok_via_proxy(url: &str, proxy: &MacosHttpsProxy) -> bool {
     }
 }
 
-fn probe_remote_url(url: &str) -> RemoteUrlProbe {
+fn probe_remote_url(url: &str, auth: &AuthConfig) -> RemoteUrlProbe {
     let direct_https_ok = https_endpoint_ok(url);
     let direct_ws_ok = ws_endpoint_ok(url);
-    let Some(proxy) = active_macos_https_proxy() else {
+    let remote_use_access = (direct_https_ok && auth.use_capability.is_some())
+        .then(|| remote_rpc_access(url, "llm.providers"));
+    let remote_use_ready = matches!(remote_use_access, None | Some(RemoteRpcAccess::Ready));
+    let remote_settings_access = (direct_https_ok
+        && remote_use_ready
+        && auth.admin_capability.is_some())
+        .then(|| remote_rpc_access(url, "settings.describe"));
+    let remote_rpc_access = if remote_use_access == Some(RemoteRpcAccess::Denied)
+        || remote_settings_access == Some(RemoteRpcAccess::Denied)
+    {
+        Some(RemoteRpcAccess::Denied)
+    } else if remote_use_access == Some(RemoteRpcAccess::Failed)
+        || remote_settings_access == Some(RemoteRpcAccess::Failed)
+    {
+        Some(RemoteRpcAccess::Failed)
+    } else if remote_use_access.is_some() || remote_settings_access.is_some() {
+        Some(RemoteRpcAccess::Ready)
+    } else {
+        None
+    };
+    let direct_access = classify_remote_url_access(
+        direct_https_ok,
+        direct_ws_ok,
+        remote_rpc_access,
+        false,
+        false,
+        false,
+    );
+    if direct_access != RemoteUrlAccess::Ready {
         return RemoteUrlProbe {
-            access: classify_remote_url_access(direct_https_ok, direct_ws_ok, false, false, false),
+            access: direct_access,
             direct_https_ok,
             direct_ws_ok,
+            remote_use_access,
+            remote_settings_access,
+        };
+    }
+    let Some(proxy) = active_macos_https_proxy() else {
+        return RemoteUrlProbe {
+            access: RemoteUrlAccess::Ready,
+            direct_https_ok,
+            direct_ws_ok,
+            remote_use_access,
+            remote_settings_access,
         };
     };
     let Some(host) = remote_url_host(url) else {
@@ -2570,6 +2731,8 @@ fn probe_remote_url(url: &str) -> RemoteUrlProbe {
             access: RemoteUrlAccess::EndpointFailure,
             direct_https_ok,
             direct_ws_ok,
+            remote_use_access,
+            remote_settings_access,
         };
     };
     let uses_proxy = !proxy_bypasses_host(host, &proxy.exceptions);
@@ -2584,12 +2747,15 @@ fn probe_remote_url(url: &str) -> RemoteUrlProbe {
         access: classify_remote_url_access(
             direct_https_ok,
             direct_ws_ok,
+            remote_rpc_access,
             uses_proxy,
             proxied_https_ok,
             proxied_ws_ok,
         ),
         direct_https_ok,
         direct_ws_ok,
+        remote_use_access,
+        remote_settings_access,
     }
 }
 
@@ -3140,7 +3306,8 @@ fn render_desktop_entry(name: &str, script: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_remote_url_access, compose_verified_min, curl_direct_args,
+        classify_remote_rpc_response, classify_remote_url_access, compose_verified_min,
+        curl_direct_args, curl_remote_rpc_args,
         dsh_version_is_compatible, dsh_web_cmd_pattern, ere_to_ps_wildcards,
         insert_web_profile_compat_entry, normalize_version, parse_extra_logins,
         parse_macos_https_proxy, parse_version, plugin_profile_is_current, port_guard_js,
@@ -3148,7 +3315,8 @@ mod tests {
         render_desktop_entry,
         render_start_web, rpc_request, serve_command, serve_failure_solution,
         serve_status_targets_web, sh_quote, tailscale_login_from_status_json, validate_cap_domain,
-        win_cmd_line, win_quote, AuthConfig, RemoteUrlAccess, SUPPORTED_DSH_VERSION,
+        win_cmd_line, win_quote, AuthConfig, RemoteRpcAccess, RemoteUrlAccess,
+        SUPPORTED_DSH_VERSION,
     };
     use crate::i18n::set_current;
     use std::path::Path;
@@ -3579,15 +3747,37 @@ mod tests {
     #[test]
     fn remote_url_access_classifies_local_proxy_interference() {
         assert_eq!(
-            classify_remote_url_access(true, true, true, false, false),
+            classify_remote_url_access(true, true, None, true, false, false),
             RemoteUrlAccess::ProxyInterference
         );
         assert_eq!(
-            classify_remote_url_access(true, true, true, true, true),
+            classify_remote_url_access(true, true, None, true, true, true),
             RemoteUrlAccess::Ready
         );
         assert_eq!(
-            classify_remote_url_access(false, true, true, false, false),
+            classify_remote_url_access(false, true, None, true, false, false),
+            RemoteUrlAccess::EndpointFailure
+        );
+        assert_eq!(
+            classify_remote_url_access(
+                true,
+                true,
+                Some(RemoteRpcAccess::Denied),
+                false,
+                false,
+                false,
+            ),
+            RemoteUrlAccess::CapabilityDenied
+        );
+        assert_eq!(
+            classify_remote_url_access(
+                true,
+                true,
+                Some(RemoteRpcAccess::Failed),
+                false,
+                false,
+                false,
+            ),
             RemoteUrlAccess::EndpointFailure
         );
     }
@@ -3637,6 +3827,53 @@ mod tests {
         let args = curl_direct_args("https://etmacminim4.taildde4.ts.net");
         let no_proxy = args.iter().position(|arg| arg == "--noproxy").unwrap();
         assert_eq!(args[no_proxy + 1], "*");
+    }
+
+    #[test]
+    fn remote_settings_probe_posts_the_privileged_rpc_directly() {
+        let args = curl_remote_rpc_args(
+            "https://etmacminim4.taildde4.ts.net/",
+            "settings.describe",
+        );
+        let no_proxy = args.iter().position(|arg| arg == "--noproxy").unwrap();
+        assert_eq!(args[no_proxy + 1], "*");
+        let body = args.iter().position(|arg| arg == "--data-binary").unwrap();
+        assert_eq!(
+            args[body + 1],
+            r#"{"type":"client-request","rpcId":"t1","method":"settings.describe","payload":{}}"#,
+        );
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("https://etmacminim4.taildde4.ts.net/api/settings.describe"),
+        );
+    }
+
+    #[test]
+    fn remote_rpc_probe_distinguishes_capability_denial() {
+        assert_eq!(
+            classify_remote_rpc_response(
+                r#"{"type":"server-response","rpcId":"t1","result":{"ok":true,"value":{}}}
+200"#,
+                true,
+            ),
+            RemoteRpcAccess::Ready,
+        );
+        assert_eq!(
+            classify_remote_rpc_response("forbidden\n403", true),
+            RemoteRpcAccess::Denied,
+        );
+        assert_eq!(
+            classify_remote_rpc_response(
+                r#"{"type":"server-response","rpcId":"t1","result":{"ok":false}}
+200"#,
+                true,
+            ),
+            RemoteRpcAccess::Failed,
+        );
+        assert_eq!(
+            classify_remote_rpc_response("\n000", false),
+            RemoteRpcAccess::Failed,
+        );
     }
 
     #[test]
