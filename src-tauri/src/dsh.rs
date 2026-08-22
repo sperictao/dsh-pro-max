@@ -30,15 +30,15 @@ use crate::config;
 use crate::i18n::{current, tr, trf};
 use crate::version::parse_version;
 
-/// dsh 包名与 Launcher 首次验证兼容栈时的最低版本。dsh 上游滚动后由
-/// profile 内插件的依赖声明接管（见 compose_verified_min），这里的常量
-/// 只兜底首次安装前的空 profile 状态。
+/// dsh 包名与 Launcher 锁定的 dsh 版本线（版本闸门的唯一事实来源）。跟线
+/// 升级时与 vendor 插件 pin、bundle tgz 文件名三处同步 bump（见
+/// scripts/build-dsh-plugins.mjs 与 src-tauri/tauri.conf.json）。
 const DSH_PACKAGE: &str = "@deepseek-ai/dsh";
-const SUPPORTED_DSH_VERSION: &str = "0.1.0-rc.6";
+const SUPPORTED_DSH_VERSION: &str = "0.1.1-rc.2";
 const CONNECTION_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-client-connection-authz";
 const AUTH_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-auth-tailscale";
-const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-2fccf0d593b1.tgz";
-const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-01666104af53.tgz";
+const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-c2e0ec50b9b9.tgz";
+const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-b49ed12c6be7.tgz";
 const TAILSCALE_LOGIN_ENV: &str = "DSH_TAILSCALE_ALLOWED_LOGINS";
 const LOCAL_ONLY_LOGIN: &str = "local-only@localhost.invalid";
 /// 远程特权接口（settings/credentials/host 等 loopback authority）与普通远程
@@ -723,60 +723,37 @@ fn dsh_version() -> Option<String> {
     if v.is_empty() { None } else { Some(v) }
 }
 
-/// 从当前 web profile 提取授权插件声明的 dsh 依赖下限，作为已验证兼容的
-/// 版本下限。优先级：node_modules 里 authz 插件的 dependencies → profile
-/// package.json 的 dependencies → 全局常量。rc 阶段 npm 预发布语义下
-/// ^0.1.0-rc.8 不覆盖 rc.9+，取下限是最保守且不会误判的提取方式。
-fn compose_verified_min() -> Option<String> {
-    let profile = dsh_dir().ok()?.join("profiles").join("web");
-    let candidates = [
-        profile.join("node_modules/@dsh-external/dsh-client-connection-authz/package.json"),
-        profile.join("package.json"),
-    ];
-    for path in candidates {
-        let Ok(contents) = fs::read_to_string(&path) else { continue };
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) else { continue };
-        let spec = json
-            .pointer("/dependencies/@deepseek-ai/dsh-attachment")
-            .and_then(serde_json::Value::as_str)
-            .or_else(|| {
-                json.pointer("/dependencies/@deepseek-ai/dsh")
-                    .and_then(serde_json::Value::as_str)
-            });
-        if let Some(spec) = spec {
-            // 剥离范围前缀与空白；file:/git+/workspace: 等非 semver spec 解析
-            // 失败后继续下一个候选，不产生 None 崩溃
-            let cleaned = spec
-                .trim()
-                .trim_start_matches(['^', '~'])
-                .trim();
-            if parse_version(cleaned).is_some() {
-                return Some(cleaned.to_string());
-            }
-        }
-    }
-    parse_version(SUPPORTED_DSH_VERSION).map(|_| SUPPORTED_DSH_VERSION.to_string())
+/// 版本闸门：actual 不低于锁定版本，且与锁定版本同一条 x.y.z 演进线。
+/// 只看 ">=" 会放过上游新线：0.1.1-rc.2 满足 >=0.1.0-rc.8，但跨线会重排
+/// credentials 文件格式并改插件运行时（v0.3.8 的实机教训）。下限唯一来源
+/// 是 SUPPORTED_DSH_VERSION——跟线升级本就要求常量与插件 pin 三处同步，
+/// 再读 profile 里已装插件的 peer 只会在「CLI 已升、插件未升」的窗口里
+/// 制造自相矛盾的判定。
+fn version_within_supported_line(
+    actual: &crate::version::Version,
+    min: &crate::version::Version,
+) -> bool {
+    actual >= min && actual.same_line(min)
 }
 
-/// 宽松兼容：实际版本 >= 锁定版本即视为兼容。锁定版本是 Launcher 验证过的
-/// 最低版本（插件栈在此版本下完整跑通），更新版不再被强制回退；高于验证
-/// 版本的风险由 detect 的 dsh_version_above_supported 字段向用户如实披露。
-/// 解析失败按不兼容处理（与原行为一致的安全降级）。
+/// 兼容判定（供 detect/setup/install 共用）：解析失败按不兼容处理。
+/// 锁定线是 SUPPORTED_DSH_VERSION；同线更高 rc 由插件依赖范围承诺，
+/// 跨线一律视为不兼容。
 fn dsh_version_is_compatible(version: Option<&str>) -> bool {
     let Some(v) = version else { return false };
-    let min = compose_verified_min().unwrap_or_else(|| SUPPORTED_DSH_VERSION.to_string());
-    match (parse_version(v), parse_version(&min)) {
-        (Some(actual), Some(min)) => actual >= min,
+    match (parse_version(v), parse_version(SUPPORTED_DSH_VERSION)) {
+        (Some(actual), Some(min)) => version_within_supported_line(&actual, &min),
         _ => false,
     }
 }
 
-/// 安装 Launcher 跟随的 dsh 版本（@next dist-tag），并在 npm 成功后再次校验
-/// 实际 CLI。跟随 @next 而非固定版本：dsh 上游 rc 阶段每次滚动都要求 Launcher
-/// 同步常量并重新发版，这条链路易碎；@next 由 dsh 发布流程本身维护。
+/// 安装 Launcher 锁定的 dsh 版本（固定 SUPPORTED_DSH_VERSION），并在 npm
+/// 成功后再次校验实际 CLI。固定版本而非跟随 @next：上游把 @next 滚到新
+/// minor（0.1.1-rc.2）时并不照顾 vendored 授权栈的兼容性，被动跟随会把
+/// 用户机器拖进起不来服务的状态；升线由本仓库显式 bump 常量并验证。
 fn install_supported_dsh() -> Result<String, String> {
     resolve_node_bin()?;
-    let package = format!("{DSH_PACKAGE}@next");
+    let package = format!("{DSH_PACKAGE}@{SUPPORTED_DSH_VERSION}");
     match run_capture(&npm_bin(), &["install", "-g", &package]) {
         Ok((_, _, true)) => {}
         Ok((_, err, false)) => {
@@ -798,15 +775,18 @@ fn install_supported_dsh() -> Result<String, String> {
         log::error!("[dsh 安装] 安装后无法在 PATH 定位 dsh");
         err
     })?;
-    if !dsh_version_is_compatible(Some(&version)) {
+    // 装的是精确固定版本，校验直接对常量；不用 dsh_version_is_compatible——
+    // 它的下限读 profile 里已装插件的 peer，跟线升级时插件尚未重装，
+    // 旧下限会拒绝刚装上的新线版本（setup 的 install 步骤先于 plugin add）
+    if version != SUPPORTED_DSH_VERSION {
         let err = trf(
             "Installed dsh version {actual}, but this Launcher requires {expected}",
             &[
                 ("actual", version.clone()),
-                ("expected", compose_verified_min().unwrap_or_else(|| SUPPORTED_DSH_VERSION.to_string())),
+                ("expected", SUPPORTED_DSH_VERSION.to_string()),
             ],
         );
-        log::error!("[dsh 安装] 版本不兼容: {}", err);
+        log::error!("[dsh 安装] 版本不匹配: {}", err);
         return Err(err);
     }
     // 仅在版本校验成功后写 profile patch，避免失败安装留下持久残留。
@@ -1416,6 +1396,11 @@ fn start_failure_diagnosis(log: &Path) -> (String, String) {
         Some(t) if t.contains("EPERM") || t.contains("symlink") => {
             tr("dsh could not create symlinks; on Windows enable Developer Mode (Settings → Privacy & security → For developers), then retry")
         }
+        // 装过跨线 dsh（如 0.1.1-rc.2）的机器：它把 credentials 重写成了
+        // 新格式，锁定线的 CLI 读不了；引导用户手动还原为扁平 KEY: value
+        Some(t) if t.contains(".credentials.yaml") && t.contains("must be a string") => {
+            tr("A newer dsh rewrote ~/.dsh/.credentials.yaml into an incompatible format; open it and keep only the KEY: value lines (drop the version:/refs: wrapper), then retry")
+        }
         _ => tr("Check the log at ~/.dsh/dsh-web.log; port 3899 may be occupied or the dsh CLI may need a newer Node.js"),
     };
     (problem, solution)
@@ -1530,15 +1515,21 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
                 &[("version", current.clone().unwrap_or_default())],
             ));
         } else {
-            ctx.running(&tr("Installing the latest dsh (@next)…"));
+            ctx.running(&trf(
+                "Installing the pinned dsh ({version})…",
+                &[("version", SUPPORTED_DSH_VERSION.to_string())],
+            ));
             match install_supported_dsh() {
                 Ok(version) => ctx.done(&trf("Installed {version}", &[("version", version)])),
                 Err(error) => {
                     return ctx.fail(
                         &error,
                         &trf(
-                            "Check your network and npm settings, then run npm install -g {package}@next and retry",
-                            &[("package", DSH_PACKAGE.to_string())],
+                            "Check your network and npm settings, then run npm install -g {package}@{version} and retry",
+                            &[
+                                ("package", DSH_PACKAGE.to_string()),
+                                ("version", SUPPORTED_DSH_VERSION.to_string()),
+                            ],
                         ),
                         &remaining_after(1),
                     )
@@ -1922,7 +1913,10 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
                 &[("version", current.clone().unwrap_or_default())],
             ));
         } else {
-            ctx.running(&tr("Installing the latest dsh (@next)…"));
+            ctx.running(&trf(
+                "Installing the pinned dsh ({version})…",
+                &[("version", SUPPORTED_DSH_VERSION.to_string())],
+            ));
             match install_supported_dsh() {
                 Ok(version) => ctx.done(&trf("Installed {version}", &[("version", version)])),
                 Err(error) => {
@@ -2246,6 +2240,8 @@ pub struct DshDistTag {
     pub is_installed: bool,
     /// 高于 Launcher 验证栈（授权插件未验证）
     pub above_supported: bool,
+    /// 过不了版本闸门（跨线或低于插件栈下限，装上本地与远程一起失效）
+    pub incompatible: bool,
 }
 
 /// dsh 版本检测结果（设置页版本卡）：全部 dist-tag + 本机安装版本
@@ -2302,15 +2298,16 @@ pub async fn dsh_check_latest() -> Result<DshLatestInfo, String> {
         .into_iter()
         .map(|(tag, version)| {
             let parsed = parse_version(&version);
-            DshDistTag {
-                tag,
-                is_installed: installed_parsed.is_some() && parsed == installed_parsed,
-                above_supported: match (&parsed, &supported) {
-                    (Some(v), Some(min)) => v > min,
-                    _ => false,
-                },
-                version,
-            }
+                DshDistTag {
+                    tag,
+                    is_installed: installed_parsed.is_some() && parsed == installed_parsed,
+                    above_supported: match (&parsed, &supported) {
+                        (Some(v), Some(min)) => v > min,
+                        _ => false,
+                    },
+                    incompatible: !dsh_version_is_compatible(Some(&version)),
+                    version,
+                }
         })
         .collect();
     Ok(DshLatestInfo {
@@ -2367,12 +2364,21 @@ fn parse_dist_tags(out: &str) -> Result<Vec<(String, String)>, String> {
 
 /// 安装指定版本的 dsh（设置页版本卡的「安装」按钮）：参数化的安装管道，
 /// 与 install_supported_dsh 同构（npm install -g + 安装后版本校验），
-/// 装完若 web 正在运行则重启。允许装低于验证栈的版本——用户显式选择，
-/// 版本卡上的 above_supported 警示已如实披露风险。
+/// 装完若 web 正在运行则重启。版本闸门拦截跨线版本；同线高于锁定的
+/// 版本可装（above_supported 标记如实披露「未验证」状态）。
 #[tauri::command]
 pub async fn dsh_install_version(version: String) -> Result<String, String> {
     if parse_version(&version).is_none() {
         return Err(trf("Invalid dsh version: {version}", &[("version", version)]));
+    }
+    // 设置页逐版本安装同样过版本闸门：跨线的 dsh 与 vendored 授权栈不
+    // 兼容（0.1.1-rc.2 会让本地与远程访问一起失效），装上即坏，直接拒绝
+    if !dsh_version_is_compatible(Some(&version)) {
+        let min = SUPPORTED_DSH_VERSION;
+        return Err(trf(
+            "dsh {version} is outside the supported line ({min} or newer of the same release line); install a compatible version instead",
+            &[("version", version.clone()), ("min", min.to_string())],
+        ));
     }
     let was_running = port_listening(WEB_PORT);
     let package = format!("@deepseek-ai/dsh@{version}");
@@ -3354,7 +3360,7 @@ fn render_desktop_entry(name: &str, script: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_remote_rpc_response, classify_remote_url_access, compose_verified_min,
+        classify_remote_rpc_response, classify_remote_url_access,
         curl_direct_args, curl_remote_rpc_args,
         dsh_version_is_compatible, dsh_web_cmd_pattern, ere_to_ps_wildcards,
         insert_web_profile_compat_entry, normalize_version, parse_extra_logins,
@@ -3363,9 +3369,10 @@ mod tests {
         render_desktop_entry,
         render_start_web, rewrite_web_profile_patch_at, rpc_request, serve_command,
         serve_failure_solution,
-        serve_status_targets_web, sh_quote, tailscale_login_from_status_json, validate_cap_domain,
-        win_cmd_line, win_quote, AuthConfig, RemoteRpcAccess, RemoteUrlAccess,
-        SUPPORTED_DSH_VERSION, WEB_PROFILE_COMPAT_ID_LINE,
+        serve_status_targets_web, sh_quote, start_failure_diagnosis,
+        tailscale_login_from_status_json, validate_cap_domain,
+        version_within_supported_line, win_cmd_line, win_quote, AuthConfig, RemoteRpcAccess,
+        RemoteUrlAccess, SUPPORTED_DSH_VERSION, WEB_PROFILE_COMPAT_ID_LINE,
     };
     use crate::i18n::set_current;
     use std::path::Path;
@@ -3504,39 +3511,35 @@ mod tests {
     }
 
     #[test]
-    fn compose_verified_min_fallbacks_to_constant_without_profile() {
-        // 无 profile（首次安装前）时 compose_verified_min 必须回退到
-        // SUPPORTED_DSH_VERSION，不能返回 None 导致兼容判断崩溃
-        let min = compose_verified_min();
-        assert!(min.is_some(), "compose_verified_min 不能返回 None");
-        let min = min.unwrap();
-        assert!(
-            parse_version(&min).is_some(),
-            "回退值必须是合法版本号: {min}"
-        );
-        // 回退值要么等于常量，要么等于 profile 里插件声明的版本（更高）
-        let floor = parse_version(SUPPORTED_DSH_VERSION).unwrap();
-        let actual = parse_version(&min).unwrap();
-        assert!(
-            actual >= floor,
-            "compose_verified_min ({min}) 不能低于 SUPPORTED_DSH_VERSION ({SUPPORTED_DSH_VERSION})"
-        );
-    }
-
-    #[test]
-    fn dsh_version_compatible_uses_composed_floor() {
-        // 兼容下限是动态的：profile 存在时以插件声明为准，否则以常量为准。
-        // 无论哪种情况，常量和高于常量的版本都必须兼容。
+    fn dsh_version_compatible_pins_to_supported_line() {
+        // 闸门唯一事实来源是 SUPPORTED_DSH_VERSION 常量（不再读 profile 里
+        // 已装插件的 peer——那会在「CLI 已升、插件未升」的跟线窗口里自相
+        // 矛盾）。常量自身和同线更高 rc/稳定版兼容。
         assert!(dsh_version_is_compatible(Some(SUPPORTED_DSH_VERSION)));
-        assert!(dsh_version_is_compatible(Some("0.1.0-rc.7")));
-        assert!(dsh_version_is_compatible(Some("0.1.0-rc.10")));
-        assert!(dsh_version_is_compatible(Some("0.1.0")));
-        assert!(dsh_version_is_compatible(Some("1.0.0")));
-        // 低于常量或无法解析的版本不兼容
-        assert!(!dsh_version_is_compatible(Some("0.1.0-rc.5")));
+        assert!(dsh_version_is_compatible(Some("0.1.1-rc.3")));
+        assert!(dsh_version_is_compatible(Some("0.1.1")));
+        // 跨线一律不兼容：旧线 0.1.0 与更远的线都拒绝。0.1.0-rc.8 曾满足
+        // ">= 下限"的宽松判定，但跨线重排了运行时与数据格式（实机教训）
+        assert!(!dsh_version_is_compatible(Some("0.1.0-rc.8")));
+        assert!(!dsh_version_is_compatible(Some("1.0.0")));
+        // 低于锁定版本或无法解析的版本不兼容
+        assert!(!dsh_version_is_compatible(Some("0.1.1-rc.1")));
         assert!(!dsh_version_is_compatible(Some("0.0.1-rc.5")));
         assert!(!dsh_version_is_compatible(Some("not-a-version")));
         assert!(!dsh_version_is_compatible(None));
+    }
+
+    #[test]
+    fn version_gate_requires_same_minor_line() {
+        let min = parse_version("0.1.0-rc.8").unwrap();
+        let gate = |v: &str| version_within_supported_line(&parse_version(v).unwrap(), &min);
+        assert!(gate("0.1.0-rc.8"));
+        assert!(gate("0.1.0-rc.9"));
+        assert!(gate("0.1.0"));
+        assert!(!gate("0.1.0-rc.7"));
+        assert!(!gate("0.1.1-rc.2"));
+        assert!(!gate("0.2.0"));
+        assert!(!gate("1.0.0"));
     }
 
     #[test]
@@ -3561,6 +3564,30 @@ mod tests {
             format!("{inserted}---\n[]\n")
         );
         assert_eq!(remove_web_profile_compat_entry(&inserted), empty);
+    }
+
+    #[test]
+    fn start_diagnosis_points_rewritten_credentials_at_migration() {
+        // 装过跨线 dsh 的机器降回锁定线后 boot 崩在 credentials 新格式，
+        // 诊断必须把用户指向手动还原而不是通用的「看日志」
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-pro-max-diag-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("dsh-web.log");
+        std::fs::write(
+            &log,
+            "Error: credentials-local: the value for \"version\" in /Users/x/.dsh/.credentials.yaml must be a string\n",
+        )
+        .unwrap();
+        let (_, solution) = start_failure_diagnosis(&log);
+        assert!(solution.contains(".credentials.yaml"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

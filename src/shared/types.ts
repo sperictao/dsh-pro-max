@@ -45,6 +45,7 @@ export interface DshDistTag {
   version: string;
   isInstalled: boolean;
   aboveSupported: boolean;
+  incompatible: boolean;
 }
 
 // dsh 版本检测（npm registry 全部 dist-tag）

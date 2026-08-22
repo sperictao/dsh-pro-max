@@ -62,6 +62,18 @@ impl PartialOrd for Version {
     }
 }
 
+impl Version {
+    /// 同一演进线：major/minor/patch 三段全等（prerelease 任意）。dsh 上游
+    /// 以 x.y.z 为独立演进线滚动 rc（0.1.0-rc.N → 0.1.1-rc.N），跨线会
+    /// 重排插件接口与数据格式；按 semver 范围（^0.1.0-rc.8 覆盖 0.1.1）
+    /// 放行是错的。
+    pub fn same_line(&self, other: &Version) -> bool {
+        self.major == other.major
+            && self.minor == other.minor
+            && self.patch == other.patch
+    }
+}
+
 impl Ord for Version {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
@@ -148,6 +160,19 @@ mod tests {
         assert_eq!(parse_version(""), None);
         assert_eq!(parse_version("1.2.3-"), None);
         assert_eq!(parse_version("1.2.3.4"), None);
+    }
+
+    #[test]
+    fn same_line_judgement() {
+        let rc6 = parse_version("0.1.0-rc.6").unwrap();
+        let rc9 = parse_version("0.1.0-rc.9").unwrap();
+        let stable = parse_version("0.1.0").unwrap();
+        let next_minor = parse_version("0.1.1-rc.2").unwrap();
+        let next_major = parse_version("1.0.0").unwrap();
+        assert!(rc6.same_line(&rc9));
+        assert!(rc6.same_line(&stable));
+        assert!(!rc6.same_line(&next_minor));
+        assert!(!rc6.same_line(&next_major));
     }
 
     #[test]

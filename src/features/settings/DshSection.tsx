@@ -79,7 +79,7 @@ export function DshSection() {
         {t("dsh is the DeepSeek Harness CLI; this app bundles a verified compatibility stack (CLI + authorization plugins) for one-click local & remote access.")}
       </p>
 
-      {/* 版本卡：全部 dist-tag 一览，每行可安装；已安装行标记，高于验证栈的行警示 */}
+      {/* 版本卡：全部 dist-tag 一览，每行可安装；不兼容行禁装，高于验证栈的同线行提示 */}
       <div className="flex max-w-2xl flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
         <div className="flex items-center justify-between gap-3">
           <div className="text-sm font-medium">{t("dsh Version")}</div>
@@ -103,14 +103,17 @@ export function DshSection() {
                   {tag.isInstalled && (
                     <span className="shrink-0 text-xs text-primary">{t("installed")}</span>
                   )}
-                  {tag.aboveSupported && !tag.isInstalled && (
+                  {tag.incompatible && !tag.isInstalled && (
+                    <span className="shrink-0 text-xs text-destructive">{t("incompatible with the bundled plugin stack")}</span>
+                  )}
+                  {tag.aboveSupported && !tag.incompatible && !tag.isInstalled && (
                     <span className="shrink-0 text-xs opacity-50">{t("unverified")}</span>
                   )}
                 </span>
                 {!tag.isInstalled && (
                   <button
                     className={BTN_SM}
-                    disabled={busy}
+                    disabled={busy || tag.incompatible}
                     onClick={() => void install(tag.version)}
                   >
                     {installing === tag.version ? t("Installing…") : t("Install")}
@@ -121,7 +124,7 @@ export function DshSection() {
           </div>
         )}
         <p className="text-xs opacity-50">
-          {t("The verified stack is {{version}} — the dsh version this app's bundled authorization plugins are tested against. Versions marked unverified work for local access but remote authorization is untested.", { version: info?.supportedVersion || "…" })}
+          {t("The verified stack is {{version}} — the dsh version this app's bundled authorization plugins are tested against. Versions marked incompatible break local & remote access; ones marked unverified are newer same-line releases with untested remote authorization.", { version: info?.supportedVersion || "…" })}
         </p>
 
         {info?.error && (
