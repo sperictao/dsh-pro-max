@@ -151,7 +151,7 @@ describe("local mode status text", () => {
 });
 
 describe("remote URL verification flow", () => {
-  it("explains that saved authorization changes require another one-click start", async () => {
+  it("explains the tailnet grant and restart requirements", async () => {
     localStorage.setItem("dsh-access-mode", "remote");
     vi.spyOn(cmd, "dshDetect").mockResolvedValue(ready);
     useAppStore.setState({
@@ -169,6 +169,9 @@ describe("remote URL verification flow", () => {
     expect(await screen.findByText(
       "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.",
     )).toBeInTheDocument();
+    expect(screen.getByText(
+      "Every remote identity needs TCP 443 in tailnet grants. If you configure capabilities, include both ip and app in the same grant.",
+    )).toBeInTheDocument();
   });
 
   it("shows the tailnet grants action when a capability probe is denied", async () => {
@@ -182,7 +185,7 @@ describe("remote URL verification flow", () => {
 
     expect(await screen.findAllByText("Remote capability grant denied")).toHaveLength(2);
     expect(screen.getByText(
-      "Grant the configured use/admin capabilities to this identity and dsh node in tailnet grants, then stop and run one-click start again.",
+      "Grant TCP 443 and the configured use/admin capabilities to this identity and dsh node in the same tailnet grant, then stop and run one-click start again.",
     )).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open" })).toBeDisabled();
   });

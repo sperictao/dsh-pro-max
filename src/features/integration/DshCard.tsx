@@ -260,7 +260,7 @@ export function DshCard() {
       if (isRemote) {
         await cmd.dshSetup();
         // dsh_setup 返回 void：serve 配置完成后远程地址由 detect 给出。三个授权参数
-        // 留空也能正常 serve（普通远程访问只靠身份 allowlist）。只有
+        // 留空也能正常 serve（普通远程访问仍需身份 allowlist 与 tailnet TCP 443 grant）。只有
         // HTTPS + WebSocket + 本机代理路径都复查通过才打开远程地址。
         const s = await cmd.dshDetect(true);
         setStatus(s);
@@ -486,7 +486,7 @@ export function DshCard() {
                   {t("Remote capability grant denied")}
                 </div>
                 <div className="mt-1 opacity-70">
-                  {t("Grant the configured use/admin capabilities to this identity and dsh node in tailnet grants, then stop and run one-click start again.")}
+                  {t("Grant TCP 443 and the configured use/admin capabilities to this identity and dsh node in the same tailnet grant, then stop and run one-click start again.")}
                 </div>
               </div>
             ) : status?.remoteUrlAccess === "proxy_interference" && proxyBypassHost ? (
@@ -566,6 +566,9 @@ export function DshCard() {
           <div className="text-xs opacity-60">
             {t("After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.")}
           </div>
+          <div className="text-xs opacity-60">
+            {t("Every remote identity needs TCP 443 in tailnet grants. If you configure capabilities, include both ip and app in the same grant.")}
+          </div>
 
           <div className="flex flex-col gap-1">
             <label className="text-xs opacity-70" htmlFor="dsh-admin-cap-domain">{t("Admin capability domain")}</label>
@@ -587,7 +590,7 @@ export function DshCard() {
             <span className="text-xs opacity-60">
               {useCapDomain.trim()
                 ? t("Full capability: {{capability}}", { capability: `${useCapDomain.trim()}/cap/dsh` })
-                : t("Empty = plain remote access only needs identity allowlist")}
+                : t("Empty = plain remote access still needs identity allowlist and tailnet TCP 443")}
             </span>
           </div>
 

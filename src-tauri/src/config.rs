@@ -18,7 +18,8 @@ pub struct LauncherConfig {
     pub dsh_admin_cap_domain: String,
 
     /// dsh 远程普通使用 capability 的域名部分（完整为 `{domain}/cap/dsh`）。
-    /// 空 = 不注入 DSH_TAILSCALE_USE_CAPABILITY，普通远程访问只靠身份 allowlist。
+    /// 空 = 不注入 DSH_TAILSCALE_USE_CAPABILITY；
+    /// 普通远程访问仍需身份 allowlist 与 tailnet TCP 443 grant。
     #[serde(default)]
     pub dsh_use_cap_domain: String,
 

@@ -10,13 +10,16 @@
 | 字段 | 控制什么 | 前端自动拼出的 capability | 留空时 |
 | --- | --- | --- | --- |
 | **Admin capability domain**（管理 capability 域名） | 远程**管理/特权**接口（settings、credentials、宿主文件等） | `<域名>/cap/dsh-admin` | 远程管理接口恒 403（仅本机可用） |
-| **Use capability domain**（普通使用 capability 域名） | 普通远程 HTTP / RPC / WebSocket | `<域名>/cap/dsh` | 普通远程访问只靠身份 allowlist |
+| **Use capability domain**（普通使用 capability 域名） | 普通远程 HTTP / RPC / WebSocket | `<域名>/cap/dsh` | 不要求 capability，仍需身份 allowlist 与 tailnet `tcp:443` grant |
 | **Extra allowed logins**（额外允许的登录名） | **谁能**远程访问（身份 allowlist） | — | 只有本机当前登录用户可访问 |
 
-三者各自独立，**没有互斥**，可以任意组合（只配一个、配两个或全配）：
+三者各自独立，**没有互斥**，可以任意组合（只配一个、配两个或全配）。但它们只管
+应用层授权，不能替代 tailnet 的网络授权：无论是否填写 capability，每个远程身份都
+必须在 Access Controls 中获准连接 dsh 节点的 `tcp:443`。
 
 - 两个 capability 域名 = 管"**能做什么**"（权限种类）
-- 额外登录名 = 管"**谁能来**"（身份名单）
+- 额外登录名 = 管"**应用允许谁使用**"（插件身份名单）
+- tailnet grant 的 `src` / `dst` / `ip` = 管"**谁能连到 HTTPS 端口**"（网络权限）
 
 > 本机当前登录用户**永远自动包含**在允许名单里，不需要也**不建议**手动加自己。
 
@@ -30,6 +33,8 @@
    不能用 `tailscale.com` / `tailscale.io` 保留命名空间。
 3. **Tailscale 在线且已登录**，MagicDNS / HTTPS Certificates 已启用（远程模式下点
    一键启动时时间轴会自动逐项检查这些前提）。
+4. 能编辑 tailnet 的 **Access controls / Policy**，为远程身份到 dsh 节点放行
+   `tcp:443`（第 6 节给出完整示例）。
 
 ## 3. 输入规则
 
@@ -69,7 +74,8 @@
 - 只有当你要用**其它不同的 Tailscale 账号**从别处访问时，才把那个账号填进
   **Extra allowed logins**
 - 两个 capability 域名留空：远程管理接口（settings / credentials）恒 403，最安全
-- 不需要配置 grants（因为没用到 capability）
+- 仍需配置第 6 节的 **IP-only grant**，放行远程身份到 dsh 节点的 `tcp:443`；只是不写
+  `app`
 
 ### 场景 B：个人远程使用，需管理（本人远程也能管理）
 
@@ -89,7 +95,8 @@ settings / credentials。**需要配置**，完整链条如下：
 3. **tailnet grants**（admin console，capability 生效的必须一环，见第 6 节）：
    - `src` 填你本人（账号或你所在的组）
    - `dst` 填 `autogroup:member`（个人场景最省事，不必给节点打 tag）
-   - `app` 里给 `<域名>/cap/dsh` 与 `<域名>/cap/dsh-admin`
+   - 同一 grant 的 `ip` 放行 `tcp:443`，`app` 给 `<域名>/cap/dsh` 与
+     `<域名>/cap/dsh-admin`
 
 > 一键启动时间轴的最后一步 verify 会按已配置项验证远程普通 API 与远程
 > `settings.describe`，并在 capability 未下发时直接指向 tailnet grants。仍建议最后
@@ -101,35 +108,40 @@ settings / credentials。**需要配置**，完整链条如下：
 
 - 效果：列出的登录名（含本机）可远程访问 dsh Web UI
 - 远程管理接口保持 403
-- 不需要配置 grants（因为没用到 capability）
+- 仍需配置第 6 节的 IP-only grant，让这些远程账号能连接 dsh 节点的 `tcp:443`
 
 ### 场景 D：开放远程普通访问 + 管理
 
 - **Admin capability domain** 填 `example.com`
 - **Use capability domain** 填 `example.com`
 - **Extra allowed logins** 填允许的账号
+- tailnet grant 在同一 `src` / `dst` 下同时配置 `ip: ["tcp:443"]` 与两个 `app` 项
 
 ### 场景 E：精细授权（不同人不同权限）
 
 - 两个 capability 域名都填你控制的域名
 - **Extra allowed logins** + **tailnet grants**（见第 6 节）里，普通用户只给
   `<域名>/cap/dsh`，管理员再额外给 `<域名>/cap/dsh-admin`
+- 每条普通用户或管理员 grant 都必须同时用 `ip` 放行 `tcp:443`
 
-## 6. 关键一环：tailnet grants（capability 必须三处同名）
+## 6. 关键一环：tailnet grants（TCP 443 + 可选 capability）
 
-**在卡片里配了 capability 不等于生效。** 光有应用侧配置还不够，Launcher 已自动完成
-前两处（注入 env + 把非空 capability 以 `--accept-app-caps=<use>,<admin>` 传给 serve），
-但**剩余一环**要你在 Tailscale admin console 的 **Access controls / Policy** 里做：
-给目标身份下发放行该 capability。
+异机请求会先经过 tailnet 网络策略，再到 Serve 与 dsh 授权插件。`app` 只传递
+App Capability，**不会隐式允许 TCP 连接**。因此无论卡片里的 capability 是否留空，
+都要在 Tailscale admin console 的 **Access controls / Policy** 中，为目标身份到
+dsh 节点放行 `"ip": ["tcp:443"]`。
 
-三处必须**同名**：
+若配置了 capability，Launcher 已自动完成注入 env 与
+`serve --accept-app-caps=<use>,<admin>`；你还要把对应 `app` 项与 `ip` 放进同一 grant。
+
+capability 名必须在三处**同名**：
 
 1. 你在卡片里配置的域名
 2. Launcher 注入的 env / `serve --accept-app-caps`
 3. tailnet grants 里的 capability 名
 
-grants 示例（`dst` 需匹配运行 dsh 的节点，未打 tag 可用该节点身份或 `autogroup:member`；
-`src` 填允许远程访问/管理的账号或组）：
+同时开放普通使用与管理能力的 grant 示例（`dst` 需匹配运行 dsh 的节点，未打 tag
+可用该节点身份或 `autogroup:member`；`src` 填允许远程访问/管理的账号或组）：
 
 ```json
 {
@@ -137,6 +149,7 @@ grants 示例（`dst` 需匹配运行 dsh 的节点，未打 tag 可用该节点
     {
       "src": ["group:dsh-admins"],
       "dst": ["tag:dsh-host"],
+      "ip": ["tcp:443"],
       "app": {
         "example.com/cap/dsh": [{}],
         "example.com/cap/dsh-admin": [{}]
@@ -146,12 +159,29 @@ grants 示例（`dst` 需匹配运行 dsh 的节点，未打 tag 可用该节点
 }
 ```
 
+场景 A / C 没有配置 capability 时，省略 `app`，保留网络授权：
+
+```json
+{
+  "grants": [
+    {
+      "src": ["group:dsh-users"],
+      "dst": ["tag:dsh-host"],
+      "ip": ["tcp:443"]
+    }
+  ]
+}
+```
+
 - `dst` 必须匹配运行 dsh 的节点。若没给节点打 tag，可改用该节点身份
   （形如 `user@host` 的 identity）或 `autogroup:member`。
+- `src` 必须覆盖实际发起访问的远程 Tailscale 登录身份；本机账号自动进入 dsh
+  allowlist，并不等于 tailnet policy 自动放行。
+- 配置 capability 时，`ip` 与 `app` 必须在同一个匹配该 `src` / `dst` 的 grant 中。
 - capability 名必须与卡片配置的域名一致：普通用户给 `<域名>/cap/dsh`，
   管理员再加 `<域名>/cap/dsh-admin`。
-- 若只用了 **Use capability**（场景如普通访问需 capability），grants 里只写
-  `"example.com/cap/dsh": [{}]` 即可，不必写 admin。
+- 若只用了 **Use capability**（场景如普通访问需 capability），`app` 里只写
+  `"example.com/cap/dsh": [{}]` 即可，不必写 admin；`ip: ["tcp:443"]` 仍需保留。
 
 ## 7. 端到端验证
 
@@ -164,8 +194,11 @@ grants 示例（`dst` 需匹配运行 dsh 的节点，未打 tag 可用该节点
 5. MagicDNS / HTTPS Certificates
 6. dsh 监听 `127.0.0.1:3899`
 7. Tailscale Serve 直接指向 3899
-8. 本地 HTTP、远程 HTTPS / WSS、已配置 capability 对应的远程 API、
+8. 本地 HTTP、宿主侧远程 HTTPS / WSS、已配置 capability 对应的远程 API、
    本机浏览器代理路径和本地特权 API 验证
+
+这 8 步不能模拟另一台设备的 tailnet `src`。最后必须从另一台已登录 Tailscale 的设备
+打开远程地址；仅有 `tailscale ping` 成功不足以证明 TCP 443 已被 policy 放行。
 
 手动排查可用：
 
@@ -183,11 +216,12 @@ tailscale serve status
 | --- | --- |
 | 保存时报"Invalid capability domain" | 域名不含 `.`，或含 `-` / `.` 之外的字符，或以 `-` / `.` 开头结尾。改用 `example.com` 这类合法域名 |
 | 保存时报"Tailscale login name contains unsupported characters" | 登录名含非法字符（如空格、中文）。只允许 ASCII 字母数字及 `@._+-` |
-| 启动时间轴卡在最后一步 / 远程打开提示无权限 | capability 只配了卡片没配 grants，或 grants 里 capability 名与卡片域名不一致。核对第 6 节 |
+| Tailscale ping 正常，但异机 HTTPS / RPC / WSS 超时 | tailnet grant 缺少 `"ip": ["tcp:443"]`，或 `src` / `dst` 未匹配实际远程身份与 dsh 节点。App Capability 本身不会放行端口 |
+| 启动时间轴卡在最后一步 / 远程打开提示无权限 | grant 缺少 `tcp:443` 网络授权、capability 只配了卡片没配 `app`，或 capability 名不一致。核对第 6 节 |
 | serve 报 `unknown flag: --accept-app-caps` | Tailscale 版本过旧，需 1.92+。升级 Tailscale |
-| 本机或另一台设备打不开 `https://<hostname>.ts.net` | 多被 Shadowrocket / Clash / Surge 或系统代理抢走 tailnet 流量；宿主 Mac 上把 Launcher 显示的精确主机名加入 Shadowrocket“通用 → 跳过代理（skip-proxy）”，其他访问端设备再配置精确 `DOMAIN,<hostname>.<tailnet>.ts.net,DIRECT`（详见 dsh-remote-access.md 的排查节） |
+| 已确认 `tcp:443` grant 匹配，但开启代理时打不开 `https://<hostname>.ts.net` | 多被 Shadowrocket / Clash / Surge 或系统代理抢走 tailnet 流量；宿主 Mac 上把 Launcher 显示的精确主机名加入 Shadowrocket“通用 → 跳过代理（skip-proxy）”，其他访问端设备再配置精确 `DOMAIN,<hostname>.<tailnet>.ts.net,DIRECT`（详见 dsh-remote-access.md 的排查节） |
 | 远程管理接口（settings / credentials）始终 403 | Admin capability 未配置或未在 grants 下发。确认 `dsh_admin_cap_domain` 已填、grants 里给了 `<域名>/cap/dsh-admin` |
 
 > 能力最小、最安全的起点是场景 A（个人最简使用）或场景 C（多用户最小配置）：
-> 只靠本机自动允许或"额外允许登录名"， capability 是进阶选项。若不确定，先从最简
-> 场景开始。
+> 使用本机自动 allowlist 或“额外允许登录名”配合 IP-only grant，capability 是进阶
+> 选项。若不确定，先从最简场景开始。

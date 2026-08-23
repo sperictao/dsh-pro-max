@@ -107,7 +107,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Local proxy bypass required": "本机代理需要配置绕过主机",
   "Remote endpoint check failed": "远程端点验证失败",
   "Remote capability grant denied": "远程 capability 授权被拒绝",
-  "Grant the configured use/admin capabilities to this identity and dsh node in tailnet grants, then stop and run one-click start again.": "请在 tailnet grants 中把已配置的 use/admin capability 授给当前身份到此 dsh 节点的连接，然后先关闭再重新一键启动。",
+  "Grant TCP 443 and the configured use/admin capabilities to this identity and dsh node in the same tailnet grant, then stop and run one-click start again.": "请在同一条 tailnet grant 中，为当前身份到此 dsh 节点放行 TCP 443 并授予已配置的 use/admin capability，然后先关闭再重新一键启动。",
   "This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.": "本机直连服务正常，但代理拦截了同一个 Tailscale 地址。",
   "Add this host to the macOS proxy bypass list. In Shadowrocket: General → Skip Proxy:": "请把此主机名加入 macOS 代理绕过列表。Shadowrocket 路径：通用 → 跳过代理：",
   "Copy bypass host": "复制绕过主机名",
@@ -144,10 +144,11 @@ export const zhCN: Record<I18nKey, string> = {
   "Extra allowed logins": "额外允许的登录名",
   "Full capability: {{capability}}": "完整 capability：{{capability}}",
   "Empty = remote management (settings/credentials) stays unavailable": "留空 = 远程管理（settings/credentials）不可用",
-  "Empty = plain remote access only needs identity allowlist": "留空 = 普通远程访问只需身份 allowlist",
+  "Empty = plain remote access still needs identity allowlist and tailnet TCP 443": "留空 = 普通远程访问仍需身份 allowlist 与 tailnet TCP 443 授权",
   "Comma-separated; the current user on this machine is always allowed": "逗号分隔；本机当前用户始终允许",
   "Remote authorization saved": "远程授权已保存",
   "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.": "修改远程授权后，请重新一键启动以应用；若 dsh Web 正在运行，请先关闭。",
+  "Every remote identity needs TCP 443 in tailnet grants. If you configure capabilities, include both ip and app in the same grant.": "每个远程身份都需要在 tailnet grants 中获准访问 TCP 443；若配置了 capability，必须把 ip 与 app 放在同一条 grant 中。",
 
   // —— 更新 ——
   "Check failed: {{error}}": "检查失败: {{error}}",

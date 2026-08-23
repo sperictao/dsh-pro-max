@@ -105,7 +105,7 @@ export const en = {
   "Local proxy bypass required": "Local proxy bypass required",
   "Remote endpoint check failed": "Remote endpoint check failed",
   "Remote capability grant denied": "Remote capability grant denied",
-  "Grant the configured use/admin capabilities to this identity and dsh node in tailnet grants, then stop and run one-click start again.": "Grant the configured use/admin capabilities to this identity and dsh node in tailnet grants, then stop and run one-click start again.",
+  "Grant TCP 443 and the configured use/admin capabilities to this identity and dsh node in the same tailnet grant, then stop and run one-click start again.": "Grant TCP 443 and the configured use/admin capabilities to this identity and dsh node in the same tailnet grant, then stop and run one-click start again.",
   "This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.": "This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.",
   "Add this host to the macOS proxy bypass list. In Shadowrocket: General → Skip Proxy:": "Add this host to the macOS proxy bypass list. In Shadowrocket: General → Skip Proxy:",
   "Copy bypass host": "Copy bypass host",
@@ -142,10 +142,11 @@ export const en = {
   "Extra allowed logins": "Extra allowed logins",
   "Full capability: {{capability}}": "Full capability: {{capability}}",
   "Empty = remote management (settings/credentials) stays unavailable": "Empty = remote management (settings/credentials) stays unavailable",
-  "Empty = plain remote access only needs identity allowlist": "Empty = plain remote access only needs identity allowlist",
+  "Empty = plain remote access still needs identity allowlist and tailnet TCP 443": "Empty = plain remote access still needs identity allowlist and tailnet TCP 443",
   "Comma-separated; the current user on this machine is always allowed": "Comma-separated; the current user on this machine is always allowed",
   "Remote authorization saved": "Remote authorization saved",
   "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.": "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.",
+  "Every remote identity needs TCP 443 in tailnet grants. If you configure capabilities, include both ip and app in the same grant.": "Every remote identity needs TCP 443 in tailnet grants. If you configure capabilities, include both ip and app in the same grant.",
 
   // —— 更新 ——
   "Check failed: {{error}}": "Check failed: {{error}}",

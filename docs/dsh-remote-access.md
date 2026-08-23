@@ -36,11 +36,13 @@ Connection 替代包会精确禁用内置
 身份头，再把真实 Tailscale 身份注入本地后端。
 
 - dsh 只监听 `127.0.0.1:3899`，不能从 LAN 或公网绕过 Serve 直连。
-- 普通远程 HTTP、RPC 与 WebSocket 必须通过 Tailscale 身份授权。
+- 普通远程 HTTP、RPC 与 WebSocket 必须同时通过 tailnet `tcp:443` 网络授权与插件的
+  Tailscale 身份授权。
 - 本机请求仍需同时满足 loopback TCP peer 与 loopback Host，才能走真实本地旁路。
 - Launcher 按集成卡片远程模式里配置的两类域名注入 capability（见下节）；
   域名留空就不注入对应 capability，远程特权接口（settings、credentials、宿主
-  文件等）保持拒绝，普通远程访问只靠身份 allowlist。本机特权接口始终可用。
+  文件等）保持拒绝，普通远程访问仍需身份 allowlist 与 tailnet `tcp:443` grant。
+  本机特权接口始终可用。
 - 只使用私有 Tailscale Serve，不使用 Funnel，也不把 dsh 绑定到 `0.0.0.0`。
 
 ## 远程授权配置（集成卡片 → 远程模式）
@@ -50,14 +52,14 @@ Connection 替代包会精确禁用内置
 | 设置 | 注入的 env | 默认空语义 |
 | --- | --- | --- |
 | 管理 capability 域名 | `DSH_TAILSCALE_ADMIN_CAPABILITY` = `<域名>/cap/dsh-admin` | 远程管理接口（settings/credentials）恒 403 |
-| 普通使用 capability 域名 | `DSH_TAILSCALE_USE_CAPABILITY` = `<域名>/cap/dsh` | 普通远程 API/WS 只靠身份 allowlist |
+| 普通使用 capability 域名 | `DSH_TAILSCALE_USE_CAPABILITY` = `<域名>/cap/dsh` | 普通远程 API/WS 不要求 capability，仍需身份 allowlist 与 tailnet `tcp:443` grant |
 | 额外允许的登录名 | 追加进 `DSH_TAILSCALE_ALLOWED_LOGINS`（本机当前用户始终自动包含） | 只有本机当前用户可访问 |
 
-三项需在 **Launcher 注入的 env**、**`tailscale serve --accept-app-caps`** 与
+capability 名需在 **Launcher 注入的 env**、**`tailscale serve --accept-app-caps`** 与
 **tailnet grants** 三处同名。Launcher 已自动完成前两者：dsh_setup 会把非空的
 capability 以 `--accept-app-caps=<use>,<admin>` 传给 serve，并把解析出的完整
-capability 与 allowlist 注入 dsh web / 自启脚本。剩下的一环是 tailnet policy——
-按你配置的域名给目标身份下发 capability：
+capability 与 allowlist 注入 dsh web / 自启脚本。剩下的一环是 tailnet policy：
+它必须独立放行 HTTPS 网络连接；若配置了 capability，再在同一 grant 下发对应能力：
 
 ```json
 {
@@ -65,6 +67,7 @@ capability 与 allowlist 注入 dsh web / 自启脚本。剩下的一环是 tail
     {
       "src": ["group:dsh-admins"],
       "dst": ["tag:dsh-host"],
+      "ip": ["tcp:443"],
       "app": {
         "example.com/cap/dsh": [{}],
         "example.com/cap/dsh-admin": [{}]
@@ -73,6 +76,11 @@ capability 与 allowlist 注入 dsh web / 自启脚本。剩下的一环是 tail
   ]
 }
 ```
+
+`ip` 是所有异机远程访问都必需的网络授权；`app` 只传递应用能力，不会隐式开放
+TCP 443。两个 capability 都留空时可以省略 `app`，但不能省略
+`"ip": ["tcp:443"]`。配置任一 capability 时，`ip` 与 `app` 必须放在匹配同一
+`src` / `dst` 的 grant 中。
 
 `dst` 需匹配运行 dsh 的节点（若未打 tag，可改用该节点身份或 `autogroup:member`）；
 `src` 填你允许远程访问/管理的账号或组。capability 名必须与你在卡片里配置的域名
@@ -96,7 +104,11 @@ capability 与 allowlist 注入 dsh web / 自启脚本。剩下的一环是 tail
 5. MagicDNS / HTTPS Certificates；
 6. dsh 监听 `127.0.0.1:3899`；
 7. Tailscale Serve 直接指向 3899；
-8. 本地 HTTP、远程 HTTPS/WSS、本机浏览器代理路径和本地特权 API 验证。
+8. 本地 HTTP、宿主侧远程 HTTPS/WSS、本机浏览器代理路径和本地特权 API 验证。
+
+第 8 步只能证明服务、Serve 与宿主本机路径正常，不能替代另一台 tailnet 设备的
+`src` / `dst` / `tcp:443` policy 验证。配置 Access Controls 后，必须从另一台设备
+实际打开远程地址；Tailscale ping 成功也不代表 TCP 443 已放行。
 
 手动排查可使用：
 
