@@ -1,6 +1,7 @@
 // 英文词典：key 即英文原文，en 为恒等映射（显式维护供缺失扫描与类型检查）
 export const en = {
   // —— 导航与视图 ——
+  "Home": "Home",
   "Settings": "Settings",
   "Open": "Open",
 

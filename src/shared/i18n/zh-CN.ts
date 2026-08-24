@@ -3,6 +3,7 @@ import type { I18nKey } from "./en";
 // 中文词典：Record<I18nKey, string> 保证与英文词典编译期同步，漏 key 直接编译错误
 export const zhCN: Record<I18nKey, string> = {
   // —— 导航与视图 ——
+  "Home": "主页",
   "Settings": "设置",
   "Open": "打开",
 

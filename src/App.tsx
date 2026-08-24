@@ -14,7 +14,7 @@ import { SettingsView } from "./features/settings/SettingsView";
 import { IntegrationView } from "./features/integration/IntegrationView";
 
 const NAV_ITEMS: { view: View; labelKey: string }[] = [
-  { view: "integration", labelKey: "Integrations" },
+  { view: "integration", labelKey: "Home" },
   { view: "settings", labelKey: "Settings" },
 ];
 
