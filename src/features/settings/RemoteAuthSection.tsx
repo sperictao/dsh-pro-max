@@ -38,7 +38,7 @@ export function RemoteAuthSection() {
       id="dsh-remote-auth-block"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium">{t("Remote authorization")}</span>
+        <h2 className="text-sm font-medium">{t("Remote authorization")}</h2>
         <button className={BTN_SM} id="btn-save-remote-auth" onClick={() => void saveRemoteAuth()}>
           {t("Save")}
         </button>

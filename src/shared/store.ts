@@ -15,7 +15,13 @@ import type {
 } from "./types";
 
 export type View = "integration" | "settings";
-export type SettingsSection = "general" | "appearance" | "dsh" | "about";
+export type SettingsSection =
+  | "general"
+  | "appearance"
+  | "dsh-version"
+  | "dsh-autostart"
+  | "dsh-auth"
+  | "about";
 export type ToastType = "success" | "error" | "info";
 
 export interface ToastItem {
