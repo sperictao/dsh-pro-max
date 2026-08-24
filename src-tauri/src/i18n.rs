@@ -169,7 +169,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "Open the authorization link in the error output to enable Serve for this tailnet (https://login.tailscale.com/f/serve), then retry" => "请打开错误信息中的授权链接为该 tailnet 启用 Serve（https://login.tailscale.com/f/serve），然后重试",
         "Tailscale 1.92+ is required to forward App Capabilities; update Tailscale, then retry" => "转发 App Capability 需要 Tailscale 1.92+；请更新 Tailscale 后重试",
         "Invalid capability domain: {domain}. Use a domain you control (e.g. example.com)" => "无效的 capability 域名: {domain}。请使用你控制的域名（如 example.com）",
-        "Fix the remote authorization settings in the Integration card (remote mode), then retry" => "请在集成卡片（远程模式）修正远程授权设置后重试",
+        "Fix the remote authorization settings in Settings → DeepSeek Harness, then retry" => "请在设置页的 DeepSeek Harness 分区修正远程授权设置后重试",
         "Verifying remote access ({url})…" => "正在验证远程访问（{url}）…",
         "Remote access is ready: {url}" => "远程访问已就绪: {url}",
         "Verification failed; some components are not ready" => "验证失败，部分组件未就绪",

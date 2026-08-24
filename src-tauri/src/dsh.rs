@@ -43,7 +43,7 @@ const TAILSCALE_LOGIN_ENV: &str = "DSH_TAILSCALE_ALLOWED_LOGINS";
 const LOCAL_ONLY_LOGIN: &str = "local-only@localhost.invalid";
 /// 远程特权接口（settings/credentials/host 等 loopback authority）与普通远程
 /// API/WS 各自所需的 App Capability 环境变量。capability 路径固定为
-/// `/cap/dsh-admin` / `/cap/dsh`，域名由用户在集成卡片远程模式里配置；
+/// `/cap/dsh-admin` / `/cap/dsh`，域名由用户在设置页 DeepSeek Harness 分区配置；
 /// 留空则不注入对应 env，行为回退（远程管理恒 403 / 普通访问只靠身份
 /// allowlist）。三处必须同名：注入的 env、`tailscale serve --accept-app-caps`
 /// 与 tailnet grants。
@@ -1478,7 +1478,7 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
             Err(error) => {
                 return ctx.fail(
                     &error,
-                    &tr("Fix the remote authorization settings in the Integration card (remote mode), then retry"),
+                    &tr("Fix the remote authorization settings in Settings → DeepSeek Harness, then retry"),
                     &remaining_after(0),
                 )
             }

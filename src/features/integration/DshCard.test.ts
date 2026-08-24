@@ -151,29 +151,6 @@ describe("local mode status text", () => {
 });
 
 describe("remote URL verification flow", () => {
-  it("explains the tailnet grant and restart requirements", async () => {
-    localStorage.setItem("dsh-access-mode", "remote");
-    vi.spyOn(cmd, "dshDetect").mockResolvedValue(ready);
-    useAppStore.setState({
-      config: {
-        minimize_to_tray_on_close: false,
-        language: "en",
-        dsh_admin_cap_domain: "example.com",
-        dsh_use_cap_domain: "example.com",
-        dsh_extra_allowed_logins: "",
-      },
-    });
-
-    render(createElement(DshCard));
-
-    expect(await screen.findByText(
-      "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.",
-    )).toBeInTheDocument();
-    expect(screen.getByText(
-      "Every remote identity needs TCP 443 in tailnet grants. If you configure capabilities, include both ip and app in the same grant.",
-    )).toBeInTheDocument();
-  });
-
   it("shows the tailnet grants action when a capability probe is denied", async () => {
     localStorage.setItem("dsh-access-mode", "remote");
     vi.spyOn(cmd, "dshDetect").mockResolvedValue({

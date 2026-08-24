@@ -1,11 +1,11 @@
 # dsh 远程授权配置教程
 
-本教程面向操作者，手把手配置 DSH Pro Max 集成卡片里的 dsh 远程访问授权。
+本教程面向操作者，手把手配置 DSH Pro Max 设置页里的 dsh 远程访问授权。
 关于链路原理、身份边界与兼容栈，见 [dsh-remote-access.md](./dsh-remote-access.md)。
 
 ## 1. 三个参数是什么
 
-在集成卡片切换到**远程模式**后，会显示 **Remote authorization** 配置块，共有三个字段：
+在设置页的 **DeepSeek Harness** 分区中，会显示 **Remote authorization** 配置块，共有三个字段：
 
 | 字段 | 控制什么 | 前端自动拼出的 capability | 留空时 |
 | --- | --- | --- | --- |
@@ -54,12 +54,12 @@
 
 ## 4. 在应用里填写
 
-1. 打开集成卡片，把**远程访问**开关拨到远程模式（Remote access 复选框）。
+1. 打开设置页，进入 **DeepSeek Harness** 分区。
 2. 出现 **Remote authorization** 块后，按你的场景填入字段。
 3. 点 **Save**（按钮在 Remote authorization 标题右侧），提示"Remote authorization saved"即已落盘。
 
-> 字段是本地草稿，只有点 Save 才会写入配置。切换访问模式或重启应用后，已保存的
-> 配置会保留并在下次进入远程模式时回填显示。
+> 字段是本地草稿，只有点 Save 才会写入配置。保存后重启应用或切换访问模式，已保存的
+> 配置仍会保留并回填显示。
 
 ## 5. 典型场景
 
@@ -84,7 +84,7 @@ settings / credentials。**需要配置**，完整链条如下：
 
 1. **前置环境**（前提，非配置）：Tailscale 1.92+；运行 dsh 的机器已登录；
    MagicDNS + HTTPS Certificates 已启用
-2. **卡片配置**（应用内，集成卡片 → 远程模式 → Remote authorization）：
+2. **设置配置**（应用内，设置 → DeepSeek Harness → Remote authorization）：
    - **Admin capability domain** 填 `example.com`
    - **Use capability domain** 填 `example.com`（开放普通远程 API/WS）
    - **Extra allowed logins** 通常无需填（本机账号已包含，且身份是账号级、覆盖你
@@ -127,7 +127,7 @@ settings / credentials。**需要配置**，完整链条如下：
 ## 6. 关键一环：tailnet grants（TCP 443 + 可选 capability）
 
 异机请求会先经过 tailnet 网络策略，再到 Serve 与 dsh 授权插件。`app` 只传递
-App Capability，**不会隐式允许 TCP 连接**。因此无论卡片里的 capability 是否留空，
+App Capability，**不会隐式允许 TCP 连接**。因此无论设置页里的 capability 是否留空，
 都要在 Tailscale admin console 的 **Access controls / Policy** 中，为目标身份到
 dsh 节点放行 `"ip": ["tcp:443"]`。
 
@@ -136,7 +136,7 @@ dsh 节点放行 `"ip": ["tcp:443"]`。
 
 capability 名必须在三处**同名**：
 
-1. 你在卡片里配置的域名
+1. 你在设置页配置的域名
 2. Launcher 注入的 env / `serve --accept-app-caps`
 3. tailnet grants 里的 capability 名
 
@@ -178,7 +178,7 @@ capability 名必须在三处**同名**：
 - `src` 必须覆盖实际发起访问的远程 Tailscale 登录身份；本机账号自动进入 dsh
   allowlist，并不等于 tailnet policy 自动放行。
 - 配置 capability 时，`ip` 与 `app` 必须在同一个匹配该 `src` / `dst` 的 grant 中。
-- capability 名必须与卡片配置的域名一致：普通用户给 `<域名>/cap/dsh`，
+- capability 名必须与设置页配置的域名一致：普通用户给 `<域名>/cap/dsh`，
   管理员再加 `<域名>/cap/dsh-admin`。
 - 若只用了 **Use capability**（场景如普通访问需 capability），`app` 里只写
   `"example.com/cap/dsh": [{}]` 即可，不必写 admin；`ip: ["tcp:443"]` 仍需保留。
@@ -217,7 +217,7 @@ tailscale serve status
 | 保存时报"Invalid capability domain" | 域名不含 `.`，或含 `-` / `.` 之外的字符，或以 `-` / `.` 开头结尾。改用 `example.com` 这类合法域名 |
 | 保存时报"Tailscale login name contains unsupported characters" | 登录名含非法字符（如空格、中文）。只允许 ASCII 字母数字及 `@._+-` |
 | Tailscale ping 正常，但异机 HTTPS / RPC / WSS 超时 | tailnet grant 缺少 `"ip": ["tcp:443"]`，或 `src` / `dst` 未匹配实际远程身份与 dsh 节点。App Capability 本身不会放行端口 |
-| 启动时间轴卡在最后一步 / 远程打开提示无权限 | grant 缺少 `tcp:443` 网络授权、capability 只配了卡片没配 `app`，或 capability 名不一致。核对第 6 节 |
+| 启动时间轴卡在最后一步 / 远程打开提示无权限 | grant 缺少 `tcp:443` 网络授权、capability 只配了设置页没配 `app`，或 capability 名不一致。核对第 6 节 |
 | serve 报 `unknown flag: --accept-app-caps` | Tailscale 版本过旧，需 1.92+。升级 Tailscale |
 | 已确认 `tcp:443` grant 匹配，但开启代理时打不开 `https://<hostname>.ts.net` | 多被 Shadowrocket / Clash / Surge 或系统代理抢走 tailnet 流量；宿主 Mac 上把 Launcher 显示的精确主机名加入 Shadowrocket“通用 → 跳过代理（skip-proxy）”，其他访问端设备再配置精确 `DOMAIN,<hostname>.<tailnet>.ts.net,DIRECT`（详见 dsh-remote-access.md 的排查节） |
 | 远程管理接口（settings / credentials）始终 403 | Admin capability 未配置或未在 grants 下发。确认 `dsh_admin_cap_domain` 已填、grants 里给了 `<域名>/cap/dsh-admin` |

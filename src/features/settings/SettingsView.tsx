@@ -54,7 +54,7 @@ export function SettingsView() {
   const section = useAppStore((s) => s.settingsSection);
   const setSettingsSection = useAppStore((s) => s.setSettingsSection);
   const saveConfig = useAppStore((s) => s.saveConfig);
-  // 保存 footer 仅在外观/dsh/关于分区隐藏（dsh 分区操作即时生效，无可保存草稿）
+  // 保存 footer 仅在外观/dsh/关于分区隐藏（dsh 分区各有独立操作/保存入口，不依赖全局保存）
   const footerHidden = section === "about" || section === "appearance" || section === "dsh";
 
   return (

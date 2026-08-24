@@ -1,4 +1,4 @@
-// dsh 分区：版本卡（全部 dist-tag 一览 + 逐版本安装）+ 开机自启开关。
+// dsh 分区：版本卡（全部 dist-tag 一览 + 逐版本安装）+ 开机自启开关 + 远程授权配置。
 // 版本卡挂载自动查一次（npm view dist-tags 15s 超时，失败原因持久展示）；
 // 安装按钮允许切换到任意 tag 指向的版本——高于验证栈的行有警示，
 // 风险如实披露但不阻断用户选择（授权插件只影响远程链路）
@@ -9,6 +9,7 @@ import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { BTN, BTN_SM, TOGGLE } from "@/shared/lib/ui";
 import type { DshLatestInfo } from "@/shared/types";
+import { RemoteAuthSection } from "./RemoteAuthSection";
 
 export function DshSection() {
   const { t } = useTranslation();
@@ -157,6 +158,9 @@ export function DshSection() {
           />
         </label>
       </div>
+
+      {/* 远程授权：配置项归设置页，集成卡片只管流程操作 */}
+      <RemoteAuthSection />
     </section>
   );
 }

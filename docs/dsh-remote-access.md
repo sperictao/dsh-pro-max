@@ -39,15 +39,15 @@ Connection 替代包会精确禁用内置
 - 普通远程 HTTP、RPC 与 WebSocket 必须同时通过 tailnet `tcp:443` 网络授权与插件的
   Tailscale 身份授权。
 - 本机请求仍需同时满足 loopback TCP peer 与 loopback Host，才能走真实本地旁路。
-- Launcher 按集成卡片远程模式里配置的两类域名注入 capability（见下节）；
+- Launcher 按设置页 DeepSeek Harness 分区里配置的两类域名注入 capability（见下节）；
   域名留空就不注入对应 capability，远程特权接口（settings、credentials、宿主
   文件等）保持拒绝，普通远程访问仍需身份 allowlist 与 tailnet `tcp:443` grant。
   本机特权接口始终可用。
 - 只使用私有 Tailscale Serve，不使用 Funnel，也不把 dsh 绑定到 `0.0.0.0`。
 
-## 远程授权配置（集成卡片 → 远程模式）
+## 远程授权配置（设置 → DeepSeek Harness）
 
-远程访问的授权策略由三个设置项组成（均在集成卡片切到远程模式后内联编辑，默认全空）：
+远程访问的授权策略由三个设置项组成（均在设置页 DeepSeek Harness 分区内编辑，默认全空）：
 
 | 设置 | 注入的 env | 默认空语义 |
 | --- | --- | --- |
@@ -83,7 +83,7 @@ TCP 443。两个 capability 都留空时可以省略 `app`，但不能省略
 `src` / `dst` 的 grant 中。
 
 `dst` 需匹配运行 dsh 的节点（若未打 tag，可改用该节点身份或 `autogroup:member`）；
-`src` 填你允许远程访问/管理的账号或组。capability 名必须与你在卡片里配置的域名
+`src` 填你允许远程访问/管理的账号或组。capability 名必须与你在设置页配置的域名
 一致（普通用户给 `<域名>/cap/dsh`，管理员再加 `<域名>/cap/dsh-admin`）。capability
 名必须使用你控制的域名，不能落入 `tailscale.com`/`tailscale.io` 保留命名空间。
 转发 App Capability 需要 Tailscale 1.92+；旧版本 serve 会报
