@@ -14,7 +14,6 @@ export const en = {
   "Appearance": "Appearance",
   "Mode": "Mode",
   "Theme": "Theme",
-  "Integrations": "Integrations",
   "About": "About",
   "System Behavior": "System Behavior",
   "Minimize to tray when closing window": "Minimize to tray when closing window",

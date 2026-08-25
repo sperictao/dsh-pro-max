@@ -16,7 +16,6 @@ export const zhCN: Record<I18nKey, string> = {
   "Appearance": "外观",
   "Mode": "模式",
   "Theme": "主题",
-  "Integrations": "集成",
   "About": "关于",
   "System Behavior": "系统行为",
   "Minimize to tray when closing window": "关闭窗口时最小化到托盘",
