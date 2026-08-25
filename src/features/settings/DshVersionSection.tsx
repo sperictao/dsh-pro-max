@@ -3,19 +3,21 @@
 // 安装按钮允许切换到任意 tag 指向的版本——高于验证栈的行有警示，
 // 风险如实披露但不阻断用户选择（授权插件只影响远程链路）
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { BTN, BTN_SM } from "@/shared/lib/ui";
-import type { DshLatestInfo } from "@/shared/types";
 
 export function DshVersionSection() {
   const { t } = useTranslation();
   const toast = useAppStore((s) => s.toast);
-  const [info, setInfo] = useState<DshLatestInfo | null>(null);
-  const [checkBusy, setCheckBusy] = useState(false);
-  const [installing, setInstalling] = useState<string | null>(null);
+  const info = useAppStore((s) => s.dshLatest);
+  const checkBusy = useAppStore((s) => s.dshLatestBusy);
+  const installing = useAppStore((s) => s.dshInstallingVersion);
+  const setInfo = useAppStore((s) => s.setDshLatest);
+  const setCheckBusy = useAppStore((s) => s.setDshLatestBusy);
+  const setInstalling = useAppStore((s) => s.setDshInstallingVersion);
 
   const check = useCallback(async () => {
     setCheckBusy(true);
@@ -26,11 +28,14 @@ export function DshVersionSection() {
     } finally {
       setCheckBusy(false);
     }
-  }, []);
+  }, [setCheckBusy, setInfo]);
 
   useEffect(() => {
-    void check();
-  }, [check]);
+    // 正在安装/已有检查在跑时不要触发新的检查，避免切页回来后覆盖正在进行的状态。
+    // 只在挂载时决定一次，后续由安装完成/手动按钮刷新。
+    if (!installing && !checkBusy) void check();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const install = async (version: string) => {
     if (installing) return;

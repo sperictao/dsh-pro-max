@@ -8,6 +8,8 @@ export interface LauncherConfig {
   dsh_extra_allowed_logins: string;
 }
 
+export type DshAccessMode = "local" | "remote";
+
 export interface DshStatus {
   nodeAvailable: boolean;
   dshInstalled: boolean;

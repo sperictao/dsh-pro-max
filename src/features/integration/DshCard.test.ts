@@ -57,7 +57,22 @@ beforeEach(() => {
     value: testLocalStorage,
   });
   localStorage.clear();
-  useAppStore.setState({ dshTimeline: [], toasts: [], config: null });
+  useAppStore.setState({
+    dshTimeline: [],
+    toasts: [],
+    config: null,
+    dshStatus: null,
+    dshAccessMode: "local",
+    dshStartBusy: false,
+    dshStopBusy: false,
+    dshRecheckBusy: false,
+    dshHasRunSetup: false,
+    dshLatest: null,
+    dshLatestBusy: false,
+    dshInstallingVersion: null,
+    dshAutostart: null,
+    dshAutostartBusy: false,
+  });
 });
 
 describe("dsh auth plugin readiness", () => {
@@ -153,6 +168,7 @@ describe("local mode status text", () => {
 describe("remote URL verification flow", () => {
   it("shows the tailnet grants action when a capability probe is denied", async () => {
     localStorage.setItem("dsh-access-mode", "remote");
+    useAppStore.setState({ dshAccessMode: "remote" });
     vi.spyOn(cmd, "dshDetect").mockResolvedValue({
       ...ready,
       remoteUrlAccess: "capability_denied",
@@ -169,6 +185,7 @@ describe("remote URL verification flow", () => {
 
   it("shows the exact skip-proxy host and keeps remote open disabled", async () => {
     localStorage.setItem("dsh-access-mode", "remote");
+    useAppStore.setState({ dshAccessMode: "remote" });
     const blocked = { ...ready, remoteUrlAccess: "proxy_interference" as const };
     vi.spyOn(cmd, "dshDetect").mockResolvedValue(blocked);
 
@@ -200,6 +217,7 @@ describe("remote URL verification flow", () => {
 
   it("does not open the remote URL when the post-setup probe fails", async () => {
     localStorage.setItem("dsh-access-mode", "remote");
+    useAppStore.setState({ dshAccessMode: "remote" });
     const stopped = {
       ...ready,
       dshRunning: false,
@@ -222,5 +240,35 @@ describe("remote URL verification flow", () => {
     await waitFor(() => expect(setup).toHaveBeenCalledOnce());
     await waitFor(() => expect(detect.mock.calls.length).toBeGreaterThanOrEqual(2));
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe("cross-page state preservation", () => {
+  it("keeps running/failed one-click state after unmount and remount", async () => {
+    const failedStep = {
+      index: 0,
+      id: "node",
+      state: "failed" as const,
+      detail: "detail",
+      problem: "problem",
+      solution: "solution",
+    };
+    useAppStore.setState({
+      dshStartBusy: true,
+      dshHasRunSetup: true,
+      dshStatus: { ...ready, dshRunning: false },
+      dshTimeline: [failedStep],
+    });
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue({ ...ready, dshRunning: false });
+
+    const first = render(createElement(DshCard));
+    expect(screen.getByRole("button", { name: "Starting..." })).toBeInTheDocument();
+    expect(screen.getByText("problem")).toBeInTheDocument();
+
+    first.unmount();
+    const second = render(createElement(DshCard));
+    expect(screen.getByRole("button", { name: "Starting..." })).toBeInTheDocument();
+    expect(screen.getByText("problem")).toBeInTheDocument();
+    second.unmount();
   });
 });

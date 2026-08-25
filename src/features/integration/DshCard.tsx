@@ -3,28 +3,16 @@
 // 不执行任何启用/停止；一键启动/关闭按钮按当前模式走对应流程。
 // 时间轴步骤由事件桥写入 store.dshTimeline；未跑过流程时用检测结果推导就绪视图
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { BTN_DESTRUCTIVE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
-import type { DshStatus, DshStepEvent } from "@/shared/types";
+import type { DshAccessMode, DshStatus, DshStepEvent } from "@/shared/types";
 
-export type DshAccessMode = "local" | "remote";
-
-// 访问模式持久化 key：localStorage 记用户上次选择，未选择过回落本地模式
-const ACCESS_MODE_KEY = "dsh-access-mode";
-
-function readStoredMode(): DshAccessMode {
-  if (typeof localStorage === "undefined") return "local";
-  return localStorage.getItem(ACCESS_MODE_KEY) === "remote" ? "remote" : "local";
-}
-
-function storeMode(mode: DshAccessMode): void {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(ACCESS_MODE_KEY, mode);
-}
+// 保持旧导出兼容（类型已上移到 shared/types）
+export type { DshAccessMode };
 
 export function proxyBypassHostForRemoteUrl(url: string | null): string | null {
   if (!url) return null;
@@ -163,18 +151,23 @@ export function DshCard() {
   const toast = useAppStore((s) => s.toast);
   const timeline = useAppStore((s) => s.dshTimeline);
   const setDshTimeline = useAppStore((s) => s.setDshTimeline);
-  const [status, setStatus] = useState<DshStatus | null>(null);
-  // 启动/修复与停止各自维护 busy（同主页 Start All / Stop All 语义），互斥防并发
-  const [startBusy, setStartBusy] = useState(false);
-  const [stopBusy, setStopBusy] = useState(false);
-  const [recheckBusy, setRecheckBusy] = useState(false);
+  const status = useAppStore((s) => s.dshStatus);
+  const startBusy = useAppStore((s) => s.dshStartBusy);
+  const stopBusy = useAppStore((s) => s.dshStopBusy);
+  const recheckBusy = useAppStore((s) => s.dshRecheckBusy);
+  const hasRunSetup = useAppStore((s) => s.dshHasRunSetup);
+  const mode = useAppStore((s) => s.dshAccessMode);
+  const setStatus = useAppStore((s) => s.setDshStatus);
+  const setStartBusy = useAppStore((s) => s.setDshStartBusy);
+  const setStopBusy = useAppStore((s) => s.setDshStopBusy);
+  const setRecheckBusy = useAppStore((s) => s.setDshRecheckBusy);
+  const setHasRunSetup = useAppStore((s) => s.setDshHasRunSetup);
+  const setMode = useAppStore((s) => s.setDshAccessMode);
+
   const busy = startBusy || stopBusy || recheckBusy;
   // 是否跑过一键流程：跑过则时间轴以事件流为准，否则用检测结果渲染就绪视图
-  const [hasRunSetup, setHasRunSetup] = useState(false);
   // 当前访问模式：local（127.0.0.1:3899 本地访问）或 remote（Tailscale HTTPS 远程访问）。
-  // 默认本地模式；用户切换后记住选择（localStorage）
-  const [mode, setMode] = useState<DshAccessMode>(readStoredMode);
-
+  // 默认本地模式；用户切换后记住选择（localStorage）；store 是渲染镜像
   const isRemote = mode === "remote";
   // 运行中锁定访问模式：切换只决定「下次启动走哪条流程」，不会改变运行中
   // 服务的实际形态（本地回环 vs Tailscale serve），允许切换只会造成
@@ -191,7 +184,7 @@ export function DshCard() {
     } catch (e) {
       toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
     }
-  }, [hasRunSetup, isRemote, setDshTimeline, t, toast]);
+  }, [hasRunSetup, isRemote, setDshTimeline, setStatus, t, toast]);
 
   useEffect(() => {
     void refresh();
@@ -203,11 +196,11 @@ export function DshCard() {
   const switchMode = async (next: DshAccessMode) => {
     if (next === mode || busy) return;
     setMode(next);
-    storeMode(next);
     setHasRunSetup(false);
     setRecheckBusy(true);
     if (next === "remote") {
-      setStatus((current) => current ? { ...current, remoteUrlAccess: null } : current);
+      const current = useAppStore.getState().dshStatus;
+      setStatus(current ? { ...current, remoteUrlAccess: null } : current);
     }
     try {
       const s = await cmd.dshDetect(next === "remote");

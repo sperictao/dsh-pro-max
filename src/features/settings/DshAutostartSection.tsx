@@ -1,6 +1,6 @@
 // dsh 开机自启分区：开启时若 dsh 版本过低会自动装回验证栈并安装授权插件（Rust 侧保证）
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
@@ -9,13 +9,20 @@ import { TOGGLE } from "@/shared/lib/ui";
 export function DshAutostartSection() {
   const { t } = useTranslation();
   const toast = useAppStore((s) => s.toast);
-  const [autostart, setAutostart] = useState<boolean | null>(null);
-  const [autostartBusy, setAutostartBusy] = useState(false);
+  const autostart = useAppStore((s) => s.dshAutostart);
+  const autostartBusy = useAppStore((s) => s.dshAutostartBusy);
+  const setAutostart = useAppStore((s) => s.setDshAutostart);
+  const setAutostartBusy = useAppStore((s) => s.setDshAutostartBusy);
 
   useEffect(() => {
-    cmd.dshDetect()
-      .then((s) => setAutostart(s.autostartEnabled))
-      .catch(() => setAutostart(null));
+    // 没有正在切换时才拉取，避免切页回来后覆盖进行中的状态。
+    // 只在挂载时决定一次，后续由切换操作/检测结果驱动。
+    if (!autostartBusy) {
+      cmd.dshDetect()
+        .then((s) => setAutostart(s.autostartEnabled))
+        .catch(() => setAutostart(null));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleAutostart = async () => {
