@@ -1,6 +1,9 @@
 //! 跨平台进程与 CLI 辅助：引号转义、PATH 探测、spawn/存活/等待、按命令行模式匹配杀进程、dsh 停止。
 
-use super::{AUTOSTART_PREFIX, WEB_PORT};
+use super::WEB_PORT;
+// AUTOSTART_PREFIX 仅 macOS launchd 分支使用（常量本身 cfg(macos)）
+#[cfg(target_os = "macos")]
+use super::AUTOSTART_PREFIX;
 use super::components::{tailscale_path};
 use std::fs;
 use std::path::Path;
