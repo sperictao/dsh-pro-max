@@ -152,7 +152,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .menu(&menu)
         .tooltip("DSH Pro Max")
         .show_menu_on_left_click(false);
-    // ponytail: 直接用应用图标；macOS 菜单栏想更精致可换 template 图标
+    // 直接用应用图标；macOS 菜单栏想更精致可换 template 图标
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
@@ -180,7 +180,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // panic 落盘：logger 初始化后发生的 panic 进日志文件，
-    // 用户报「应用打不开」时现场可查。初始化前的早期 panic 只进 stderr（ponytail 已知上限）
+    // 用户报「应用打不开」时现场可查。初始化前的早期 panic 只进 stderr（已知上限）
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         log::error!("panic: {}", info);
@@ -204,7 +204,7 @@ pub fn run() {
                 ])
                 .build(),
         )
-        // ponytail: args 在 macOS 登录项上不生效，mac 自启会显示主窗口而非静默到托盘
+        // args 在 macOS 登录项上不生效，mac 自启会显示主窗口而非静默到托盘
         .plugin(tauri_plugin_autostart::Builder::new().args(["--autostart"]).build())
         // 不记 VISIBLE：自启静默到托盘不该被持久化成「下次也不显示」
         .plugin(
@@ -239,7 +239,7 @@ pub fn run() {
             if std::env::args().any(|a| a == "--autostart") {
                 hide_main_window_to_tray(app.handle());
             } else {
-                // ponytail: window-state 恢复的坐标可能落在已拔掉的显示器上；
+                // window-state 恢复的坐标可能落在已拔掉的显示器上；
                 // 与任一显示器可视区无交集时放弃恢复位置、改居中
                 if let Some(window) = app.get_webview_window("main") {
                     let on_screen = match (window.outer_position(), window.outer_size()) {
