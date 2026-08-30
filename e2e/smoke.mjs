@@ -171,6 +171,11 @@ async function main() {
       assert.equal(await page.locator("#settings-view").count(), 0, "settings view should unmount");
     });
 
+    await step("keyboard shortcut Cmd/Ctrl+, opens settings", async () => {
+      await page.keyboard.press("ControlOrMeta+,");
+      await expectVisible(page.locator("#settings-view"));
+    });
+
     await step("boot chain used only mocked commands, no error toasts", async () => {
       const invoked = await page.evaluate(() => window.__e2eInvoked);
       for (const expected of ["load_config", "get_updater_config_health", "check_update", "dsh_detect"]) {

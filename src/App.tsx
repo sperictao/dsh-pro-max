@@ -87,6 +87,17 @@ export function App() {
     return () => mq.removeEventListener("change", onChange);
   }, []);
 
+  // 键盘快捷键：Cmd/Ctrl + , 打开设置（macOS/Windows 系统惯例）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat || e.key !== "," || !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      navigate("settings");
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigate]);
+
   return (
     <>
       <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
@@ -106,6 +117,7 @@ export function App() {
             <button
               key={item.view}
               className={`header-btn${activeView === item.view ? " active" : ""}`}
+              title={item.view === "settings" ? t("Shortcut: Cmd/Ctrl + ,") : undefined}
               onClick={() => navigate(item.view)}
             >
               {t(item.labelKey)}

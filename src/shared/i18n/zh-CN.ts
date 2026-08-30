@@ -6,6 +6,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Home": "主页",
   "Settings": "设置",
   "Open": "打开",
+  "Shortcut: Cmd/Ctrl + ,": "快捷键：Cmd/Ctrl + ,",
 
   // —— 状态徽章 ——
   "Starting...": "启动中...",

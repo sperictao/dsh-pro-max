@@ -4,6 +4,7 @@ export const en = {
   "Home": "Home",
   "Settings": "Settings",
   "Open": "Open",
+  "Shortcut: Cmd/Ctrl + ,": "Shortcut: Cmd/Ctrl + ,",
 
   // —— 状态徽章 ——
   "Starting...": "Starting...",

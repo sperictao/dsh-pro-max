@@ -24,6 +24,7 @@
 - 🎨 **Themes** — 42 tweakcn theme families with native light / dark / system modes; UI fonts self-hosted in-app, fully offline
 - 🌍 **i18n** — English and Simplified Chinese UI, following the system by default
 - 🔄 **Self-Update** — built-in Tauri Updater: check, download, restart, done
+- ⌨️ **Keyboard** — `Cmd/Ctrl + ,` opens Settings
 
 ## 📦 Install
 
