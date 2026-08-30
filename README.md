@@ -42,6 +42,8 @@ pnpm tauri dev
 
 Domain terminology and semantic boundaries live in [CONTEXT.md](CONTEXT.md); design decisions in [docs/adr/](docs/adr/).
 
+Quality gates: `pnpm test` (theme + component tests), `pnpm run check:i18n`, and `pnpm test:e2e` (browser smoke over a mocked Tauri IPC — requires Chrome).
+
 ## 📖 Origin
 
 The DSH module was extracted from [Codex Pro Max](https://github.com/sperictao/codex-pro-max) (formerly dashi-taskboard-launcher) at v1.10.0 into this standalone app.

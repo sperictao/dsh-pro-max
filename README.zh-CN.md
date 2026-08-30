@@ -42,6 +42,8 @@ pnpm tauri dev
 
 领域术语与语义边界见 [CONTEXT.md](CONTEXT.md)；设计决策见 [docs/adr/](docs/adr/)。
 
+质量门禁：`pnpm test`（主题 + 组件测试）、`pnpm run check:i18n` 与 `pnpm test:e2e`（mock Tauri IPC 的浏览器冒烟，需 Chrome）。
+
 ## 📖 来源
 
 DSH 模块于 v1.10.0 从 [Codex Pro Max](https://github.com/sperictao/codex-pro-max)（原名 dashi-taskboard-launcher）中拆分为独立应用。
