@@ -51,9 +51,18 @@ i18nSrc.split("\n").forEach((line, i) => {
 });
 const tableKeys = new Set(tableEntries.map((e) => e.key));
 
-const rustSources = readdirSync("src-tauri/src")
-  .filter((f) => f.endsWith(".rs"))
-  .map((f) => ({ file: `src-tauri/src/${f}`, src: readFileSync(`src-tauri/src/${f}`, "utf8") }));
+function* walkRust(dir) {
+  for (const f of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, f.name);
+    if (f.isDirectory()) yield* walkRust(p);
+    else if (f.name.endsWith(".rs")) yield p;
+  }
+}
+
+const rustSources = [...walkRust("src-tauri/src")].map((file) => ({
+  file,
+  src: readFileSync(file, "utf8"),
+}));
 
 for (const { file, src } of rustSources) {
   for (const m of src.matchAll(/\btrf?\(\s*"((?:[^"\\]|\\.)*)"/g)) {
