@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "node scripts/test-theme.mjs && pnpm exec vitest run",
+    "test:e2e": "node e2e/smoke.mjs",
     "preview": "vite preview",
     "tauri": "node scripts/tauri.mjs",
     "build:updater": "node scripts/build-updater.mjs",
