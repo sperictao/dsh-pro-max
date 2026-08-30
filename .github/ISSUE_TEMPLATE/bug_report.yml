@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a problem with DSH Pro Max
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. For security
+        vulnerabilities, please use [private vulnerability
+        reporting](https://github.com/sperictao/dsh-pro-max/security/advisories/new)
+        instead.
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Settings → About → App Version
+      placeholder: v0.4.0
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Home page (dsh status / start / stop)
+        - Remote access / Tailscale
+        - Remote authorization (capabilities, logins)
+        - dsh version management
+        - Boot auto-start
+        - Updater
+        - Settings / appearance
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, what you expected, what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        The shell log lives in the app log directory (Settings → General → Open
+        log directory). The dsh web log is `~/.dsh/dsh-web.log`. Paste the
+        relevant tail only.
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Screenshots, dsh/tailscale versions, proxy or VPN software in use.
