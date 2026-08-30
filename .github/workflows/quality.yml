@@ -23,6 +23,8 @@ jobs:
       - run: pnpm exec vitest run
       - name: i18n coverage
         run: node scripts/check-i18n.mjs
+      - name: E2E smoke
+        run: pnpm run test:e2e
 
   rust:
     runs-on: ubuntu-latest
