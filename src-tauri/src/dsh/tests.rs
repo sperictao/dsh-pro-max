@@ -663,3 +663,237 @@
         );
         set_current("en");
     }
+
+    // ============ 模型配置（models.rs）============
+
+    use super::models::{load_model_config_at, save_model_config_at, ModelConfig, ProviderConfig};
+
+    fn temp_settings_path(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("dsh-pro-max-models-{}-{tag}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir.join("settings.yaml")
+    }
+
+    #[test]
+    fn model_config_save_then_load_roundtrip() {
+        set_current("en");
+        let path = temp_settings_path("roundtrip");
+        let config = ModelConfig {
+            default_provider: Some("spero-ai".into()),
+            default_model: Some("glm-5.2".into()),
+            default_reasoning_effort: Some("max".into()),
+            providers: vec![ProviderConfig {
+                route: "spero-ai".into(),
+                display_name: Some("Spero AI".into()),
+                base_url: Some("https://proxy.example.com/v1".into()),
+                api: Some("openai-responses".into()),
+                api_key_env: Some("SPERO_AI_API_KEY".into()),
+                models: vec!["glm-5.2".into(), "kimi-for-coding".into()],
+                extra: serde_json::json!({ "timeoutMs": 60000 }),
+            }],
+        };
+        save_model_config_at(&path, &config).expect("save");
+        let text = std::fs::read_to_string(&path).unwrap();
+        // 管理键写入 YAML 形态正确（camelCase 与 dsh schema 一致）
+        assert!(text.contains("agent-default-model:"));
+        assert!(text.contains("reasoningEffort: max"));
+        assert!(text.contains("apiKeyEnv: SPERO_AI_API_KEY"));
+
+        let loaded = load_model_config_at(&path).expect("load");
+        assert_eq!(loaded.default_provider.as_deref(), Some("spero-ai"));
+        assert_eq!(loaded.default_model.as_deref(), Some("glm-5.2"));
+        assert_eq!(loaded.default_reasoning_effort.as_deref(), Some("max"));
+        assert_eq!(loaded.providers.len(), 1);
+        let p = &loaded.providers[0];
+        assert_eq!(p.route, "spero-ai");
+        assert_eq!(p.display_name.as_deref(), Some("Spero AI"));
+        assert_eq!(p.api.as_deref(), Some("openai-responses"));
+        assert_eq!(p.models, vec!["glm-5.2".to_string(), "kimi-for-coding".to_string()]);
+        // 非管理键经 extra 原样保留
+        assert_eq!(p.extra, serde_json::json!({ "timeoutMs": 60000 }));
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn model_config_save_preserves_foreign_keys_and_strips_managed_from_extra() {
+        set_current("en");
+        let path = temp_settings_path("preserve");
+        // 预置 settings.yaml：模型域之外的键 + 既有 provider 的高级字段
+        std::fs::write(
+            &path,
+            "ui-onboarding:\n  welcomeNoticeVersion: 2026-08-13.1\nllm-deepseek:\n  baseURL: https://api.deepseek.com\n  apiKeyEnv: DEEPSEEK_API_KEY\nllm-pi-ai:\n  providers:\n    old-route:\n      displayName: Old\n      streamIdleTimeoutMs: 1000\n",
+        )
+        .unwrap();
+        let config = ModelConfig {
+            default_provider: Some("deepseek-official".into()),
+            default_model: Some("deepseek-v4-pro".into()),
+            default_reasoning_effort: None,
+            providers: vec![ProviderConfig {
+                route: "new-route".into(),
+                display_name: None,
+                base_url: None,
+                api: Some("anthropic-messages".into()),
+                api_key_env: None,
+                models: Vec::new(),
+                // extra 混入管理键：保存时必须被剥离（后写覆盖语义不许出现）
+                extra: serde_json::json!({ "displayName": "HACK", "retryPolicy": { "mode": "normal" } }),
+            }],
+        };
+        save_model_config_at(&path, &config).expect("save");
+        let text = std::fs::read_to_string(&path).unwrap();
+        // 模型域之外的顶层键原样保留
+        assert!(text.contains("ui-onboarding:"));
+        assert!(text.contains("llm-deepseek:"));
+        assert!(text.contains("DEEPSEEK_API_KEY"));
+        // 旧路由被 UI 状态整体替换；新路由高级字段保留、混入的管理键被剥离
+        assert!(!text.contains("old-route"));
+        assert!(text.contains("new-route"));
+        assert!(text.contains("retryPolicy:"));
+        assert!(!text.contains("HACK"));
+        // agent-default-model 无 reasoningEffort 时不得写出空值
+        let loaded = load_model_config_at(&path).unwrap();
+        assert_eq!(loaded.default_reasoning_effort, None);
+        assert_eq!(loaded.providers[0].extra, serde_json::json!({ "retryPolicy": { "mode": "normal" } }));
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn model_config_empty_providers_removes_llm_pi_ai_key() {
+        set_current("en");
+        let path = temp_settings_path("empty");
+        std::fs::write(&path, "llm-pi-ai:\n  providers:\n    a:\n      api: openai-responses\nagent-presets:\n  default: minimal\n").unwrap();
+        let config = ModelConfig {
+            default_provider: None,
+            default_model: None,
+            default_reasoning_effort: None,
+            providers: Vec::new(),
+        };
+        save_model_config_at(&path, &config).expect("save");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("llm-pi-ai"));
+        assert!(!text.contains("agent-default-model"));
+        assert!(text.contains("agent-presets:"));
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn model_config_missing_file_loads_empty() {
+        set_current("en");
+        let path = temp_settings_path("missing-nonexistent").join("nested").join("settings.yaml");
+        let loaded = load_model_config_at(&path).expect("load");
+        assert_eq!(loaded.providers.len(), 0);
+        assert_eq!(loaded.default_provider, None);
+    }
+
+    // ============ 插件市场（market.rs）============
+
+    use super::market::plugin_from_json;
+
+    #[test]
+    fn market_plugin_projection_reads_candidate_and_validation() {
+        let item: serde_json::Value = serde_json::from_str(
+            r#"{
+                "repositoryId": 1326893710,
+                "fullName": "omdsh-dev/DSH-better-sidebar",
+                "name": "DSH-better-sidebar",
+                "description": "侧边栏底座",
+                "url": "https://github.com/omdsh-dev/DSH-better-sidebar",
+                "stars": 3120,
+                "category": "ui",
+                "language": "TypeScript",
+                "starTrend": { "points": [1, 2, 3] },
+                "validation": { "overall": "verified" },
+                "install": {
+                    "candidate": {
+                        "action": "add",
+                        "specifier": "npm:dsh-better-sidebar@latest",
+                        "command": "dsh plugin --profile web add dsh-better-sidebar@latest",
+                        "executable": true
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+        let p = plugin_from_json(&item).expect("project");
+        assert_eq!(p.full_name, "omdsh-dev/DSH-better-sidebar");
+        assert!(p.verified);
+        assert_eq!(p.install_specifier.as_deref(), Some("npm:dsh-better-sidebar@latest"));
+        assert!(p.install_executable);
+        assert_eq!(p.stars, 3120);
+    }
+
+    #[test]
+    fn market_plugin_without_verified_or_candidate_is_not_installable() {
+        // 验证状态只认 overall == "verified"
+        let unverified: serde_json::Value = serde_json::from_str(
+            r#"{ "fullName": "a/b", "validation": { "overall": "sandbox-failed" } }"#,
+        )
+        .unwrap();
+        let p = plugin_from_json(&unverified).unwrap();
+        assert!(!p.verified);
+        // 无 install.candidate → 不可一键安装
+        let nocand: serde_json::Value =
+            serde_json::from_str(r#"{ "fullName": "a/b", "install": { "status": "ambiguous" } }"#).unwrap();
+        let p = plugin_from_json(&nocand).unwrap();
+        assert_eq!(p.install_specifier, None);
+        assert!(!p.install_executable);
+        // 非 add 动作不产生安装标识
+        let other: serde_json::Value = serde_json::from_str(
+            r#"{ "fullName": "a/b", "install": { "candidate": { "action": "manual", "specifier": "x" } } }"#,
+        )
+        .unwrap();
+        let p = plugin_from_json(&other).unwrap();
+        assert_eq!(p.install_specifier, None);
+        // 缺 fullName 的条目被丢弃
+        assert!(plugin_from_json(&serde_json::json!({ "name": "orphan" })).is_none());
+    }
+
+    use super::market::valid_identifier;
+
+    #[test]
+    fn market_identifier_whitelist_rejects_hostile_input() {
+        assert!(valid_identifier("npm:dsh-better-sidebar@latest"));
+        assert!(valid_identifier("@scope/pkg-name_1.0"));
+        assert!(valid_identifier("github:owner/repo#c0ffee"));
+        assert!(!valid_identifier(""));
+        assert!(!valid_identifier("-flag"));
+        // 相对路径 spec 会被 dsh 锚定到调用方 cwd，语义不受控
+        assert!(!valid_identifier("./local"));
+        assert!(!valid_identifier(".hidden"));
+        assert!(!valid_identifier("a b"));
+        assert!(!valid_identifier("a\nb"));
+        assert!(!valid_identifier("../escape"));
+        assert!(!valid_identifier("$(cmd)"));
+        assert!(!valid_identifier(&"x".repeat(300)));
+    }
+
+    #[test]
+    fn market_installed_marks_managed_plugins() {
+        set_current("en");
+        use super::market::installed_list_from_profile;
+        let dir = std::env::temp_dir().join(format!("dsh-pro-max-market-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let profile = dir.join("package.json");
+        std::fs::write(
+            &profile,
+            r#"{ "dependencies": { "@dsh-external/dsh-auth-tailscale": "file:/x.tgz", "dsh-better-sidebar": "npm:dsh-better-sidebar@1.0.0" } }"#,
+        )
+        .unwrap();
+        let list = installed_list_from_profile(&profile).expect("list");
+        assert_eq!(list.len(), 2);
+        let managed = list.iter().find(|p| p.name == "@dsh-external/dsh-auth-tailscale").unwrap();
+        assert!(managed.managed);
+        let community = list.iter().find(|p| p.name == "dsh-better-sidebar").unwrap();
+        assert!(!community.managed);
+        assert_eq!(community.spec, "npm:dsh-better-sidebar@1.0.0");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    #[ignore] // 依赖外网真实 API（27MB），仅手动验证链路时跑：cargo test market_fetch_real -- --ignored
+    fn market_fetch_real_catalog_smoke() {
+        let catalog = super::market::fetch_catalog().expect("fetch real catalog");
+        assert!(catalog.plugins.len() > 1000, "unexpectedly small catalog: {}", catalog.plugins.len());
+        assert!(catalog.plugins.iter().any(|p| p.install_specifier.is_some() && p.install_executable));
+        assert!(catalog.plugins.iter().any(|p| p.verified));
+    }

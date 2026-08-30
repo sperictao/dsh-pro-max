@@ -181,6 +181,26 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "Cannot locate the Windows Startup folder (APPDATA is missing)" => "无法定位 Windows 启动文件夹（缺少 APPDATA 环境变量）",
         "Cannot enable systemd unit: {error}" => "无法启用 systemd 服务: {error}",
 
+        // —— 插件市场（dsh/market.rs）——
+        "Cannot initialize HTTP client: {error}" => "无法初始化 HTTP 客户端: {error}",
+        "Failed to fetch plugin catalog: {error}" => "拉取插件目录失败: {error}",
+        "Failed to fetch plugin catalog: HTTP {status}" => "拉取插件目录失败: HTTP {status}",
+        "Failed to parse plugin catalog: {error}" => "解析插件目录失败: {error}",
+        "Failed to read web profile: {error}" => "读取 web profile 失败: {error}",
+        "Failed to parse web profile: {error}" => "解析 web profile 失败: {error}",
+        "Web profile has no dependencies" => "web profile 没有依赖条目",
+        "Invalid plugin identifier" => "插件标识不合法",
+        "Failed to install plugin: {error}" => "安装插件失败: {error}",
+        "Failed to remove plugin: {error}" => "移除插件失败: {error}",
+
+        // —— 模型配置（dsh/models.rs）——
+        "Failed to read settings.yaml: {error}" => "读取 settings.yaml 失败: {error}",
+        "Failed to parse settings.yaml: {error}" => "解析 settings.yaml 失败: {error}",
+        "Failed to serialize settings.yaml: {error}" => "序列化 settings.yaml 失败: {error}",
+        "Failed to write settings.yaml: {error}" => "写入 settings.yaml 失败: {error}",
+        "Model provider advanced fields must be an object" => "模型提供商高级字段必须是对象",
+        "Provider route key cannot be empty" => "提供商路由键不能为空",
+
         _ => return None,
     })
 }

@@ -19,6 +19,8 @@
 ## ✨ Highlights
 
 - 🌐 **DeepSeek Harness Remote Access** — one-click Tailscale HTTPS access to the dsh Web UI through bundled identity-authorization plugins, shown as an 8-step progress timeline with compatibility repair and boot auto-start
+- 🛍 **Plugin Marketplace** — browse the dshmk.com community catalog (7000+ plugins) and one-click install/remove web profile plugins; the Verified badge comes from sandboxed install checks
+- 🧠 **Model Configuration** — edit dsh's default model and custom LLM provider routes (OpenAI-compatible / Anthropic protocol) in-app; keys are stored as environment variable names only
 - 🔌 **Bundled Auth Plugins** — two pinned plugins ([dsh-client-connection-authz](https://github.com/sperictao/dsh-client-connection-authz) + [dsh-auth-tailscale](https://github.com/sperictao/dsh-auth-tailscale)) ship inside the installer and are installed into the dsh web profile automatically
 - 🔐 **Capability-Based Authorization** — configure your own admin/use capability domains and extra allowed Tailscale logins; without capabilities, remote privileged APIs stay 403
 - 🎨 **Themes** — 42 tweakcn theme families with native light / dark / system modes; UI fonts self-hosted in-app, fully offline

@@ -6,7 +6,10 @@ import { log } from "./logger";
 import type {
   DshLatestInfo,
   DshStatus,
+  InstalledPlugin,
   LauncherConfig,
+  MarketCatalog,
+  ModelConfig,
   UpdateInfo,
   UpdaterConfigHealth,
   UpdaterHelpPaths,
@@ -41,6 +44,16 @@ export const dshRemovePlugins = () => invokeTyped<void>("dsh_remove_plugins");
 export const dshCheckLatest = () => invokeTyped<DshLatestInfo>("dsh_check_latest");
 export const dshInstallVersion = (version: string) => invokeTyped<string>("dsh_install_version", { version });
 export const dshSetAutostart = (enabled: boolean) => invokeTyped<void>("dsh_set_autostart", { enabled });
+
+// ============ 插件市场 ============
+export const marketFetch = () => invokeTyped<MarketCatalog>("market_fetch");
+export const marketInstalled = () => invokeTyped<InstalledPlugin[]>("market_installed");
+export const marketInstall = (specifier: string) => invokeTyped<void>("market_install", { specifier });
+export const marketRemove = (name: string) => invokeTyped<void>("market_remove", { name });
+
+// ============ 模型配置 ============
+export const modelConfigLoad = () => invokeTyped<ModelConfig>("model_config_load");
+export const modelConfigSave = (config: ModelConfig) => invokeTyped<void>("model_config_save", { config });
 
 // ============ 更新 ============
 export const getUpdaterConfigHealth = () => invokeTyped<UpdaterConfigHealth>("get_updater_config_health");

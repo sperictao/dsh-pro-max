@@ -19,6 +19,8 @@
 ## ✨ 亮点
 
 - 🌐 **DeepSeek Harness 远程访问**——通过内置身份授权插件一键开通 dsh Web UI 的 Tailscale HTTPS 访问，8 步进度时间线展示全过程，支持兼容性修复与开机自启
+- 🛍 **插件市场**——浏览 dshmk.com 社区目录（7000+ 插件），一键安装/移除 web profile 插件；已验证标记来自沙箱安装检查
+- 🧠 **模型配置**——在应用内编辑 dsh 的默认模型与自定义 LLM 提供商路由（OpenAI 兼容 / Anthropic 协议），密钥只存环境变量名
 - 🔌 **内置授权插件**——两个固定版本的插件（[dsh-client-connection-authz](https://github.com/sperictao/dsh-client-connection-authz) + [dsh-auth-tailscale](https://github.com/sperictao/dsh-auth-tailscale)）随安装包分发，自动装入 dsh web profile
 - 🔐 **基于 Capability 的授权**——配置你自己的管理/使用 capability 域名与额外允许的 Tailscale 登录名；不配置 capability 时远程特权接口恒 403
 - 🎨 **主题**——42 个 tweakcn 主题族，原生亮/暗/跟随系统模式；UI 字体全部应用内自托管，完全离线

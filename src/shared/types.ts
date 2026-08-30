@@ -85,3 +85,61 @@ export interface DownloadProgress {
   attempt: number;
   maxAttempts: number;
 }
+
+// ============ 模型配置（~/.dsh/settings.yaml 的模型域）============
+
+export interface ProviderConfig {
+  /** 提供商路由键（providers dict 的键，如 spero-ai） */
+  route: string;
+  displayName: string | null;
+  baseURL: string | null;
+  /** wire 协议：openai-completions | openai-responses | anthropic-messages */
+  api: string | null;
+  /** 凭据引用（环境变量名），密钥永不落盘 */
+  apiKeyEnv: string | null;
+  /** 模型 id 列表 */
+  models: string[];
+  /** 非管理键（高级字段），原样透传保存 */
+  extra: unknown;
+}
+
+export interface ModelConfig {
+  defaultProvider: string | null;
+  defaultModel: string | null;
+  /** 思考等级：off | minimal | low | medium | high | xhigh | max */
+  defaultReasoningEffort: string | null;
+  providers: ProviderConfig[];
+}
+
+// ============ 插件市场（dsh-plugins-store 公开目录）============
+
+export interface MarketPlugin {
+  repositoryId: number;
+  fullName: string;
+  name: string;
+  description: string | null;
+  url: string;
+  stars: number;
+  category: string | null;
+  language: string | null;
+  /** 仅 validation.overall === "verified"（目录约定的唯一判定依据） */
+  verified: boolean;
+  /** candidate.action === "add" 的机器安装标识；null = 无一键安装候选 */
+  installSpecifier: string | null;
+  installExecutable: boolean;
+}
+
+export interface MarketCatalog {
+  generatedAt: string | null;
+  total: number;
+  plugins: MarketPlugin[];
+}
+
+export interface InstalledPlugin {
+  /** npm 包名（profile package.json dependencies 键） */
+  name: string;
+  /** 安装 spec（file: tarball / npm:x / github:owner/repo 等） */
+  spec: string;
+  /** Launcher 自管授权插件：不出移除按钮 */
+  managed: boolean;
+}

@@ -53,8 +53,7 @@ const MOCK = {
     dsh_admin_cap_domain: "",
     dsh_use_cap_domain: "",
     dsh_extra_allowed_logins: "",
-  },
-  dshStatus: {
+  },  dshStatus: {
     nodeAvailable: false,
     dshInstalled: false,
     dshVersion: null,
@@ -74,6 +73,57 @@ const MOCK = {
     autostartEnabled: false,
     error: null,
   },
+  marketCatalog: {
+    generatedAt: "2026-08-30T13:32:12.579Z",
+    total: 2,
+    plugins: [
+      {
+        repositoryId: 1,
+        fullName: "omdsh-dev/DSH-better-sidebar",
+        name: "DSH-better-sidebar",
+        description: "侧边栏底座",
+        url: "https://github.com/omdsh-dev/DSH-better-sidebar",
+        stars: 3120,
+        category: "ui",
+        language: "TypeScript",
+        verified: true,
+        installSpecifier: "npm:dsh-better-sidebar@latest",
+        installExecutable: true,
+      },
+      {
+        repositoryId: 2,
+        fullName: "some/one",
+        name: "one",
+        description: "no candidate",
+        url: "https://github.com/some/one",
+        stars: 10,
+        category: "ui",
+        language: null,
+        verified: false,
+        installSpecifier: null,
+        installExecutable: false,
+      },
+    ],
+  },
+  marketInstalled: [
+    { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", managed: true },
+  ],
+  modelConfig: {
+    defaultProvider: "spero-ai",
+    defaultModel: "glm-5.2",
+    defaultReasoningEffort: "max",
+    providers: [
+      {
+        route: "spero-ai",
+        displayName: "Spero AI",
+        baseURL: "https://proxy.example.com/v1",
+        api: "openai-responses",
+        apiKeyEnv: "SPERO_AI_API_KEY",
+        models: ["glm-5.2"],
+        extra: null,
+      },
+    ],
+  },
 };
 
 async function main() {
@@ -84,7 +134,7 @@ async function main() {
     const page = await browser.newPage();
     page.on("pageerror", (e) => failures.push(`pageerror: ${e.message}`));
 
-    await page.addInitScript(({ config, dshStatus }) => {
+    await page.addInitScript(({ config, dshStatus, marketCatalog, marketInstalled, modelConfig }) => {
       // 结构对齐 @tauri-apps/api/mocks.js 的 mockInternals：
       // 事件解绑路径依赖 __TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener 与回调注册表
       let nextId = 1;
@@ -102,6 +152,9 @@ async function main() {
           message: null,
         }),
         dsh_detect: () => dshStatus,
+        market_fetch: () => marketCatalog,
+        market_installed: () => marketInstalled,
+        model_config_load: () => modelConfig,
         "plugin:app|version": () => "0.4.0",
         "plugin:notification|is_permission_granted": () => true,
       };
@@ -163,6 +216,23 @@ async function main() {
       await expectVisible(page.locator("#section-about"));
       const version = await page.locator("#about-version").innerText();
       assert.match(version, new RegExp(`v${APP_VERSION}`), `about version mismatch: ${version}`);
+    });
+
+    await step("plugins: market renders catalog and installed list", async () => {
+      await page.getByRole("button", { name: "Plugins" }).click();
+      await expectVisible(page.locator("#market-view"));
+      await expectVisible(page.locator("#market-search"));
+      await expectVisible(page.locator("#plugin-1"));
+      await expectVisible(page.getByText("Manual install only"));
+      await expectVisible(page.getByText("managed by launcher"));
+    });
+
+    await step("models: configuration renders from settings.yaml", async () => {
+      await page.getByRole("button", { name: "Models" }).click();
+      await expectVisible(page.locator("#models-view"));
+      await expectVisible(page.getByPlaceholder("deepseek-official"));
+      await expectVisible(page.locator("#provider-card-0"));
+      await expectVisible(page.getByRole("button", { name: "Save" }));
     });
 
     await step("navigation returns home", async () => {

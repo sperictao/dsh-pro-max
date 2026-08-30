@@ -30,6 +30,8 @@ mod auth;
 mod autostart;
 mod components;
 mod detect;
+mod market;
+mod models;
 mod probe;
 mod process;
 mod setup;
@@ -64,6 +66,24 @@ pub use update::__tauri_command_name_dsh_check_latest;
 pub use update::dsh_install_version;
 pub use update::__cmd__dsh_install_version;
 pub use update::__tauri_command_name_dsh_install_version;
+pub use market::market_fetch;
+pub use market::__cmd__market_fetch;
+pub use market::__tauri_command_name_market_fetch;
+pub use market::market_installed;
+pub use market::__cmd__market_installed;
+pub use market::__tauri_command_name_market_installed;
+pub use market::market_install;
+pub use market::__cmd__market_install;
+pub use market::__tauri_command_name_market_install;
+pub use market::market_remove;
+pub use market::__cmd__market_remove;
+pub use market::__tauri_command_name_market_remove;
+pub use models::model_config_load;
+pub use models::__cmd__model_config_load;
+pub use models::__tauri_command_name_model_config_load;
+pub use models::model_config_save;
+pub use models::__cmd__model_config_save;
+pub use models::__tauri_command_name_model_config_save;
 
 // ============ 共享常量 ============
 

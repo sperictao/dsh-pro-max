@@ -40,6 +40,41 @@
 - 切换即时生效：界面重渲染、托盘重建；已产生/已显示的消息不回溯重翻。
 - 界面语言与文档语言无关：README、release notes 的双语是另一回事，不受此设置影响。
 
+## 插件市场（Marketplace）
+
+功能域：浏览社区插件目录，一键安装/移除 web profile 插件。导航项「Plugins」。
+
+### 术语
+
+- **插件目录（Catalog）** — dsh-plugins-store 的公开 API（`api.dshmk.com`，静态 JSON 快照）在 Rust 侧拉取并投影后的精简列表；`starTrend` 历史点等大字段在解析时丢弃，原文不进 WebView。目录数据跨视图保留，切页不重拉。
+- **已验证（Verified）** — 目录 `validation.overall == "verified"` 的唯一判定依据（沙箱安装检查通过）；不等于安全审计或官方背书。
+- **一键安装（One-click Install）** — 仅当 `install.candidate.action == "add"` 且 `executable` 时可用，执行 `dsh plugin --profile web add <specifier>`（pnpm 转发，pnpm ≥10 默认拦截第三方生命周期脚本）；安装前有内联二次确认。`command`/`args` 文本目录字段只作展示，绝不执行。
+- **受管插件（Managed Plugin）** — Launcher 自装的授权插件（`@dsh-external/*`），在已装列表中标记但不提供移除按钮，由 Launcher 的修复/卸载流程管理。
+- **已装匹配（Installed Match）** — npm 形态 specifier 的包名部分与 web profile `package.json` dependencies 键比对；`github:` 安装的键名无法从目录预知，不参与匹配。
+
+### 语义边界
+
+- 目录是社区数据：Launcher 不做分类/验证/排名的二次加工，只按目录原样展示与执行。
+- 安装与移除是长操作（pnpm 下载依赖），UI 以 busy 态呈现，不做后台任务化。
+- identifier 经字符白名单校验（npm/pnpm 合法字符集，拒绝相对路径与 `..`），挡写歪的目录数据与手改 IPC 的误用；安装本就只在 loopback 的 dsh profile 目录内进行。
+
+## 模型配置（Model Configuration）
+
+功能域：编辑 `~/.dsh/settings.yaml` 的模型相关配置。导航项「Models」。
+
+### 术语
+
+- **模型域（Model Domain）** — settings.yaml 中 `agent-default-model`（默认模型选择）与 `llm-pi-ai.providers`（自定义提供商路由）两键；保存以 UI 状态整体重建这两键，其余顶层键（`llm-deepseek`、`agent-presets` 等）原样保留。
+- **提供商路由（Provider Route）** — `llm-pi-ai.providers` 的一个键，承载 displayName / baseURL / api（wire 协议：openai-completions | openai-responses | anthropic-messages）/ apiKeyEnv / models 列表；UI 管理 5 个字段之外的高级字段经 `extra` 原样透传保存，`extra` 混入管理键时一律以 UI 为准丢弃。
+- **凭据引用（Credential Ref）** — `apiKeyEnv` 只保存环境变量名，密钥值永不进配置文件（dsh 运行时经 credentials 机制逐请求解析）。
+- **思考等级（Reasoning Effort）** — 默认模型的可选思考等级：off | minimal | low | medium | high | xhigh | max；不设置时从 settings.yaml 删除该字段。
+
+### 语义边界
+
+- 保存后需重启 dsh web 服务才生效（Launcher 直接改文件，不依赖 dsh 的 settings 热更新）。
+- 默认模型 provider/model 必填：缺任一保存时移除整个 `agent-default-model` 键而非写半份配置；提供商列表为空时移除整个 `llm-pi-ai` 键（dsh schema 中空 dict 与缺席等价）。
+- 本域不管理 `llm-deepseek`（内置 deepseek 路由的覆写，由 dsh 自身 UI/引导负责）。
+
 ## 应用壳（Shell）
 
 横切关注：Tauri 桌面壳的进程模型、生命周期与系统交互边界。

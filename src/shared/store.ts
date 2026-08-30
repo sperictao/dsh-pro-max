@@ -12,12 +12,15 @@ import type {
   DshStatus,
   DownloadProgress,
   DshStepEvent,
+  InstalledPlugin,
   LauncherConfig,
+  MarketCatalog,
+  ModelConfig,
   UpdateInfo,
   UpdaterConfigHealth,
 } from "./types";
 
-export type View = "integration" | "settings";
+export type View = "integration" | "market" | "models" | "settings";
 export type SettingsSection =
   | "general"
   | "appearance"
@@ -96,6 +99,15 @@ interface AppStore {
   themeMode: ThemeMode;
   themeFamily: string;
   toasts: ToastItem[];
+  // 插件市场（catalog 跨页保留：27MB 目录解析结果不随切页重拉）
+  marketCatalog: MarketCatalog | null;
+  marketCatalogBusy: boolean;
+  marketInstalled: InstalledPlugin[];
+  marketInstalledBusy: boolean;
+  marketInstalling: string | null;
+  marketRemoving: string | null;
+  // 模型配置（配置加载状态跨页保留；编辑草稿在视图本地）
+  modelConfigBusy: boolean;
 
   navigate: (view: View) => void;
   setSettingsSection: (section: SettingsSection) => void;
@@ -128,6 +140,11 @@ interface AppStore {
   refreshUpdaterHealth: () => Promise<void>;
   checkForUpdates: (silent?: boolean) => Promise<void>;
   installPendingUpdate: () => Promise<void>;
+  refreshMarketCatalog: (force?: boolean) => Promise<void>;
+  refreshMarketInstalled: () => Promise<void>;
+  installMarketPlugin: (specifier: string, label: string) => Promise<void>;
+  removeMarketPlugin: (name: string) => Promise<void>;
+  loadModelConfig: () => Promise<ModelConfig>;
 }
 
 export const useAppStore = create<AppStore>()((set, get) => ({
@@ -159,6 +176,13 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   themeMode: getStoredTheme(readStored("theme")),
   themeFamily: getStoredFamily(readStored("theme-family")),
   toasts: [],
+  marketCatalog: null,
+  marketCatalogBusy: false,
+  marketInstalled: [],
+  marketInstalledBusy: false,
+  marketInstalling: null,
+  marketRemoving: null,
+  modelConfigBusy: false,
 
   navigate: (view) => set({ activeView: view }),
   setSettingsSection: (section) => set({ settingsSection: section }),
@@ -309,6 +333,71 @@ export const useAppStore = create<AppStore>()((set, get) => ({
       get().toast(i18n.t("Update failed: {{error}}", { error: String(e) }), "error");
     } finally {
       set({ updateBusyKind: null, downloadProgress: null });
+    }
+  },
+
+  // 目录拉取：已有缓存不重拉（刷新按钮传 force）
+  refreshMarketCatalog: async (force = false) => {
+    if (!force && get().marketCatalog) return;
+    if (get().marketCatalogBusy) return;
+    set({ marketCatalogBusy: true });
+    try {
+      set({ marketCatalog: await cmd.marketFetch() });
+    } catch (e) {
+      get().toast(i18n.t("Failed to load plugin catalog: {{error}}", { error: String(e) }), "error");
+    } finally {
+      set({ marketCatalogBusy: false });
+    }
+  },
+
+  refreshMarketInstalled: async () => {
+    if (get().marketInstalledBusy) return;
+    set({ marketInstalledBusy: true });
+    try {
+      set({ marketInstalled: await cmd.marketInstalled() });
+    } catch (e) {
+      get().toast(i18n.t("Failed to list installed plugins: {{error}}", { error: String(e) }), "error");
+    } finally {
+      set({ marketInstalledBusy: false });
+    }
+  },
+
+  // 安装长操作（pnpm 下载依赖）：busy 挂在 specifier 上，成功后刷新已装列表
+  installMarketPlugin: async (specifier, label) => {
+    if (get().marketInstalling) return;
+    set({ marketInstalling: specifier });
+    try {
+      await cmd.marketInstall(specifier);
+      get().toast(i18n.t("Plugin installed: {{name}}", { name: label }), "success");
+      await get().refreshMarketInstalled();
+    } catch (e) {
+      get().toast(i18n.t("Failed to install plugin: {{error}}", { error: String(e) }), "error");
+    } finally {
+      set({ marketInstalling: null });
+    }
+  },
+
+  removeMarketPlugin: async (name) => {
+    if (get().marketRemoving) return;
+    set({ marketRemoving: name });
+    try {
+      await cmd.marketRemove(name);
+      get().toast(i18n.t("Plugin removed: {{name}}", { name }), "success");
+      await get().refreshMarketInstalled();
+    } catch (e) {
+      get().toast(i18n.t("Failed to remove plugin: {{error}}", { error: String(e) }), "error");
+    } finally {
+      set({ marketRemoving: null });
+    }
+  },
+
+  loadModelConfig: async () => {
+    if (get().modelConfigBusy) return await cmd.modelConfigLoad();
+    set({ modelConfigBusy: true });
+    try {
+      return await cmd.modelConfigLoad();
+    } finally {
+      set({ modelConfigBusy: false });
     }
   },
 }));

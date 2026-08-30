@@ -12,9 +12,13 @@ import { openRepo } from "./shared/lib/links";
 import { UpdateBadge } from "./features/updater/UpdateBadge";
 import { SettingsView } from "./features/settings/SettingsView";
 import { IntegrationView } from "./features/integration/IntegrationView";
+import { MarketView } from "./features/market/MarketView";
+import { ModelsView } from "./features/models/ModelsView";
 
 const NAV_ITEMS: { view: View; labelKey: string }[] = [
   { view: "integration", labelKey: "Home" },
+  { view: "market", labelKey: "Plugins" },
+  { view: "models", labelKey: "Models" },
   { view: "settings", labelKey: "Settings" },
 ];
 
@@ -128,6 +132,8 @@ export function App() {
 
       {activeView === "settings" && <SettingsView />}
       {activeView === "integration" && <IntegrationView />}
+      {activeView === "market" && <MarketView />}
+      {activeView === "models" && <ModelsView />}
       <Toaster />
     </>
   );
