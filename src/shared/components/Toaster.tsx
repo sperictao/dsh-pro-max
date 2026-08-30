@@ -5,7 +5,12 @@ import { useAppStore, type ToastItem } from "../store";
 export function Toaster() {
   const toasts = useAppStore((s) => s.toasts);
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2" id="toast-container">
+    <div
+      className="fixed bottom-4 right-4 z-50 flex flex-col gap-2"
+      id="toast-container"
+      role="status"
+      aria-live="polite"
+    >
       {toasts.map((item) => (
         <Toast key={item.id} item={item} />
       ))}

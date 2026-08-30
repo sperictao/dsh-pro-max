@@ -98,13 +98,21 @@ export function AboutSection() {
             {healthDetail}
             <span className="ml-2">
               {t("Configuration Help")}:{" "}
-              <a className="cursor-pointer text-primary underline-offset-4 hover:underline" onClick={() => void openHelp("docs")}>
+              <button
+                type="button"
+                className="cursor-pointer rounded-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => void openHelp("docs")}
+              >
                 {t("Setup Guide")}
-              </a>
+              </button>
               {" · "}
-              <a className="cursor-pointer text-primary underline-offset-4 hover:underline" onClick={() => void openHelp("template")}>
+              <button
+                type="button"
+                className="cursor-pointer rounded-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => void openHelp("template")}
+              >
                 {t("Config Template")}
-              </a>
+              </button>
             </span>
           </div>
         )}
@@ -150,9 +158,13 @@ export function AboutSection() {
       <div className="mt-3 flex max-w-2xl flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm font-medium">GitHub</span>
-          <a className="cursor-pointer text-sm text-primary underline-offset-4 hover:underline" onClick={() => void openRepo()}>
+          <button
+            type="button"
+            className="cursor-pointer rounded-sm text-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => void openRepo()}
+          >
             {t("Open in Browser")}
-          </a>
+          </button>
         </div>
         <p className="text-xs opacity-60">{t("Source code, issue tracker, and release history.")}</p>
       </div>

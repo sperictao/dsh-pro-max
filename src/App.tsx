@@ -93,7 +93,7 @@ export function App() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="cursor-pointer text-sm font-semibold"
+            className="cursor-pointer rounded-md text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title="GitHub"
             onClick={() => void openRepo()}
           >
