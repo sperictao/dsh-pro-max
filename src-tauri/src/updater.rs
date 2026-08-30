@@ -351,3 +351,40 @@ pub async fn install_update(
     log::info!("更新安装完成（v{}），正在重启应用", version);
     app.restart();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_delay_grows_then_caps() {
+        assert_eq!(retry_delay(1), Duration::from_secs(1));
+        assert_eq!(retry_delay(2), Duration::from_secs(2));
+        assert_eq!(retry_delay(3), Duration::from_secs(4));
+        assert_eq!(retry_delay(99), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn network_errors_retryable_others_not() {
+        assert!(is_retryable(&UpdaterError::Network("timeout".into())));
+        assert!(!is_retryable(&UpdaterError::EmptyEndpoints));
+        assert!(!is_retryable(&UpdaterError::SignatureUtf8("bad".into())));
+    }
+
+    #[test]
+    fn map_updater_error_localizes_known_variants() {
+        let msg = map_updater_error(UpdaterError::EmptyEndpoints);
+        assert!(msg.contains("not configured"), "unexpected: {msg}");
+    }
+
+    /// 回归：应用内「Setup Guide」依赖 docs/updater/SETUP.md，
+    /// 文件必须真实存在且能从测试工作目录向上定位到
+    #[test]
+    fn help_paths_resolve_in_repo() {
+        let (docs, template) = resolve_help_paths().expect("help paths must resolve in repo");
+        assert!(docs.is_file(), "missing {}", docs.display());
+        assert!(template.is_file(), "missing {}", template.display());
+        assert!(docs.ends_with("docs/updater/SETUP.md"));
+        assert!(template.ends_with("tauri.conf.updater.example.json"));
+    }
+}
