@@ -4,6 +4,9 @@ use super::{ADMIN_CAP_ENV, TAILSCALE_LOGIN_ENV, USE_CAP_ENV, WEB_PORT};
 // AUTOSTART_PREFIX 仅 macOS launchd 分支使用（常量本身 cfg(macos)）
 #[cfg(target_os = "macos")]
 use super::AUTOSTART_PREFIX;
+// PathBuf 仅 Windows 自启分支使用（常量与分支均 cfg(windows)，Linux/macOS 不编译）
+#[cfg(windows)]
+use std::path::PathBuf;
 use super::auth::{AuthConfig, resolve_auth_config, resolve_fqdn, resolve_tailscale_login};
 use super::components::{dsh_dir, dsh_version, dsh_version_is_compatible, install_auth_plugins, install_supported_dsh, resolve_dsh_bin, resolve_node_bin, tailscale_path};
 use super::process::{kill_by_pattern};
