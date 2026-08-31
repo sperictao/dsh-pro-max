@@ -4,14 +4,7 @@ use super::{MacosHttpsProxy, RemoteRpcAccess, RemoteUrlAccess, RemoteUrlProbe};
 use super::auth::{AuthConfig, rpc_body};
 use super::process::{run_capture, string_args, which};
 
-
-
-
-
-
-
-
-
+pub(crate) const REMOTE_WS_PATH: &str = "/api/remote.mux";
 
 pub(crate) fn curl_direct_args(url: &str) -> Vec<String> {
     let null_dev = if cfg!(windows) { "NUL" } else { "/dev/null" };
@@ -229,12 +222,12 @@ pub(crate) fn classify_remote_url_access(
 /// 教程第七步的纠错：curl 默认 HTTP/2 禁 Upgrade 头，测 WS 握手会拿到假 426——
 /// 必须发真实 upgrade 握手。拿到 HTTP/1.1 101 即 exit 0，否则/超时 exit 1
 pub(crate) const WS_PROBE_JS: &str = r"const net=require('net'),tls=require('tls');
-pub(crate) const url=new URL(process.argv[1]);
-pub(crate) const port=url.port?Number(url.port):(url.protocol==='wss:'?443:80);
-pub(crate) const opts={host:url.hostname,port:port};
+const url=new URL(process.argv[1]);
+const port=url.port?Number(url.port):(url.protocol==='wss:'?443:80);
+const opts={host:url.hostname,port:port};
 if(url.protocol==='wss:'){opts.rejectUnauthorized=false;if(!/^\d{1,3}(\.\d{1,3}){3}$/.test(url.hostname)){opts.servername=url.hostname;}}
-pub(crate) const sock=url.protocol==='wss:'?tls.connect(opts):net.connect(port,url.hostname);
-pub(crate) const key='dGhlIHNhbXBsZSBub25jZQ==';
+const sock=url.protocol==='wss:'?tls.connect(opts):net.connect(port,url.hostname);
+const key='dGhlIHNhbXBsZSBub25jZQ==';
 let done=false,sent=false,buf='';
 function finish(c){if(done)return;done=true;try{sock.destroy();}catch(e){}process.exit(c);}
 function send(){if(sent)return;sent=true;sock.write('GET '+url.pathname+' HTTP/1.1\r\nHost: '+url.host+'\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: '+key+'\r\nSec-WebSocket-Version: 13\r\n\r\n');}
@@ -252,15 +245,15 @@ pub(crate) fn ws_probe_ok(node: &str, ws_url: &str) -> bool {
 }
 
 /// 真实 WebSocket 链路检查：经 Tailscale Serve 直接到 dsh，对
-/// /api/events.host 做 WS upgrade 握手。
+/// /api/remote.mux 做 WS upgrade 握手。
 pub(crate) fn ws_endpoint_ok(url: &str) -> bool {
     let Some(node) = which("node") else { return true };
-    let ws_url = format!("{}/api/events.host", url.replacen("https://", "wss://", 1));
+    let ws_url = format!("{}{}", url.replacen("https://", "wss://", 1), REMOTE_WS_PATH);
     ws_probe_ok(&node, &ws_url)
 }
 
 pub(crate) fn ws_endpoint_ok_via_proxy(url: &str, proxy: &MacosHttpsProxy) -> bool {
-    let endpoint = format!("{}/api/events.host", url.trim_end_matches('/'));
+    let endpoint = format!("{}{}", url.trim_end_matches('/'), REMOTE_WS_PATH);
     let proxy_url = format!("http://{}:{}", proxy.server, proxy.port);
     let args = [
         "-sk",
@@ -297,12 +290,12 @@ pub(crate) fn probe_remote_url(url: &str, auth: &AuthConfig) -> RemoteUrlProbe {
     let direct_https_ok = https_endpoint_ok(url);
     let direct_ws_ok = ws_endpoint_ok(url);
     let remote_use_access = (direct_https_ok && auth.use_capability.is_some())
-        .then(|| remote_rpc_access(url, "llm.providers"));
+        .then(|| remote_rpc_access(url, "llm/listProviders"));
     let remote_use_ready = matches!(remote_use_access, None | Some(RemoteRpcAccess::Ready));
     let remote_settings_access = (direct_https_ok
         && remote_use_ready
         && auth.admin_capability.is_some())
-        .then(|| remote_rpc_access(url, "settings.describe"));
+        .then(|| remote_rpc_access(url, "settings/describe"));
     let remote_rpc_access = if remote_use_access == Some(RemoteRpcAccess::Denied)
         || remote_settings_access == Some(RemoteRpcAccess::Denied)
     {

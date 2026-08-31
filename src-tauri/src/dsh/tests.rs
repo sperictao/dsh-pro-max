@@ -5,9 +5,9 @@
     use super::components::{dsh_version_is_compatible, normalize_version, plugin_profile_is_current, version_within_supported_line};
     use crate::version::parse_version;
     use super::{RemoteRpcAccess, RemoteUrlAccess, SUPPORTED_DSH_VERSION};
-    use super::probe::{classify_remote_rpc_response, classify_remote_url_access, curl_direct_args, curl_remote_rpc_args, parse_macos_https_proxy, proxy_bypass_host, proxy_bypasses_host};
-    use super::process::{dsh_web_cmd_pattern, ere_to_ps_wildcards, win_cmd_line, win_quote};
-    use super::setup::{serve_command, serve_failure_solution, start_failure_diagnosis};
+    use super::probe::{classify_remote_rpc_response, classify_remote_url_access, curl_direct_args, curl_remote_rpc_args, parse_macos_https_proxy, proxy_bypass_host, proxy_bypasses_host, REMOTE_WS_PATH};
+    use super::process::{dsh_web_cmd_pattern, ere_to_ps_wildcards, run_capture, which, win_cmd_line, win_quote};
+    use super::setup::{format_verification_checks, serve_command, serve_failure_solution, start_failure_diagnosis};
     use super::update::{WEB_PROFILE_COMPAT_ID_LINE, insert_web_profile_compat_entry, remove_web_profile_compat_entry, rewrite_web_profile_patch_at};
     use crate::i18n::set_current;
     use std::path::Path;
@@ -166,6 +166,19 @@
     }
 
     #[test]
+    fn verification_checks_are_separated_for_readability() {
+        let checks = vec![
+            "dsh web is not responding on 127.0.0.1:3899".to_string(),
+            "HTTPS endpoint is not responding: https://example.ts.net".to_string(),
+            "WebSocket handshake failed: https://example.ts.net/api/remote.mux".to_string(),
+        ];
+        assert_eq!(
+            format_verification_checks(&checks),
+            "dsh web is not responding on 127.0.0.1:3899\nHTTPS endpoint is not responding: https://example.ts.net\nWebSocket handshake failed: https://example.ts.net/api/remote.mux",
+        );
+    }
+
+    #[test]
     fn version_gate_requires_same_minor_line() {
         let min = parse_version("0.1.0-rc.8").unwrap();
         let gate = |v: &str| version_within_supported_line(&parse_version(v).unwrap(), &min);
@@ -189,6 +202,9 @@
             insert_web_profile_compat_entry(&inserted, "0.1.1-rc.2"),
             inserted
         );
+        let upgraded_comment = insert_web_profile_compat_entry(&inserted, "0.1.1-rc.3");
+        assert!(upgraded_comment.contains("installed dsh CLI is 0.1.1-rc.3"));
+        assert!(!upgraded_comment.contains("installed dsh CLI is 0.1.1-rc.2"));
         let invalid_old_output = format!("{empty}{}", inserted.strip_prefix(header).unwrap());
         assert_eq!(
             insert_web_profile_compat_entry(&invalid_old_output, "0.1.1-rc.2"),
@@ -470,7 +486,7 @@
     }
 
     #[test]
-    fn ws_probe_targets_events_host() {
+    fn ws_probe_targets_remote_mux() {
         // WS 探测脚本：发真实 upgrade 握手（curl 的 HTTP/2 假 426 不适用），
         // 拿到 HTTP/1.1 101 即成功；net/tls 双路径，不依赖 Node v22+ 内置
         // WebSocket——Node 18+ 都能跑
@@ -484,14 +500,23 @@
         assert!(super::probe::WS_PROBE_JS.contains("process.exit(c)"));
         // 脚本不含双引号：Windows cmd /c 引号转义安全（含双引号会拆碎 -e 参数）
         assert!(!super::probe::WS_PROBE_JS.contains('"'));
+        assert!(!super::probe::WS_PROBE_JS.contains("pub(crate)"));
+        if let Some(node) = which("node") {
+            let (_, stderr, ok) = run_capture(
+                &node,
+                &["-e", "new Function(process.argv[1])", super::probe::WS_PROBE_JS],
+            )
+            .unwrap();
+            assert!(ok, "WS probe JavaScript must parse: {stderr}");
+        }
     }
 
     #[test]
     fn ws_url_rewrites_https_to_wss() {
-        // ws_endpoint_ok 的 URL 改写：https:// → wss://，拼 /api/events.host
+        // ws_endpoint_ok 的 URL 改写：https:// → wss://，拼 /api/remote.mux
         let url = "https://etmacmini.taildde4.ts.net";
-        let ws_url = format!("{}/api/events.host", url.replacen("https://", "wss://", 1));
-        assert_eq!(ws_url, "wss://etmacmini.taildde4.ts.net/api/events.host");
+        let ws_url = format!("{}{}", url.replacen("https://", "wss://", 1), REMOTE_WS_PATH);
+        assert_eq!(ws_url, "wss://etmacmini.taildde4.ts.net/api/remote.mux");
     }
 
     #[test]
@@ -583,18 +608,18 @@
     fn remote_settings_probe_posts_the_privileged_rpc_directly() {
         let args = curl_remote_rpc_args(
             "https://etmacminim4.taildde4.ts.net/",
-            "settings.describe",
+            "settings/describe",
         );
         let no_proxy = args.iter().position(|arg| arg == "--noproxy").unwrap();
         assert_eq!(args[no_proxy + 1], "*");
         let body = args.iter().position(|arg| arg == "--data-binary").unwrap();
         assert_eq!(
             args[body + 1],
-            r#"{"type":"client-request","rpcId":"t1","method":"settings.describe","payload":{}}"#,
+            r#"{"type":"client-request","rpcId":"t1","method":"settings/describe","payload":{"args":{}}}"#,
         );
         assert_eq!(
             args.last().map(String::as_str),
-            Some("https://etmacminim4.taildde4.ts.net/api/settings.describe"),
+            Some("https://etmacminim4.taildde4.ts.net/api/settings/describe"),
         );
     }
 
@@ -630,13 +655,13 @@
     fn rpc_request_is_loopback_json_post() {
         // 敏感 API 校验请求：Host 为 loopback、无 Origin、JSON body 与
         // Content-Length 一致。
-        let req = rpc_request("settings.describe");
-        assert!(req.starts_with("POST /api/settings.describe HTTP/1.1\r\n"));
+        let req = rpc_request("settings/describe");
+        assert!(req.starts_with("POST /api/settings/describe HTTP/1.1\r\n"));
         assert!(req.contains("Host: 127.0.0.1"));
         assert!(req.contains("Content-Type: application/json"));
         assert!(!req.contains("Origin:"));
         let body =
-            r#"{"type":"client-request","rpcId":"t1","method":"settings.describe","payload":{}}"#;
+            r#"{"type":"client-request","rpcId":"t1","method":"settings/describe","payload":{"args":{}}}"#;
         assert!(req.contains(body));
         assert!(req.contains(&format!("Content-Length: {}\r\n", body.len())));
     }

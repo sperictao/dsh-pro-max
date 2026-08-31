@@ -40,7 +40,7 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../.artifacts/dsh-plugins/dsh-client-connection-authz-618e36ffca9c.tgz": "dsh-plugins/dsh-client-connection-authz-618e36ffca9c.tgz",
+      "../.artifacts/dsh-plugins/dsh-client-connection-authz-11929472460d.tgz": "dsh-plugins/dsh-client-connection-authz-11929472460d.tgz",
       "../.artifacts/dsh-plugins/dsh-auth-tailscale-57ca6cab6b3f.tgz": "dsh-plugins/dsh-auth-tailscale-57ca6cab6b3f.tgz"
     },
     "macOS": {

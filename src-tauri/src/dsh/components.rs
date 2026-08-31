@@ -250,7 +250,7 @@ pub(crate) fn dsh_version() -> Option<String> {
 }
 
 /// 版本闸门：actual 不低于锁定版本，且与锁定版本同一条 x.y.z 演进线。
-/// 只看 ">=" 会放过上游新线：0.1.1-rc.2 满足 >=0.1.0-rc.8，但跨线会重排
+/// 只看 ">=" 会放过上游新线：0.1.3-alpha.1 满足 >=0.1.2-alpha.2，但跨线会重排
 /// credentials 文件格式并改插件运行时（v0.3.8 的实机教训）。下限唯一来源
 /// 是 SUPPORTED_DSH_VERSION——跟线升级本就要求常量与插件 pin 三处同步，
 /// 再读 profile 里已装插件的 peer 只会在「CLI 已升、插件未升」的窗口里
@@ -275,7 +275,7 @@ pub(crate) fn dsh_version_is_compatible(version: Option<&str>) -> bool {
 
 /// 安装 Launcher 锁定的 dsh 版本（固定 SUPPORTED_DSH_VERSION），并在 npm
 /// 成功后再次校验实际 CLI。固定版本而非跟随 @next：上游把 @next 滚到新
-/// minor（0.1.1-rc.2）时并不照顾 vendored 授权栈的兼容性，被动跟随会把
+/// minor（如 0.1.3-alpha.1）时并不照顾 vendored 授权栈的兼容性，被动跟随会把
 /// 用户机器拖进起不来服务的状态；升线由本仓库显式 bump 常量并验证。
 pub(crate) fn install_supported_dsh() -> Result<String, String> {
     resolve_node_bin()?;

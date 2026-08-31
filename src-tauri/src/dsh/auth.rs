@@ -280,7 +280,7 @@ pub(crate) fn http_ok(line: Option<&str>) -> bool {
 /// 专门验证「本机仍可访问特权 API」这条不变式。
 pub(crate) fn rpc_body(method: &str) -> String {
     format!(
-        r#"{{"type":"client-request","rpcId":"t1","method":"{}","payload":{{}}}}"#,
+        r#"{{"type":"client-request","rpcId":"t1","method":"{}","payload":{{"args":{{}}}}}}"#,
         method
     )
 }

@@ -15,7 +15,7 @@ use std::time::Duration;
 use tauri::{Emitter};
 
 
-use crate::i18n::{current, tr, trf};
+use crate::i18n::{tr, trf};
 
 // ============ 一键启动（时间轴事件流） ============
 
@@ -149,7 +149,7 @@ pub(crate) fn start_failure_diagnosis(log: &Path) -> (String, String) {
         Some(t) if t.contains("EPERM") || t.contains("symlink") => {
             tr("dsh could not create symlinks; on Windows enable Developer Mode (Settings → Privacy & security → For developers), then retry")
         }
-        // 装过跨线 dsh（如 0.1.1-rc.2）的机器：它把 credentials 重写成了
+        // 装过跨线 dsh（如 0.1.3-alpha.1）的机器：它把 credentials 重写成了
         // 新格式，锁定线的 CLI 读不了；引导用户手动还原为扁平 KEY: value
         Some(t) if t.contains(".credentials.yaml") && t.contains("must be a string") => {
             tr("A newer dsh rewrote ~/.dsh/.credentials.yaml into an incompatible format; open it and keep only the KEY: value lines (drop the version:/refs: wrapper), then retry")
@@ -261,7 +261,7 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
         };
         let current = dsh_version();
         if dsh_version_is_compatible(current.as_deref()) {
-            // 显示实际版本而非锁定版本：宽松化后兼容版本可以是 rc.7/rc.8，
+            // 显示实际版本而非锁定版本：同线未来 rc/稳定版也可能兼容，
             // 显示 SUPPORTED_DSH_VERSION 会让用户误以为被装回了旧版
             ctx.done(&trf(
                 "Compatible dsh is installed: {version}",
@@ -500,7 +500,7 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
             .map(|access| access == RemoteRpcAccess::Ready)
             .unwrap_or(true);
         let remote_url_access = remote_probe.map(|probe| probe.access);
-        let local_privileged_ok = rpc_ok(WEB_PORT, "settings.describe");
+        let local_privileged_ok = rpc_ok(WEB_PORT, "settings/describe");
 
         let remote_stack_ok = web_ok
             && plugins_ok
@@ -549,7 +549,7 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
             }
             if !ws_ok {
                 checks.push(trf(
-                    "WebSocket handshake failed: {url}/api/events.host",
+                    "WebSocket handshake failed: {url}/api/remote.mux",
                     &[("url", url_text.clone())],
                 ));
             }
@@ -564,7 +564,7 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
                     )],
                 )),
                 Some(RemoteRpcAccess::Failed) => checks.push(trf(
-                    "Remote provider API is not responding: {url}/api/llm.providers",
+                    "Remote provider API is not responding: {url}/api/llm/listProviders",
                     &[("url", url_text.clone())],
                 )),
                 _ => {}
@@ -580,7 +580,7 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
                     )],
                 )),
                 Some(RemoteRpcAccess::Failed) => checks.push(trf(
-                    "Remote settings API is not responding: {url}/api/settings.describe",
+                    "Remote settings API is not responding: {url}/api/settings/describe",
                     &[("url", url_text.clone())],
                 )),
                 _ => {}
@@ -594,10 +594,9 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
                     &[("url", url_text.clone())],
                 ));
             }
-            let separator = if current() == "zh-CN" { "；" } else { "; " };
             return ctx.fail(
                 &tr("Verification failed; some components are not ready"),
-                &checks.join(separator),
+                &format_verification_checks(&checks),
                 &remaining_after(7),
             );
         }
@@ -611,6 +610,12 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// 把验证项按行列出，避免 URL 与下一项拼接成不可读的链接。
+pub(crate) fn format_verification_checks(checks: &[String]) -> String {
+    checks.join("\n")
+}
+
 /// 重启 dsh web，确保新 profile 和授权环境生效。
 pub(crate) fn restart_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) -> Result<(), String> {
     stop_supervised_services();

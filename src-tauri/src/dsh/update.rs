@@ -49,9 +49,10 @@ pub async fn dsh_update(app: tauri::AppHandle) -> Result<String, String> {
     Ok(version)
 }
 
+
 /// 安装新版 dsh 后重写 web profile 的 cordis.patch.yml：让 dsh CLI 自己
 /// 把 profile 里的 dsh-* 依赖滚到与新 CLI 兼容的版本。authz 插件的依赖
-/// 范围（如 ^0.1.0-rc.8）不覆盖 dsh 下一个 rc 的 peer（^0.1.0-rc.9），
+/// 范围（如 ^0.1.2-alpha.2）不覆盖 dsh 下一条 x.y.z 预发布线，
 /// 不重写则 boot 时 pnpm 解出旧版 attachment 崩（rc.6→rc.8 的教训）。
 pub(crate) const WEB_PROFILE_COMPAT_ID_LINE: &str = "- id: dsh-pro-max-compat";
 
@@ -63,6 +64,22 @@ pub(crate) fn insert_web_profile_compat_entry(contents: &str, installed_version:
         .position(|line| line == WEB_PROFILE_COMPAT_ID_LINE);
 
     if let Some(compat_index) = compat_index {
+        let mut comment_index = None;
+        let mut end = compat_index + 1;
+        while end < lines.len() {
+            let line = &lines[end];
+            if line.is_empty() || line.starts_with([' ', '\t']) {
+                if line.starts_with("  # Launcher managed: installed dsh CLI is ") {
+                    comment_index = Some(end);
+                }
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        if let Some(comment_index) = comment_index {
+            lines[comment_index] = format!("  # Launcher managed: installed dsh CLI is {installed_version}");
+        }
         // 修复旧实现可能留下的 `[]` + list item 非法组合。
         if let Some(empty_index) = lines[..compat_index]
             .iter()
@@ -395,7 +412,7 @@ pub async fn dsh_install_version(version: String) -> Result<String, String> {
         return Err(trf("Invalid dsh version: {version}", &[("version", version)]));
     }
     // 设置页逐版本安装同样过版本闸门：跨线的 dsh 与 vendored 授权栈不
-    // 兼容（0.1.1-rc.2 会让本地与远程访问一起失效），装上即坏，直接拒绝
+    // 兼容（如 0.1.3-alpha.1 会让本地与远程访问一起失效），装上即坏，直接拒绝
     if !dsh_version_is_compatible(Some(&version)) {
         let min = SUPPORTED_DSH_VERSION;
         return Err(trf(
@@ -445,4 +462,3 @@ pub async fn dsh_install_version(version: String) -> Result<String, String> {
     }
     Ok(version)
 }
-
