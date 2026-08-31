@@ -40,8 +40,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../.artifacts/dsh-plugins/dsh-client-connection-authz-c2e0ec50b9b9.tgz": "dsh-plugins/dsh-client-connection-authz-c2e0ec50b9b9.tgz",
-      "../.artifacts/dsh-plugins/dsh-auth-tailscale-b49ed12c6be7.tgz": "dsh-plugins/dsh-auth-tailscale-b49ed12c6be7.tgz"
+      "../.artifacts/dsh-plugins/dsh-client-connection-authz-618e36ffca9c.tgz": "dsh-plugins/dsh-client-connection-authz-618e36ffca9c.tgz",
+      "../.artifacts/dsh-plugins/dsh-auth-tailscale-57ca6cab6b3f.tgz": "dsh-plugins/dsh-auth-tailscale-57ca6cab6b3f.tgz"
     },
     "macOS": {
       "hardenedRuntime": true,

@@ -91,11 +91,11 @@ pub use models::__tauri_command_name_model_config_save;
 /// 升级时与 vendor 插件 pin、bundle tgz 文件名三处同步 bump（见
 /// scripts/build-dsh-plugins.mjs 与 src-tauri/tauri.conf.json）。
 const DSH_PACKAGE: &str = "@deepseek-ai/dsh";
-const SUPPORTED_DSH_VERSION: &str = "0.1.1-rc.2";
+const SUPPORTED_DSH_VERSION: &str = "0.1.2-alpha.2";
 const CONNECTION_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-client-connection-authz";
 const AUTH_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-auth-tailscale";
-const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-c2e0ec50b9b9.tgz";
-const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-b49ed12c6be7.tgz";
+const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-618e36ffca9c.tgz";
+const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-57ca6cab6b3f.tgz";
 const TAILSCALE_LOGIN_ENV: &str = "DSH_TAILSCALE_ALLOWED_LOGINS";
 const LOCAL_ONLY_LOGIN: &str = "local-only@localhost.invalid";
 /// 远程特权接口（settings/credentials/host 等 loopback authority）与普通远程
