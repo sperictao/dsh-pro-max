@@ -30,4 +30,4 @@
 
 - **打 tag 前必须先备齐 `release-notes/v<X.Y.Z>.md`**：`build-release.yml` 在构建完成后强制校验该文件，缺失则整个发布失败。正确顺序：版本号三处同步（`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml`）→ release notes → release commit → tag → 推送。
 - **打 tag 前跑 `pnpm run check:release -- --tag v<X.Y.Z>`**：校验版本号三处一致 + tag 与版本一致 + release notes 存在 + bundle resources 中 git 跟踪的源路径存在（gitignore 的构建产物如 `.artifacts/dsh-plugins/*.tgz` 不做存在性校验，CI validate 阶段尚未构建）。同一脚本在 CI `validate` job 中秒级运行（构建矩阵之前），本地先跑一遍可以零成本拦截发布失败。
-- **bump vendored dsh 插件的 pin commit 时**：必须同步三处——submodule 指针、`scripts/build-dsh-plugins.mjs` 中的 pin 校验、`src-tauri/tauri.conf.json` 的 `bundle.resources` tgz 文件名（文件名内嵌 commit 短哈希），漏任何一处都会在打包或运行时断。
+- **bump vendored dsh 插件的 pin commit 时**：必须同步三处——submodule 指针、`scripts/build-dsh-plugins.mjs` 中的 pin 校验、`src-tauri/tauri.conf.json` 的 `bundle.resources` tgz 文件名（文件名内嵌 commit 短哈希），漏任何一处都会在打包或运行时断。且在此之前必须先把插件仓库的该 commit 推到其远端并 `git ls-remote` 验证可见——pin 指向仅存在于本地的 commit 会让 CI checkout（`submodules: recursive`）直接报 `not our ref` 全灭，本地 `check:release` 拦不住（v0.5.3 首次发布失败即此因）。
