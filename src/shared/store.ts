@@ -36,12 +36,19 @@ export interface ToastItem {
   type: ToastType;
 }
 
+// 已落 DOM 的 data-theme 值：OS 在外观过渡期间可能连发多个 change 事件，
+// 同值重写 <html> 属性会触发整窗重绘，导致主窗口持续闪烁
+let lastAppliedDataTheme: string | null = null;
+
 function applyDataTheme(mode: ThemeMode, family: string): void {
-  document.documentElement.dataset.theme = resolveDataTheme(
+  const next = resolveDataTheme(
     mode,
     family,
     window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
+  if (next === lastAppliedDataTheme) return;
+  lastAppliedDataTheme = next;
+  document.documentElement.dataset.theme = next;
 }
 
 // 模块求值时机不保证 DOM 全局就绪（vitest 4 模块执行器在被依赖模块求值后才装 jsdom 全局），

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { getVersion } from "@tauri-apps/api/app";
 import { useAppStore, type View } from "./shared/store";
+import { useSystemThemeSync } from "./shared/useSystemThemeSync";
 import { onDshStep, onUpdaterDownloadProgress } from "./shared/events";
 import * as cmd from "./shared/commands";
 import { log } from "./shared/logger";
@@ -83,13 +84,8 @@ export function App() {
     };
   }, []);
 
-  // 跟随系统模式：OS 亮暗切换时重解析 data-theme
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => useAppStore.getState().syncSystemTheme();
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
+  // 跟随系统模式：OS 亮暗切换时重解析 data-theme（去抖在 hook 内）
+  useSystemThemeSync();
 
   // 键盘快捷键：Cmd/Ctrl + , 打开设置（macOS/Windows 系统惯例）
   useEffect(() => {
