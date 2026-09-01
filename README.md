@@ -43,6 +43,28 @@ Download the latest installer for your platform from [Releases](https://github.c
 
 Prerequisites for the dsh features: **Node.js 18+**; for remote access additionally **Tailscale** with MagicDNS and HTTPS Certificates enabled (guided step by step in-app; see [docs/dsh-remote-access-setup.md](docs/dsh-remote-access-setup.md)).
 
+## 🚀 Quick Start: Remote Access
+
+Prerequisites: **Node.js 18+** on the host machine, and **Tailscale 1.92+** logged in with **MagicDNS** and **HTTPS Certificates** enabled.
+
+1. On the Home tab, switch on **Remote access**.
+2. Click **One-click start dsh web** — the 8-step timeline installs the pinned dsh with both authorization plugins, starts dsh Web, configures `tailscale serve`, and verifies the remote endpoint automatically.
+3. In the Tailscale admin console (**Access controls**), allow your remote identity to reach the host node on port 443 (app capabilities never open ports):
+
+   ```json
+   {
+     "grants": [
+       { "src": ["alice@example.com"], "dst": ["autogroup:member"], "ip": ["tcp:443"] }
+     ]
+   }
+   ```
+
+4. From any device logged in to the same tailnet, open `https://<hostname>.ts.net` — the URL is shown on the Home tab once the timeline finishes.
+
+Your host machine's current user is always allowed. Extra Tailscale accounts and remote **admin** capabilities (settings / credentials) are opt-in under **Settings → DeepSeek Harness → Remote authorization**.
+
+→ Scenarios, capability setup and troubleshooting: [docs/dsh-remote-access-setup.md](docs/dsh-remote-access-setup.md)
+
 ## 🛠 Development
 
 ```bash

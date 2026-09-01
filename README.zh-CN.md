@@ -43,6 +43,28 @@
 
 dsh 功能的前置条件：**Node.js 18+**；远程访问另需 **Tailscale** 并启用 MagicDNS 与 HTTPS Certificates（应用内逐步引导；详见 [docs/dsh-remote-access-setup.md](docs/dsh-remote-access-setup.md)）。
 
+## 🚀 快速上手：开启远程访问
+
+前提：宿主机装好 **Node.js 18+**，**Tailscale 1.92+** 已登录并启用 **MagicDNS** 与 **HTTPS Certificates**。
+
+1. 在主页打开 **Remote access**（远程访问）开关。
+2. 点 **一键启动 dsh web**——8 步时间线自动完成：安装锁定版 dsh 与两个授权插件、启动 dsh Web、配置 `tailscale serve`，并校验远程端点。
+3. 在 Tailscale admin console（**Access controls**）中放行远程身份到宿主节点的 443 端口（app capability 不会自动放行端口）：
+
+   ```json
+   {
+     "grants": [
+       { "src": ["alice@example.com"], "dst": ["autogroup:member"], "ip": ["tcp:443"] }
+     ]
+   }
+   ```
+
+4. 从任意登录同一 tailnet 的设备打开 `https://<hostname>.ts.net`——时间线走完后主页会显示该地址。
+
+宿主机当前用户始终在允许名单内；其他 Tailscale 账号与远程**管理**能力（settings / credentials）按需在 **设置 → DeepSeek Harness → Remote authorization** 中开启。
+
+→ 典型场景、capability 配置与故障排查：[docs/dsh-remote-access-setup.md](docs/dsh-remote-access-setup.md)
+
 ## 🛠 开发
 
 ```bash
