@@ -1,11 +1,11 @@
-// 通用分区：语言、系统行为（托盘/自启）、日志入口
+// 通用分区：语言、系统行为（托盘/自启）、插件目录源、日志入口
 
 import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { SelectCard } from "@/shared/components/SelectCard";
-import { BTN, TOGGLE } from "@/shared/lib/ui";
+import { BTN, INPUT_MONO, TOGGLE } from "@/shared/lib/ui";
 
 const LANG_OPTIONS = [
   { id: "system", labelKey: "Follow System" },
@@ -70,6 +70,25 @@ export function GeneralSection() {
             <input type="checkbox" className={TOGGLE} id="toggle-autostart"
               checked={autostart} onChange={() => void toggleAutostart()} />
           </label>
+        </div>
+      </div>
+
+      <div className="flex items-start gap-4 border-b border-border py-4">
+        <label className="w-36 shrink-0 pt-1 text-sm font-medium">{t("Plugin catalog")}</label>
+        <div className="flex flex-1 flex-col gap-1 rounded-lg border border-border p-3">
+          <input
+            type="text"
+            className={INPUT_MONO}
+            id="config-catalog-url"
+            placeholder="https://mirror.example.com/catalog.json"
+            value={config?.market_catalog_url ?? ""}
+            onChange={(e) => setConfigField({ market_catalog_url: e.target.value })}
+          />
+          <span className="text-xs opacity-60">
+            {t(
+              "Optional https:// or http:// mirror serving the same catalog JSON. Empty = built-in awesome-dsh-plugin.com source; applied on next refresh.",
+            )}
+          </span>
         </div>
       </div>
 

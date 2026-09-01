@@ -85,6 +85,8 @@ fn zh_cn(key: &str) -> Option<&'static str> {
 
         // —— dsh 远程访问（dsh.rs）——
         "Bundled dsh plugin is missing: {plugin}" => "应用内置 dsh 插件缺失: {plugin}",
+        "Bundled dsh plugin checksum is missing: {plugin}; rebuild the app resources with pnpm run build:dsh-plugins" => "内置 dsh 插件缺少校验和文件: {plugin}；请用 pnpm run build:dsh-plugins 重新构建应用资源",
+        "Bundled dsh plugin failed checksum verification: {plugin}" => "内置 dsh 插件校验和不符，可能已损坏: {plugin}",
         "dsh plugin install completed but the web profile is incomplete: {error}" => "dsh 插件安装已结束，但 web profile 不完整: {error}",
         "Failed to install dsh auth plugins: {error}" => "安装 dsh 授权插件失败: {error}",
         "Installed dsh version {actual}, but this Launcher requires {expected}" => "已安装 dsh {actual}，但当前 Launcher 需要 {expected}",
@@ -192,6 +194,20 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "Invalid plugin identifier" => "插件标识不合法",
         "Failed to install plugin: {error}" => "安装插件失败: {error}",
         "Failed to remove plugin: {error}" => "移除插件失败: {error}",
+        "Failed to check plugin updates: {error}" => "检查插件更新失败: {error}",
+        "Cannot parse npm registry response for {name}" => "无法解析 npm registry 响应: {name}",
+        "Unrecognized plugin catalog format; update the app or fix the catalog mirror" => "插件目录格式无法识别；请升级应用或修正目录镜像",
+        "Invalid plugin catalog URL: {url}; it must start with https:// or http://" => "插件目录地址不合法: {url}；必须以 https:// 或 http:// 开头",
+        "Failed to read catalog snapshot: {error}" => "读取目录快照失败: {error}",
+        "Failed to parse catalog snapshot: {error}" => "解析目录快照失败: {error}",
+        "Failed to read plugin policy: {error}" => "读取插件策略文件失败: {error}",
+        "Failed to parse plugin policy: {error}" => "解析插件策略文件失败: {error}",
+        "Failed to parse {path}: {error}" => "解析 {path} 失败: {error}",
+        "Plugin policy field \"allowed\" must be an array" => "插件策略的 allowed 字段必须是字符串数组",
+        "Plugin install blocked by policy: {identifier} is not in the allowlist ({path})" => "安装被插件策略阻止: {identifier} 不在允许清单内（{path}）",
+        "Plugin build scripts were blocked by pnpm. Add the package name printed in the log under \"allowBuilds\" in {path}, then retry. Detail: {error}" => "插件的构建脚本被 pnpm 拦截。请把日志中打印的包名加入 {path} 的 \"allowBuilds\" 下后重试。详情: {error}",
+        "Web profile has no parent directory" => "web profile 没有上级目录",
+        "Invalid pnpm workspace config" => "pnpm workspace 配置不合法",
 
         // —— 模型配置（dsh/models.rs）——
         "Failed to read settings.yaml: {error}" => "读取 settings.yaml 失败: {error}",

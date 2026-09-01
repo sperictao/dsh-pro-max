@@ -153,7 +153,9 @@ async function main() {
         }),
         dsh_detect: () => dshStatus,
         market_fetch: () => marketCatalog,
+        market_snapshot: () => null,
         market_installed: () => marketInstalled,
+        market_check_updates: () => [],
         model_config_load: () => modelConfig,
         "plugin:app|version": () => "0.4.0",
         "plugin:notification|is_permission_granted": () => true,
@@ -218,12 +220,14 @@ async function main() {
       assert.match(version, new RegExp(`v${APP_VERSION}`), `about version mismatch: ${version}`);
     });
 
-    await step("plugins: market renders catalog and installed list", async () => {
+    await step("plugins: discover default tab, installed tab with managed badge", async () => {
       await page.getByRole("button", { name: "Plugins" }).click();
       await expectVisible(page.locator("#market-view"));
+      // 默认落在发现页（二级导航：发现 / 已安装）
       await expectVisible(page.locator("#market-search"));
-      await expectVisible(page.locator("#plugin-1"));
       await expectVisible(page.getByText("Manual install only"));
+      await page.getByRole("button", { name: "Installed" }).click();
+      await expectVisible(page.locator("#market-installed"));
       await expectVisible(page.getByText("managed by launcher"));
     });
 

@@ -6,6 +6,8 @@ export interface LauncherConfig {
   dsh_admin_cap_domain: string;
   dsh_use_cap_domain: string;
   dsh_extra_allowed_logins: string;
+  /** 插件市场目录源镜像；空 = 内置官方源 */
+  market_catalog_url: string;
 }
 
 export type DshAccessMode = "local" | "remote";
@@ -111,28 +113,36 @@ export interface ModelConfig {
   providers: ProviderConfig[];
 }
 
-// ============ 插件市场（dsh-plugins-store 公开目录）============
+// ============ 插件市场（awesome-dsh-plugin curated 目录）============
 
 export interface MarketPlugin {
-  repositoryId: number;
+  /** owner/name（展示与排序键） */
   fullName: string;
   name: string;
-  description: string | null;
+  /** 多语言描述原样透传（如 {"en": "...", "zh": "..."}），按界面语言取 */
+  description: Record<string, string> | null;
   url: string;
-  stars: number;
+  /** null = 目录暂无数据（新收录或仓库 404），不静默当 0 */
+  stars: number | null;
+  /** 分类 id（显示名经 catalog.categories 本地化） */
   category: string | null;
-  language: string | null;
-  /** 仅 validation.overall === "verified"（目录约定的唯一判定依据） */
-  verified: boolean;
-  /** candidate.action === "add" 的机器安装标识；null = 无一键安装候选 */
+  /** 目录 install 命令串解析出的安装标识；null = 无一键安装候选 */
   installSpecifier: string | null;
-  installExecutable: boolean;
+  /** 目录侧弃用标记原样透传 */
+  deprecated: boolean;
+  /** 弃用时目录建议的替代插件名 */
+  replacement: string | null;
 }
 
 export interface MarketCatalog {
-  generatedAt: string | null;
+  /** 目录生成日期（目录原生 updated，如 "2026-08-31"） */
+  updated: string | null;
+  /** 分类 id → {语言 → 显示名}，目录原生表原样透传 */
+  categories: Record<string, Record<string, string>>;
   total: number;
   plugins: MarketPlugin[];
+  /** 本次数据来自本地快照（网络拉取失败时的降级），UI 需如实标注 */
+  fromSnapshot: boolean;
 }
 
 export interface InstalledPlugin {
@@ -142,4 +152,27 @@ export interface InstalledPlugin {
   spec: string;
   /** Launcher 自管授权插件：不出移除按钮 */
   managed: boolean;
+}
+
+/** 安装回执：本次安装落进 profile 的 dependencies 键与 spec；无法唯一定位落点时为 null */
+export interface InstallReceipt {
+  name: string;
+  spec: string;
+}
+
+/** 安装结果：成功带回执；被 pnpm 拦截构建脚本时转审批请求（包名 + 待写 yaml 路径） */
+export type InstallOutcome =
+  | { status: "installed"; receipt: InstallReceipt | null }
+  | { status: "needsApproval"; packages: string[]; workspaceYaml: string };
+
+/** 插件更新检测单包结果：npm 形态安装的非受管插件才可检（registry latest 比对），
+ * 协议形态（github:/file: 等）与范围 spec 如实返回 None */
+export interface PluginUpdateInfo {
+  name: string;
+  /** 落盘 spec 原文 */
+  spec: string;
+  managed: boolean;
+  installedVersion: string | null;
+  latestVersion: string | null;
+  updateAvailable: boolean;
 }

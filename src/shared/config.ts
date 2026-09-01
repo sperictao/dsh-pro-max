@@ -13,5 +13,6 @@ export function currentConfigDraft(s: {
     dsh_admin_cap_domain: c?.dsh_admin_cap_domain ?? "",
     dsh_use_cap_domain: c?.dsh_use_cap_domain ?? "",
     dsh_extra_allowed_logins: c?.dsh_extra_allowed_logins ?? "",
+    market_catalog_url: c?.market_catalog_url ?? "",
   };
 }

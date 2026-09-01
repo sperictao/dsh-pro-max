@@ -20,7 +20,7 @@
 ## ✨ Highlights
 
 - 🌐 **DeepSeek Harness Remote Access** — one-click Tailscale HTTPS access to the dsh Web UI through bundled identity-authorization plugins, shown as an 8-step progress timeline with compatibility repair and boot auto-start
-- 🛍 **Plugin Marketplace** — browse the dshmk.com community catalog (7000+ plugins) and one-click install/remove web profile plugins; the Verified badge comes from sandboxed install checks
+- 🛍 **Plugin Marketplace** — browse the awesome-dsh-plugin.com curated catalog (2700+ plugins) and one-click install/remove web profile plugins
 - 🧠 **Model Configuration** — edit dsh's default model and custom LLM provider routes (OpenAI-compatible / Anthropic protocol) in-app; keys are stored as environment variable names only
 - 🔌 **Bundled Auth Plugins** — two pinned plugins ([dsh-client-connection-authz](https://github.com/sperictao/dsh-client-connection-authz) + [dsh-auth-tailscale](https://github.com/sperictao/dsh-auth-tailscale)) ship inside the installer and are installed into the dsh web profile automatically
 - 🔐 **Capability-Based Authorization** — configure your own admin/use capability domains and extra allowed Tailscale logins; without capabilities, remote privileged APIs stay 403
@@ -33,7 +33,7 @@
 
 | One-click Tailscale remote access | Plugin Marketplace |
 | --- | --- |
-| ![One-click Tailscale remote access with an 8-step setup timeline](assets/screenshots/home-remote-access.png) | ![Plugin marketplace browsing the dshmk.com community catalog](assets/screenshots/plugin-marketplace.png) |
+| ![One-click Tailscale remote access with an 8-step setup timeline](assets/screenshots/home-remote-access.png) | ![Plugin marketplace browsing the awesome-dsh-plugin.com curated catalog](assets/screenshots/plugin-marketplace.png) |
 | **Model Configuration** | **Themes & Appearance** |
 | ![Default model and LLM provider routes](assets/screenshots/model-config.png) | ![42 theme families with light / dark / system modes](assets/screenshots/theme-appearance.png) |
 

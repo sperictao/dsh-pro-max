@@ -65,6 +65,7 @@ beforeEach(() => {
     dshAccessMode: "local",
     dshStartBusy: false,
     dshStopBusy: false,
+    dshRestartBusy: false,
     dshRecheckBusy: false,
     dshHasRunSetup: false,
     dshLatest: null,
@@ -240,6 +241,40 @@ describe("remote URL verification flow", () => {
     await waitFor(() => expect(setup).toHaveBeenCalledOnce());
     await waitFor(() => expect(detect.mock.calls.length).toBeGreaterThanOrEqual(2));
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe("one-click restart", () => {
+  it("stops before starting again in local mode, then opens the local URL", async () => {
+    useAppStore.setState({ dshStatus: { ...ready } });
+    const detect = vi.spyOn(cmd, "dshDetect").mockResolvedValue(ready);
+    const stop = vi.spyOn(cmd, "dshStop").mockResolvedValue();
+    const startWeb = vi.spyOn(cmd, "dshStartWeb").mockResolvedValue("http://127.0.0.1:3899");
+    const open = vi.mocked(shell.open).mockResolvedValue();
+
+    render(createElement(DshCard));
+    await waitFor(() => expect(detect).toHaveBeenCalled());
+
+    await userEvent.click(screen.getByRole("button", { name: "One-click restart dsh web" }));
+
+    await waitFor(() => expect(startWeb).toHaveBeenCalledOnce());
+    expect(stop).toHaveBeenCalledOnce();
+    expect(stop.mock.invocationCallOrder[0]).toBeLessThan(startWeb.mock.invocationCallOrder[0]);
+    await waitFor(() => expect(open).toHaveBeenCalledWith("http://127.0.0.1:3899"));
+    // 重启完成后所有按钮回到可用状态
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "One-click restart dsh web" })).toBeEnabled(),
+    );
+  });
+
+  it("is disabled while dsh web is not running", async () => {
+    const stopped = { ...ready, dshRunning: false };
+    useAppStore.setState({ dshStatus: stopped });
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue(stopped);
+
+    render(createElement(DshCard));
+
+    expect(await screen.findByRole("button", { name: "One-click restart dsh web" })).toBeDisabled();
   });
 });
 

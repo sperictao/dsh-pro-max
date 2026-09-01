@@ -26,6 +26,11 @@ pub struct LauncherConfig {
     /// 额外允许访问 dsh 的 Tailscale 登录名（逗号分隔）；本机当前用户始终自动包含。
     #[serde(default)]
     pub dsh_extra_allowed_logins: String,
+
+    /// 插件市场目录源（企业内网镜像）。空 = 内置官方源；
+    /// 非空必须是 https:// 或 http:// 地址，且返回同一 JSON 契约（schemaVersion 1）
+    #[serde(default)]
+    pub market_catalog_url: String,
 }
 
 fn default_language() -> String {
@@ -40,6 +45,7 @@ impl Default for LauncherConfig {
             dsh_admin_cap_domain: String::new(),
             dsh_use_cap_domain: String::new(),
             dsh_extra_allowed_logins: String::new(),
+            market_catalog_url: String::new(),
         }
     }
 }
@@ -115,6 +121,7 @@ pub fn merge_settings(current: &mut LauncherConfig, settings: &LauncherConfig) {
     current.dsh_admin_cap_domain = settings.dsh_admin_cap_domain.clone();
     current.dsh_use_cap_domain = settings.dsh_use_cap_domain.clone();
     current.dsh_extra_allowed_logins = settings.dsh_extra_allowed_logins.clone();
+    current.market_catalog_url = settings.market_catalog_url.clone();
 }
 
 /// 保存配置文件
@@ -153,6 +160,7 @@ mod tests {
             dsh_admin_cap_domain: "admin.example.com".to_string(),
             dsh_use_cap_domain: "use.example.com".to_string(),
             dsh_extra_allowed_logins: "alice@example.com,bob@example.com".to_string(),
+            market_catalog_url: "https://mirror.example.com/catalog.json".to_string(),
         };
 
         merge_settings(&mut current, &settings);
@@ -162,5 +170,6 @@ mod tests {
         assert_eq!(current.dsh_admin_cap_domain, "admin.example.com");
         assert_eq!(current.dsh_use_cap_domain, "use.example.com");
         assert_eq!(current.dsh_extra_allowed_logins, "alice@example.com,bob@example.com");
+        assert_eq!(current.market_catalog_url, "https://mirror.example.com/catalog.json");
     }
 }

@@ -154,17 +154,19 @@ export function DshCard() {
   const status = useAppStore((s) => s.dshStatus);
   const startBusy = useAppStore((s) => s.dshStartBusy);
   const stopBusy = useAppStore((s) => s.dshStopBusy);
+  const restartBusy = useAppStore((s) => s.dshRestartBusy);
   const recheckBusy = useAppStore((s) => s.dshRecheckBusy);
   const hasRunSetup = useAppStore((s) => s.dshHasRunSetup);
   const mode = useAppStore((s) => s.dshAccessMode);
   const setStatus = useAppStore((s) => s.setDshStatus);
   const setStartBusy = useAppStore((s) => s.setDshStartBusy);
   const setStopBusy = useAppStore((s) => s.setDshStopBusy);
+  const setRestartBusy = useAppStore((s) => s.setDshRestartBusy);
   const setRecheckBusy = useAppStore((s) => s.setDshRecheckBusy);
   const setHasRunSetup = useAppStore((s) => s.setDshHasRunSetup);
   const setMode = useAppStore((s) => s.setDshAccessMode);
 
-  const busy = startBusy || stopBusy || recheckBusy;
+  const busy = startBusy || stopBusy || restartBusy || recheckBusy;
   // 是否跑过一键流程：跑过则时间轴以事件流为准，否则用检测结果渲染就绪视图
   // 当前访问模式：local（127.0.0.1:3899 本地访问）或 remote（Tailscale HTTPS 远程访问）。
   // 默认本地模式；用户切换后记住选择（localStorage）；store 是渲染镜像
@@ -213,16 +215,12 @@ export function DshCard() {
     }
   };
 
-  // 一键启动：按当前模式走对应启用流程。
-  // 远程 → dsh_setup 全链路（dsh web + Tailscale Serve + 校验）；
-  // 本地 → dsh_start_web（幂等保证 3899 就绪并返回本地地址，这里只管打开浏览器）。
-  // 结束后刷新状态并按模式切回状态驱动时间轴
-  const startCurrent = async () => {
-    if (busy) return;
-    setStartBusy(true);
+  // 启动流程体：初始化时间轴为全 pending（随后由后端 dsh-step 事件逐步推进）→
+  // 按当前模式执行 → 收尾刷新状态。busy 标志由调用方（start/restart）持有到
+  // 收尾 detect 结束，避免流程未完全落地时按钮抢先可用
+  const runStartFlow = async () => {
     setHasRunSetup(true);
     const ids = isRemote ? STEP_IDS : LOCAL_STEP_IDS;
-    // 初始化为全 pending，随后由后端 dsh-step 事件逐步推进
     setDshTimeline(ids.map((id, index) => ({
       index, id, state: "pending" as const, detail: null, problem: null, solution: null,
     })));
@@ -252,7 +250,6 @@ export function DshCard() {
       // 远程失败详情已由 dsh-step 事件渲染在时间轴节点上
       if (!isRemote) toast(t("dsh start failed: {{error}}", { error: String(e) }), "error");
     } finally {
-      setStartBusy(false);
       // 成功后回到状态驱动视图；失败时保留事件时间轴（问题+解决方案持续可见）
       if (succeeded) setHasRunSetup(false);
       try {
@@ -264,6 +261,34 @@ export function DshCard() {
       } catch (e) {
         toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
       }
+    }
+  };
+
+  // 一键启动：按当前模式走对应启用流程。
+  // 远程 → dsh_setup 全链路（dsh web + Tailscale Serve + 校验）；
+  // 本地 → dsh_start_web（幂等保证 3899 就绪并返回本地地址，这里只管打开浏览器）
+  const startCurrent = async () => {
+    if (busy) return;
+    setStartBusy(true);
+    try {
+      await runStartFlow();
+    } finally {
+      setStartBusy(false);
+    }
+  };
+
+  // 一键重启：先关后启，沿用当前访问模式（运行中模式锁定，重启不改变服务形态）。
+  // dsh_stop 幂等；关闭失败则中止重启，避免在未知状态上强行拉起
+  const restartCurrent = async () => {
+    if (busy) return;
+    setRestartBusy(true);
+    try {
+      await cmd.dshStop();
+      await runStartFlow();
+    } catch (e) {
+      toast(t("Restart failed: {{error}}", { error: String(e) }), "error");
+    } finally {
+      setRestartBusy(false);
     }
   };
 
@@ -540,6 +565,13 @@ export function DshCard() {
           onClick={() => void stopCurrent()}
         >
           {stopBusy ? t("Stopping...") : t("One-click stop dsh web")}
+        </button>
+        <button
+          className={BTN_PRIMARY}
+          disabled={busy || !status?.dshRunning}
+          onClick={() => void restartCurrent()}
+        >
+          {restartBusy ? t("Restarting...") : t("One-click restart dsh web")}
         </button>
         <div className="ml-auto flex min-w-0 flex-col items-end gap-1.5">
           {activeUrl && (

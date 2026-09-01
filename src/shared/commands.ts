@@ -7,9 +7,12 @@ import type {
   DshLatestInfo,
   DshStatus,
   InstalledPlugin,
+  InstallOutcome,
+  InstallReceipt,
   LauncherConfig,
   MarketCatalog,
   ModelConfig,
+  PluginUpdateInfo,
   UpdateInfo,
   UpdaterConfigHealth,
   UpdaterHelpPaths,
@@ -47,9 +50,18 @@ export const dshSetAutostart = (enabled: boolean) => invokeTyped<void>("dsh_set_
 
 // ============ 插件市场 ============
 export const marketFetch = () => invokeTyped<MarketCatalog>("market_fetch");
+// 本地快照直读（首屏秒显，不涉及网络）；缺失/损坏/旧格式返回 null
+export const marketSnapshot = () => invokeTyped<MarketCatalog | null>("market_snapshot");
 export const marketInstalled = () => invokeTyped<InstalledPlugin[]>("market_installed");
-export const marketInstall = (specifier: string) => invokeTyped<void>("market_install", { specifier });
+// 成功返回安装回执（落进 profile 的 name+spec）；无法唯一定位落点（github: 重装）时为 null。
+// 被 pnpm 拦截构建脚本时返回 needsApproval（包名 + 待写 yaml 路径），走用户审批流
+export const marketInstall = (specifier: string) => invokeTyped<InstallOutcome>("market_install", { specifier });
+// 用户审批放行后执行：写入 profile 的 pnpm-workspace.yaml → 重跑安装，返回安装回执
+export const marketApproveBuilds = (specifier: string, packages: string[]) =>
+  invokeTyped<InstallReceipt | null>("market_approve_builds", { specifier, packages });
 export const marketRemove = (name: string) => invokeTyped<void>("market_remove", { name });
+// 更新检测：npm 形态已装插件比对 registry latest；全部可检包都失败才报错
+export const marketCheckUpdates = () => invokeTyped<PluginUpdateInfo[]>("market_check_updates");
 
 // ============ 模型配置 ============
 export const modelConfigLoad = () => invokeTyped<ModelConfig>("model_config_load");

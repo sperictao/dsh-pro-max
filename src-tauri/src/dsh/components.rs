@@ -30,6 +30,41 @@ pub(crate) fn plugin_file_spec(path: &Path) -> String {
     format!("file:{}", normalized)
 }
 
+/// 计算 tarball 的 sha256 十六进制摘要（构建链产出的 .sha256 同款格式）
+pub(crate) fn sha256_hex(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let bytes = fs::read(path).map_err(|e| {
+        let msg = format!("{}: {e}", path.display());
+        log::error!("[dsh 插件] 读取 tarball 失败: {msg}");
+        msg
+    })?;
+    Ok(format!("{:x}", Sha256::digest(&bytes)))
+}
+
+/// 装机后完整性复核：构建链（CI）为每个 tgz 产出同目录 `<file>.sha256`
+/// 十六进制摘要并随 bundle resources 一起打包；校验文件缺失或摘要不符都按
+/// 损坏处理。构建端的 pin+干净树闸门只保护构建机，这里的复核把"可验证"
+/// 延伸到用户机器；fail closed，不设绕过出口（破坏性默认）
+pub(crate) fn verify_bundled_tarball(path: &Path, filename: &str) -> Result<(), String> {
+    let checksum_file = path.with_file_name(format!("{filename}.sha256"));
+    let expected = fs::read_to_string(&checksum_file).map_err(|_| {
+        log::error!("[dsh 插件] 内置插件校验和文件缺失: {}", checksum_file.display());
+        trf(
+            "Bundled dsh plugin checksum is missing: {plugin}; rebuild the app resources with pnpm run build:dsh-plugins",
+            &[("plugin", filename.to_string())],
+        )
+    })?;
+    let actual = sha256_hex(path)?;
+    if actual != expected.trim() {
+        log::error!("[dsh 插件] 内置插件校验和不符: {filename} 期望 {} 实得 {actual}", expected.trim());
+        return Err(trf(
+            "Bundled dsh plugin failed checksum verification: {plugin}",
+            &[("plugin", filename.to_string())],
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn bundled_plugin_tarball(app: &tauri::AppHandle, filename: &str) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     if let Ok(resources) = app.path().resource_dir() {
@@ -43,7 +78,7 @@ pub(crate) fn bundled_plugin_tarball(app: &tauri::AppHandle, filename: &str) -> 
             .join("dsh-plugins")
             .join(filename),
     );
-    candidates
+    let path = candidates
         .into_iter()
         .find(|path| path.is_file())
         .ok_or_else(|| {
@@ -52,7 +87,9 @@ pub(crate) fn bundled_plugin_tarball(app: &tauri::AppHandle, filename: &str) -> 
                 "Bundled dsh plugin is missing: {plugin}",
                 &[("plugin", filename.to_string())],
             )
-        })
+        })?;
+    verify_bundled_tarball(&path, filename)?;
+    Ok(path)
 }
 
 pub(crate) fn bundled_plugin_specs(app: &tauri::AppHandle) -> Result<DshPluginSpecs, String> {

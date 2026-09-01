@@ -467,6 +467,42 @@
     }
 
     #[test]
+    fn installed_version_from_spec_parses_concrete_npm_forms_only() {
+        use super::market::installed_version_from_spec;
+        // npm 精确形态（含 npm: 前缀与 scope 包）可检出
+        assert_eq!(installed_version_from_spec("dsh-better-sidebar@1.2.3").as_deref(), Some("1.2.3"));
+        assert_eq!(installed_version_from_spec("npm:dsh-better-sidebar@1.0.0").as_deref(), Some("1.0.0"));
+        assert_eq!(installed_version_from_spec("@scope/pkg@2.3.4").as_deref(), Some("2.3.4"));
+        assert_eq!(installed_version_from_spec("npm:@scope/pkg@1.0.0").as_deref(), Some("1.0.0"));
+        // 裸版本值（pnpm 精确保存形态）
+        assert_eq!(installed_version_from_spec("1.2.3").as_deref(), Some("1.2.3"));
+        assert_eq!(installed_version_from_spec("0.1.0-rc.6").as_deref(), Some("0.1.0-rc.6"));
+        // 范围 / 协议 / 脏形态不可检（来源不是 registry 或无具体版本可比）
+        assert_eq!(installed_version_from_spec("^1.2.3"), None);
+        assert_eq!(installed_version_from_spec("~1.2.0"), None);
+        assert_eq!(installed_version_from_spec("*"), None);
+        assert_eq!(installed_version_from_spec("latest"), None);
+        assert_eq!(installed_version_from_spec("github:owner/repo#main"), None);
+        assert_eq!(installed_version_from_spec("file:/x/y.tgz"), None);
+        assert_eq!(installed_version_from_spec("workspace:*"), None);
+        assert_eq!(installed_version_from_spec(""), None);
+        assert_eq!(installed_version_from_spec("pkg@"), None);
+        // scope 段不完整：@ 后无 '/'，无法定位版本段
+        assert_eq!(installed_version_from_spec("@bad"), None);
+    }
+
+    #[test]
+    fn latest_from_registry_json_reads_semver_version_field() {
+        use super::market::latest_from_registry_json;
+        assert_eq!(latest_from_registry_json(r#"{"name":"x","version":"1.2.3"}"#).as_deref(), Some("1.2.3"));
+        assert_eq!(latest_from_registry_json(r#"{"name":"x","version":"0.1.0-rc.6"}"#).as_deref(), Some("0.1.0-rc.6"));
+        // version 缺失 / 非语义版本 / 非 JSON → 不采信
+        assert_eq!(latest_from_registry_json(r#"{"name":"x"}"#), None);
+        assert_eq!(latest_from_registry_json(r#"{"version":"latest"}"#), None);
+        assert_eq!(latest_from_registry_json("not json"), None);
+    }
+
+    #[test]
     fn desktop_entry_quotes_script_path() {
         // XDG autostart 的 Exec 由桌面环境按 GLib 规则解析：单引号引路径
         assert_eq!(
@@ -864,85 +900,78 @@
     use super::market::plugin_from_json;
 
     #[test]
-    fn market_plugin_projection_reads_candidate_and_validation() {
+    fn market_plugin_projection_reads_curated_entry() {
         let item: serde_json::Value = serde_json::from_str(
             r#"{
-                "repositoryId": 1326893710,
-                "fullName": "omdsh-dev/DSH-better-sidebar",
-                "name": "DSH-better-sidebar",
-                "description": "侧边栏底座",
-                "url": "https://github.com/omdsh-dev/DSH-better-sidebar",
-                "stars": 3120,
-                "category": "ui",
-                "language": "TypeScript",
-                "starTrend": { "points": [1, 2, 3] },
-                "validation": { "overall": "verified" },
-                "install": {
-                    "candidate": {
-                        "action": "add",
-                        "specifier": "npm:dsh-better-sidebar@latest",
-                        "command": "dsh plugin --profile web add dsh-better-sidebar@latest",
-                        "executable": true
-                    }
-                }
+                "name": "dsh-memory",
+                "owner": "FuRongJun-1999",
+                "url": "https://github.com/FuRongJun-1999/dsh-memory",
+                "page": "https://awesome-dsh-plugin.com/p/FuRongJun-1999/dsh-memory/",
+                "category": "memory",
+                "description": { "en": "White-box memory graph", "zh": "白箱记忆图" },
+                "npm": "@furongjun1999/dsh-memory",
+                "tarball": "https://example.com/x.tgz",
+                "stars": 80,
+                "downloads": 3552,
+                "install": "dsh plugin --profile web add @furongjun1999/dsh-memory",
+                "added": "2026-08-14",
+                "screenshots": ["https://example.com/1.png"]
             }"#,
         )
         .unwrap();
         let p = plugin_from_json(&item).expect("project");
-        assert_eq!(p.full_name, "omdsh-dev/DSH-better-sidebar");
-        assert!(p.verified);
-        assert_eq!(p.install_specifier.as_deref(), Some("dsh-better-sidebar@latest"));
-        assert!(p.install_executable);
-        assert_eq!(p.stars, 3120);
+        assert_eq!(p.full_name, "FuRongJun-1999/dsh-memory");
+        assert_eq!(p.install_specifier.as_deref(), Some("@furongjun1999/dsh-memory"));
+        assert_eq!(p.stars, Some(80));
+        assert_eq!(p.category.as_deref(), Some("memory"));
+        assert!(!p.deprecated);
+        assert_eq!(p.replacement, None);
+        // 多语言描述原样透传
+        assert_eq!(p.description.as_ref().unwrap().get("zh").map(String::as_str), Some("白箱记忆图"));
     }
 
     #[test]
-    fn market_install_specifier_strips_npm_prefix() {
-        // pnpm 12+ 把裸 `npm:` 前缀走 package-manager add 分支致 404；
-        // 投影层规范化为 registry 裸名（与目录自身 command 文本一致），全版本等价
+    fn market_install_specifier_parses_install_command_token() {
+        // 目录 install 是给人看的完整命令串，投影只取 ` add ` 之后的机器标识
         for (raw, expect) in [
-            ("npm:dsh-context", "dsh-context"),
-            ("npm:dsh-context@0.38.5", "dsh-context@0.38.5"),
-            ("npm:@scope/pkg@1.0", "@scope/pkg@1.0"),
-            // 非 npm 协议与裸名原样保留
-            ("github:owner/repo#main", "github:owner/repo#main"),
-            ("dsh-context", "dsh-context"),
+            ("dsh plugin --profile web add @scope/pkg", "@scope/pkg"),
+            ("dsh plugin --profile web add dsh-context", "dsh-context"),
+            ("dsh plugin --profile web add github:owner/repo", "github:owner/repo"),
+            ("dsh plugin --profile web add github:owner/repo#main", "github:owner/repo#main"),
         ] {
-            let item: serde_json::Value = serde_json::from_str(
-                &format!(
-                    r#"{{ "fullName": "a/b", "install": {{ "candidate": {{ "action": "add", "specifier": "{raw}" }} }} }}"#
-                ),
-            )
-            .unwrap();
+            let item = serde_json::json!({ "name": "x", "install": raw });
             let p = plugin_from_json(&item).expect("project");
             assert_eq!(p.install_specifier.as_deref(), Some(expect), "raw: {raw}");
+        }
+        // 无 add 段 / 畸形 token（过不了字符白名单）→ 无一键安装候选
+        for raw in ["dsh plugin --profile web remove x", "npm install dsh-x", "", "$(cmd)"] {
+            let item = serde_json::json!({ "name": "x", "install": raw });
+            let p = plugin_from_json(&item).expect("project");
+            assert_eq!(p.install_specifier, None, "raw: {raw}");
         }
     }
 
     #[test]
-    fn market_plugin_without_verified_or_candidate_is_not_installable() {
-        // 验证状态只认 overall == "verified"
-        let unverified: serde_json::Value = serde_json::from_str(
-            r#"{ "fullName": "a/b", "validation": { "overall": "sandbox-failed" } }"#,
-        )
+    fn market_plugin_fields_fall_through_and_missing_name_drops_entry() {
+        // 缺 name 的条目整条丢弃
+        assert!(plugin_from_json(&serde_json::json!({ "owner": "a" })).is_none());
+        // owner 缺失时从 github url 派生
+        let p = plugin_from_json(&serde_json::json!({
+            "name": "x", "url": "https://github.com/owner/x",
+            "install": "dsh plugin --profile web add github:owner/x"
+        }))
         .unwrap();
-        let p = plugin_from_json(&unverified).unwrap();
-        assert!(!p.verified);
-        // 无 install.candidate → 不可一键安装
-        let nocand: serde_json::Value =
-            serde_json::from_str(r#"{ "fullName": "a/b", "install": { "status": "ambiguous" } }"#).unwrap();
-        let p = plugin_from_json(&nocand).unwrap();
-        assert_eq!(p.install_specifier, None);
-        assert!(!p.install_executable);
-        // 非 add 动作不产生安装标识
-        let other: serde_json::Value = serde_json::from_str(
-            r#"{ "fullName": "a/b", "install": { "candidate": { "action": "manual", "specifier": "x" } } }"#,
-        )
-        .unwrap();
-        let p = plugin_from_json(&other).unwrap();
-        assert_eq!(p.install_specifier, None);
-        // 缺 fullName 的条目被丢弃
-        assert!(plugin_from_json(&serde_json::json!({ "name": "orphan" })).is_none());
+        assert_eq!(p.full_name, "owner/x");
+        // stars null 是正常形态（新收录或仓库 404），不静默当 0
+        let p = plugin_from_json(&serde_json::json!({ "name": "x", "stars": null })).unwrap();
+        assert_eq!(p.stars, None);
+        // 弃用标记与替代建议原样透传；replacement 缺席不碍事
+        let p = plugin_from_json(&serde_json::json!({ "name": "x", "deprecated": true, "replacement": "y" })).unwrap();
+        assert!(p.deprecated);
+        assert_eq!(p.replacement.as_deref(), Some("y"));
+        let p = plugin_from_json(&serde_json::json!({ "name": "x", "deprecated": true })).unwrap();
+        assert!(p.deprecated);
+        assert_eq!(p.replacement, None);
     }
 
     use super::market::valid_identifier;
@@ -987,10 +1016,326 @@
     }
 
     #[test]
-    #[ignore] // 依赖外网真实 API（27MB），仅手动验证链路时跑：cargo test market_fetch_real -- --ignored
+    #[ignore] // 依赖外网真实目录（~300KB），仅手动验证链路时跑：cargo test market_fetch_real -- --ignored
     fn market_fetch_real_catalog_smoke() {
-        let catalog = super::market::fetch_catalog().expect("fetch real catalog");
+        let catalog = super::market::fetch_catalog_raw(super::market::MARKET_CATALOG_URL)
+            .map_err(|e| match e {
+                CatalogLoadError::UnsupportedSchema(msg) | CatalogLoadError::Transient(msg) => msg,
+            })
+            .expect("fetch real catalog");
         assert!(catalog.plugins.len() > 1000, "unexpectedly small catalog: {}", catalog.plugins.len());
-        assert!(catalog.plugins.iter().any(|p| p.install_specifier.is_some() && p.install_executable));
-        assert!(catalog.plugins.iter().any(|p| p.verified));
+        assert!(catalog.plugins.iter().any(|p| p.install_specifier.is_some()));
+        // 弃用标记是目录透传字段（正常条目缺席），是否出现取决于上游内容，
+        // 不在此断言；其投影行为由 fixture 单测覆盖
+        assert!(catalog.plugins.iter().any(|p| p.description.as_ref().is_some_and(|d| !d.is_empty())));
+        assert!(!catalog.categories.is_empty());
+        assert!(catalog.updated.is_some());
+    }
+
+    // ============ 企业级演进：快照 / 策略 / 回执 / 审计 / 校验和 ============
+
+    use super::components::verify_bundled_tarball;
+    use super::market::{
+        audit_line, blocked_build_packages, catalog_from_raw, catalog_snapshot_decision, install_failure_message,
+        install_receipt, merge_allow_builds, package_name_from_specifier, policy_allows, policy_entries_from_raw,
+        resolve_catalog_url, load_catalog_snapshot_file, write_catalog_snapshot_file, CatalogLoadError, InstallOutcome,
+        InstalledPlugin,
+    };
+
+    #[test]
+    fn blocked_build_packages_parses_pnpm_stderr() {
+        // pnpm 11/12 树形错误（单包）
+        let e12 = "Error: ERR_PNPM_IGNORED_BUILDS\n  \u{d7} adding a new package\n  \u{2570}\u{2500}\u{25b6} Ignored build scripts: node-pty@1.1.0\n  help: Run \"pnpm approve-builds\"";
+        assert_eq!(blocked_build_packages(e12), vec!["node-pty"]);
+        // 多包逗号分隔
+        let multi = "\u{2570}\u{2500}\u{25b6} Ignored build scripts: node-pty@1.1.0, simple-git-hooks@2.14.0";
+        assert_eq!(blocked_build_packages(multi), vec!["node-pty", "simple-git-hooks"]);
+        // pnpm 10 括号错误形态；scope 包剥版本不伤 scope 前缀；裸名无版本
+        let e10 = "[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: @scope/pkg@1.0.0";
+        assert_eq!(blocked_build_packages(e10), vec!["@scope/pkg"]);
+        assert_eq!(blocked_build_packages("Ignored build scripts: dsh-x"), vec!["dsh-x"]);
+        assert_eq!(blocked_build_packages("Ignored build scripts: @scope/pkg"), vec!["@scope/pkg"]);
+        // 无关失败不误判；脏数据（含空格）被白名单过滤
+        assert!(blocked_build_packages("boom").is_empty());
+        assert!(blocked_build_packages("Ignored build scripts: bad name@1.0").is_empty());
+    }
+
+    #[test]
+    fn merge_allow_builds_creates_merges_and_is_idempotent() {
+        let dir = std::env::temp_dir().join(format!("dsh-pro-max-allow-builds-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pnpm-workspace.yaml");
+        // 新建：双键同写（allowBuilds 给 pnpm 11+，onlyBuiltDependencies 给 pnpm 10）
+        merge_allow_builds(&path, &["node-pty".to_string()]).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("allowBuilds") && raw.contains("node-pty: true"), "raw: {raw}");
+        assert!(raw.contains("onlyBuiltDependencies"), "raw: {raw}");
+        // 合并：保留用户已有键与显式拒绝（false），只插入缺失项
+        std::fs::write(
+            &path,
+            "packages:\n  - .\nallowBuilds:\n  esbuild: false\nonlyBuiltDependencies:\n  - esbuild\n",
+        )
+        .unwrap();
+        merge_allow_builds(&path, &["node-pty".to_string(), "esbuild".to_string()]).unwrap();
+        let v: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["allowBuilds"]["esbuild"], serde_yaml::Value::Bool(false));
+        assert_eq!(v["allowBuilds"]["node-pty"], serde_yaml::Value::Bool(true));
+        let only: Vec<&str> = v["onlyBuiltDependencies"].as_sequence().unwrap().iter().filter_map(|x| x.as_str()).collect();
+        assert_eq!(only, vec!["esbuild", "node-pty"]);
+        // 幂等：重复放行同包，文件不再变化
+        let before = std::fs::read_to_string(&path).unwrap();
+        merge_allow_builds(&path, &["node-pty".to_string()]).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn install_outcome_serializes_tagged() {
+        let out = InstallOutcome::NeedsApproval {
+            packages: vec!["node-pty".to_string()],
+            workspace_yaml: "/p/pnpm-workspace.yaml".to_string(),
+        };
+        let v: serde_json::Value = serde_json::to_value(&out).unwrap();
+        assert_eq!(v["status"], "needsApproval");
+        assert_eq!(v["packages"][0], "node-pty");
+        assert_eq!(v["workspaceYaml"], "/p/pnpm-workspace.yaml");
+        let v: serde_json::Value =
+            serde_json::to_value(&InstallOutcome::Installed { receipt: None }).unwrap();
+        assert_eq!(v["status"], "installed");
+        assert!(v["receipt"].is_null());
+    }
+
+    fn catalog_fixture() -> &'static str {
+        r#"{
+            "name": "awesome-dsh-plugin",
+            "updated": "2026-08-31",
+            "count": 2,
+            "categories": { "ui": { "en": "UI Enhancements", "zh": "UI 增强" } },
+            "plugins": [
+                { "name": "pkg", "owner": "a", "url": "https://github.com/a/pkg", "category": "ui",
+                  "description": { "en": "E", "zh": "中" }, "stars": 12, "downloads": 30,
+                  "install": "dsh plugin --profile web add pkg@1.0", "added": "2026-08-14" },
+                { "name": "old", "owner": "c", "url": "https://github.com/c/old", "category": "ui",
+                  "description": { "en": "Old" }, "stars": null, "deprecated": true, "replacement": "pkg",
+                  "install": "dsh plugin --profile web add github:c/old" }
+            ]
+        }"#
+    }
+
+    /// 按真实写入路径落盘投影快照（fetch 成功后 write_catalog_snapshot 的文件形态）
+    fn write_projected_snapshot(path: &std::path::Path) {
+        let catalog = catalog_from_raw(catalog_fixture(), false).expect("parse");
+        write_catalog_snapshot_file(path, &catalog).expect("write snapshot");
+    }
+
+    #[test]
+    fn catalog_from_raw_validates_structure_and_flags_snapshot() {
+        set_current("en");
+        let ok = catalog_from_raw(catalog_fixture(), false).expect("parse");
+        assert!(!ok.from_snapshot);
+        assert_eq!(ok.total, 2);
+        assert_eq!(ok.updated.as_deref(), Some("2026-08-31"));
+        assert_eq!(ok.categories["ui"]["zh"], "UI 增强");
+        let npm = ok.plugins.iter().find(|p| p.name == "pkg").unwrap();
+        assert_eq!(npm.install_specifier.as_deref(), Some("pkg@1.0"));
+        assert_eq!(npm.stars, Some(12));
+        let git = ok.plugins.iter().find(|p| p.name == "old").unwrap();
+        assert_eq!(git.install_specifier.as_deref(), Some("github:c/old"));
+        assert_eq!(git.stars, None);
+        assert!(git.deprecated);
+        assert_eq!(git.replacement.as_deref(), Some("pkg"));
+
+        // 结构不符 = 结构性拒绝（不许拿旧快照掩盖格式漂移）：
+        // 旧契约载荷（schemaVersion/repositories）与新目录缺 plugins 数组同样拒绝
+        for raw in [r#"{"schemaVersion": 2}"#, r#"{"schemaVersion": 1, "repositories": []}"#, r#"{"plugins": []}"#] {
+            let err = catalog_from_raw(raw, false).expect_err("should reject");
+            assert!(matches!(err, CatalogLoadError::UnsupportedSchema(_)), "unexpected error for {raw}");
+        }
+        // 快照标记原样透传
+        assert!(catalog_from_raw(catalog_fixture(), true).expect("parse").from_snapshot);
+    }
+
+    #[test]
+    fn catalog_snapshot_file_round_trips_projected_catalog() {
+        set_current("en");
+        let dir = std::env::temp_dir().join(format!("dsh-pro-max-snap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("snapshot.json");
+        write_projected_snapshot(&path);
+        let catalog = load_catalog_snapshot_file(&path).expect("load");
+        assert!(catalog.from_snapshot);
+        assert_eq!(catalog.total, 2);
+        assert_eq!(catalog.updated.as_deref(), Some("2026-08-31"));
+        // 损坏快照如实失败（降级路径要求可区分"没有快照"与"快照坏了"）
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(load_catalog_snapshot_file(&path).is_err());
+        // 旧契约快照（根带 schemaVersion/repositories，条目缺投影字段）与投影
+        // 格式不兼容：反序列化失败即按无快照处理，下次成功拉取自动重建
+        std::fs::write(&path, catalog_fixture()).unwrap();
+        assert!(load_catalog_snapshot_file(&path).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn package_name_from_specifier_mirrors_frontend_semantics() {
+        assert_eq!(package_name_from_specifier("pkg@1.0.0").as_deref(), Some("pkg"));
+        assert_eq!(package_name_from_specifier("@scope/pkg@1.0").as_deref(), Some("@scope/pkg"));
+        assert_eq!(package_name_from_specifier("@scope/pkg").as_deref(), Some("@scope/pkg"));
+        assert_eq!(package_name_from_specifier("plain-name").as_deref(), Some("plain-name"));
+        // 协议形态（npm: 别名 / github: / file:）安装后的 dependencies 键不可预知
+        assert_eq!(package_name_from_specifier("npm:pkg@latest"), None);
+        assert_eq!(package_name_from_specifier("github:owner/repo#c0ffee"), None);
+        assert_eq!(package_name_from_specifier("file:/x/y.tgz"), None);
+    }
+
+    #[test]
+    fn snapshot_falls_back_to_network_error_when_snapshot_also_fails() {
+        set_current("en");
+        let dir = std::env::temp_dir().join(format!("dsh-pro-max-snapfail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("snapshot.json");
+        let net_err = || "Failed to fetch plugin catalog: HTTP 502".to_string();
+        // 快照不存在 → 原始网络错误（它比"没有快照"更有行动价值）
+        assert_eq!(catalog_snapshot_decision(&path, net_err()).err().as_deref(), Some(net_err().as_str()));
+        // 快照 JSON 损坏 → 同上
+        std::fs::write(&path, "{not json").unwrap();
+        assert_eq!(catalog_snapshot_decision(&path, net_err()).err().as_deref(), Some(net_err().as_str()));
+        // 旧契约快照不认识 → 同上（坏快照不掩盖在线数据的问题）
+        std::fs::write(&path, catalog_fixture()).unwrap();
+        assert_eq!(catalog_snapshot_decision(&path, net_err()).err().as_deref(), Some(net_err().as_str()));
+        // 好快照（投影格式）→ 降级成功（from_snapshot 标记 + updated 供横幅标注）
+        write_projected_snapshot(&path);
+        let catalog = catalog_snapshot_decision(&path, net_err()).expect("snapshot");
+        assert!(catalog.from_snapshot);
+        assert_eq!(catalog.updated.as_deref(), Some("2026-08-31"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn policy_allows_covers_exact_prefix_name_and_protocol_entries() {
+        let entries = vec![
+            "dsh-better-sidebar".to_string(),
+            "@scope/".to_string(),
+            "github:owner/repo".to_string(),
+        ];
+        // 规则 3：npm 包名（去版本）
+        assert!(policy_allows(&entries, "dsh-better-sidebar@latest"));
+        assert!(policy_allows(&entries, "dsh-better-sidebar"));
+        // 规则 2：scope 前缀
+        assert!(policy_allows(&entries, "@scope/pkg@2.0"));
+        // 规则 4：协议条目放行其任意 ref
+        assert!(policy_allows(&entries, "github:owner/repo#c0ffee"));
+        assert!(policy_allows(&entries, "github:owner/repo"));
+        // 名单之外一律拒绝
+        assert!(!policy_allows(&entries, "other-pkg@1.0"));
+        assert!(!policy_allows(&entries, "@other/pkg@1.0"));
+        assert!(!policy_allows(&entries, "github:owner/other#main"));
+        // 协议前缀不能越过包名边界（repo-evil 不是 repo）
+        assert!(!policy_allows(&entries, "github:owner/repo-evil#main"));
+        // 空名单 = 白名单生效且全拒（allowed: [] 语义）
+        assert!(!policy_allows(&[], "anything"));
+    }
+
+    #[test]
+    fn policy_entries_parse_contract() {
+        set_current("en");
+        // allowed 键缺席 = 不启用白名单
+        assert_eq!(policy_entries_from_raw("{}").unwrap(), None);
+        // 空数组 = 生效且全拒
+        assert_eq!(policy_entries_from_raw(r#"{"allowed": []}"#).unwrap(), Some(Vec::<String>::new()));
+        assert_eq!(
+            policy_entries_from_raw(r#"{"allowed": ["a", "b/"]}"#).unwrap(),
+            Some(vec!["a".to_string(), "b/".to_string()])
+        );
+        // 文件损坏 = fail closed（治理基线宁可拒绝不可静默放行）
+        assert!(policy_entries_from_raw("{broken").is_err());
+        assert!(policy_entries_from_raw(r#"{"allowed": "a"}"#).is_err());
+    }
+
+    #[test]
+    fn resolve_catalog_url_defaults_and_validates() {
+        set_current("en");
+        assert_eq!(resolve_catalog_url("").unwrap(), "https://awesome-dsh-plugin.com/plugins.json");
+        assert_eq!(resolve_catalog_url("  ").unwrap(), "https://awesome-dsh-plugin.com/plugins.json");
+        assert_eq!(
+            resolve_catalog_url("https://mirror.example.com/cat.json").unwrap(),
+            "https://mirror.example.com/cat.json"
+        );
+        assert!(resolve_catalog_url("http://intra.local/cat.json").is_ok());
+        assert!(resolve_catalog_url("ftp://mirror/cat.json").is_err());
+        assert!(resolve_catalog_url("mirror.example.com/cat.json").is_err());
+    }
+
+    #[test]
+    fn install_failure_message_detects_allowbuilds_block() {
+        set_current("en");
+        // pnpm 构建脚本拦截 → 精确到文件的问题/下一步，不裸抛上游 stderr
+        let msg = install_failure_message("add", "pnpm: Ignored build scripts: dsh-x ... add it under allowBuilds");
+        assert!(msg.contains("allowBuilds"));
+        assert!(msg.contains("pnpm-workspace.yaml"));
+        assert!(msg.contains("Ignored build scripts"));
+        // 普通失败走原模板
+        assert_eq!(install_failure_message("add", "boom"), "Failed to install plugin: boom");
+        assert_eq!(install_failure_message("remove", "boom"), "Failed to remove plugin: boom");
+    }
+
+    #[test]
+    fn install_receipt_prefers_new_key_then_npm_name() {
+        let list = vec![
+            InstalledPlugin { name: "old".into(), spec: "npm:old@1".into(), managed: false },
+            InstalledPlugin { name: "dsh-new".into(), spec: "dsh-new@2.0".into(), managed: false },
+        ];
+        // 首装：before/after 差集唯一（github: 首装只有这条路）
+        let r = install_receipt("github:owner/repo#sha", Some(vec!["old".into()]), &list).unwrap();
+        assert_eq!(r.name, "dsh-new");
+        // 同键重装/升版：无新键，npm 名定位
+        let r = install_receipt("dsh-new@3.0", Some(vec!["old".into(), "dsh-new".into()]), &list).unwrap();
+        assert_eq!(r.spec, "dsh-new@2.0");
+        // github 重装：无法唯一定位 → None，不猜
+        assert!(
+            install_receipt("github:owner/repo#sha", Some(vec!["old".into(), "dsh-new".into()]), &list).is_none()
+        );
+        // before 缺失时回退 npm 名
+        assert!(install_receipt("dsh-new@3.0", None, &list).is_some());
+    }
+
+    #[test]
+    fn audit_line_shape_is_stable_jsonl() {
+        let line = audit_line("add", "pkg@1.0", Some("0.1.2-alpha.2".into()), None);
+        let v: serde_json::Value = serde_json::from_str(&line).expect("jsonl");
+        assert_eq!(v["action"], "add");
+        assert_eq!(v["identifier"], "pkg@1.0");
+        assert_eq!(v["result"], "ok");
+        assert_eq!(v["error"], serde_json::Value::Null);
+        assert_eq!(v["dshVersion"], "0.1.2-alpha.2");
+        assert!(v["launcherVersion"].as_str().unwrap().starts_with("0."));
+        assert!(v["ts"].as_str().unwrap().contains('T'));
+
+        let failed = audit_line("remove", "pkg", None, Some("boom"));
+        let v: serde_json::Value = serde_json::from_str(&failed).expect("jsonl");
+        assert_eq!(v["result"], "failed");
+        assert_eq!(v["error"], "boom");
+        assert_eq!(v["dshVersion"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn bundled_tarball_checksum_verification_is_fail_closed() {
+        set_current("en");
+        let dir = std::env::temp_dir().join(format!("dsh-pro-max-cksum-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tgz = dir.join("plugin-abc123.tgz");
+        std::fs::write(&tgz, b"tarball-bytes").unwrap();
+        // 校验和文件缺失 = 拒绝
+        assert!(verify_bundled_tarball(&tgz, "plugin-abc123.tgz").is_err());
+        // 摘要不符 = 拒绝
+        std::fs::write(dir.join("plugin-abc123.tgz.sha256"), b"deadbeef").unwrap();
+        assert!(verify_bundled_tarball(&tgz, "plugin-abc123.tgz").is_err());
+        // 一致 = 通过（摘要用同款 sha256 产出，验证格式与比较逻辑）
+        let digest = {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(b"tarball-bytes"))
+        };
+        std::fs::write(dir.join("plugin-abc123.tgz.sha256"), format!("{digest}\n")).unwrap();
+        assert!(verify_bundled_tarball(&tgz, "plugin-abc123.tgz").is_ok());
+        std::fs::remove_dir_all(&dir).ok();
     }

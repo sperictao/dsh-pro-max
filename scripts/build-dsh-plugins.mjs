@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
+  readFileSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -119,6 +121,11 @@ function main() {
           fail(`${plugin.source} produced ${tarballs.length} tarballs; expected exactly one`);
         }
         renameSync(join(packDir, tarballs[0]), join(outputDir, plugin.output));
+        // 装机端完整性复核的唯一事实来源：摘要随 bundle.resources 一起打包，
+        // 运行时 bundled_plugin_tarball 复核；手改产物即破（与主题 token 同纪律）
+        const tgzPath = join(outputDir, plugin.output);
+        const sha256 = createHash("sha256").update(readFileSync(tgzPath)).digest("hex");
+        writeFileSync(`${tgzPath}.sha256`, `${sha256}\n`);
       } finally {
         rmSync(packDir, { recursive: true, force: true });
         rmSync(join(sourceDir, "node_modules"), { recursive: true, force: true });

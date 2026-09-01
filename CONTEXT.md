@@ -8,7 +8,7 @@
 
 - **dsh** — DeepSeek Harness CLI（`@deepseek-ai/dsh`，npm 全局安装），本应用 pin 支持版本（见 `src-tauri/src/dsh.rs` 的 `SUPPORTED_DSH_VERSION`），不兼容版本走修复流程重装。
 - **Web Profile** — dsh 的 `--profile web` 运行档，本应用只管理这一档，本地绑定 `127.0.0.1:3899`。
-- **授权插件（Auth Plugins）** — 两个 vendored npm 包（`vendor/dsh-client-connection-authz`、`vendor/dsh-auth-tailscale`），以 pin commit 的 tgz 打进安装包，运行时经 `dsh plugin --profile web add` 装入 web profile；连接鉴权 + Tailscale 身份授权都由它们承担。
+- **授权插件（Auth Plugins）** — 两个 vendored npm 包（`vendor/dsh-client-connection-authz`、`vendor/dsh-auth-tailscale`），以 pin commit 的 tgz 打进安装包，运行时经 `dsh plugin --profile web add` 装入 web profile；连接鉴权 + Tailscale 身份授权都由它们承担。构建脚本为每个 tgz 产出同目录 `.sha256` 摘要并随 bundle resources 打包，装入前逐台复核（缺失或不符都按损坏拒绝）。
 - **访问模式（Access Mode）** — 本地（仅 127.0.0.1）或远程（叠加 Tailscale Serve HTTPS）。持久化在 localStorage `dsh-access-mode`，默认本地。
 - **Capability 域名（Capability Domain）** — 远程授权的应用能力域名（用户自有域名），拼成 `{domain}/cap/dsh-admin`（管理）与 `{domain}/cap/dsh`（使用）经环境变量注入 dsh 进程，并作为 `tailscale serve --accept-app-caps` 的值；空则不注入，远程特权接口恒 403。
 - **允许登录名（Allowed Logins）** — 允许远程访问的 Tailscale 登录名集合；本机当前用户始终自动包含，额外登录名在配置中以逗号分隔。
@@ -42,21 +42,28 @@
 
 ## 插件市场（Marketplace）
 
-功能域：浏览社区插件目录，一键安装/移除 web profile 插件。导航项「Plugins」。
+功能域：浏览社区插件目录，一键安装/移除/更新 web profile 插件。导航项「Plugins」，二级导航「发现 / 已安装」。
 
 ### 术语
 
-- **插件目录（Catalog）** — dsh-plugins-store 的公开 API（`api.dshmk.com`，静态 JSON 快照）在 Rust 侧拉取并投影后的精简列表；`starTrend` 历史点等大字段在解析时丢弃，原文不进 WebView。目录数据跨视图保留，切页不重拉。
-- **已验证（Verified）** — 目录 `validation.overall == "verified"` 的唯一判定依据（沙箱安装检查通过）；不等于安全审计或官方背书。
-- **一键安装（One-click Install）** — 仅当 `install.candidate.action == "add"` 且 `executable` 时可用，执行 `dsh plugin --profile web add <specifier>`（pnpm 转发，pnpm ≥10 默认拦截第三方生命周期脚本）；安装前有内联二次确认。`command`/`args` 文本目录字段只作展示，绝不执行。
+- **插件目录（Catalog）** — awesome-dsh-plugin 的 curated 目录（默认 `https://awesome-dsh-plugin.com/plugins.json`，静态 JSON，双语文案由目录供应）在 Rust 侧拉取并投影后的精简列表；`screenshots`、`tarball`、`downloads` 等浏览与安装用不上的字段在解析时丢弃，原文不进 WebView。目录数据跨视图保留，切页不重拉；市场首开先直读本地快照秒级上屏，网络目录在后台刷新后整体替换。目录没有契约版本字段，按结构校验：`plugins` 投影不出非空列表即拒绝（不猜格式、不拿旧数据掩盖）。
+- **目录源（Catalog Source）** — 目录的拉取地址，默认内置官方源；可经设置页配置为私有镜像（同一 plugins.json 契约，必须显式带 `https://`/`http://`），下次刷新生效。
+- **目录快照（Catalog Snapshot）** — 最近一次成功拉取后落盘 app data dir 的投影目录（与前端消费同一份数据，亚 MB 级；不保存响应原文，旧契约快照按无快照处理、下次成功拉取自动重建）。市场首开直读快照秒显（`fromSnapshot` 如实标注、刷新进行中不出横幅），网络失败时继续展示快照并以横幅标注快照时间；快照自身损坏按无快照处理并回退原始网络错误（它不掩盖在线数据的问题）。
+- **弃用标记（Deprecated）** — 目录侧的 `deprecated` / `replacement` 字段原样透传：弃用条目展示「已弃用」徽章，给出替代建议时一并展示「建议改用 X」。目录不提供验证/审计数据，Launcher 不伪造任何安全徽标。
+- **一键安装（One-click Install）** — 安装标识从条目 `install` 命令串（如 `dsh plugin --profile web add <specifier>`）中解析 ` add ` 之后的 token，执行 `dsh plugin --profile web add <specifier>`（pnpm 转发，pnpm ≥10 默认拦截第三方生命周期脚本；该拦截被识别时错误文案给出精确到 `pnpm-workspace.yaml` allowBuilds 的指引，不改写文件）；解析不出合法 token 的条目只可浏览（Manual install only），安装前有内联二次确认。`install` 命令串是展示文本，绝不整条执行。
+- **安装回执（Install Receipt）** — 安装成功后回读 web profile 落盘事实（dependencies 键 + spec），toast 展示；其持久形态是已装列表里常驻的 name + spec 行（含精确版本，随时可查）；`github:` 重装等无法唯一定位落点的场景如实不回执。
+- **插件安装策略（Plugin Policy）** — `~/.dsh-pro-max/plugin-policy.json` 的白名单（`{"allowed": [...]}`，支持包名、`@scope/` 与 `github:owner/` 前缀、协议条目）。文件缺失或 `allowed` 缺席 = 不启用；`allowed` 存在即生效（空数组 = 全拒）。只约束安装，移除总能做；文件损坏按拒绝处理。
+- **插件审计台账（Plugin Audit Log）** — 市场视图安装/移除操作的 append-only JSONL（`plugin-audit.jsonl`，app log dir，含时间/动作/标识符/结果/两侧版本号，error 记本地化前的原始错误）；受管授权插件由 Launcher 修复/卸载流程管理，不走市场路径、不入台账；尽力而为写入，失败不回滚操作。
 - **受管插件（Managed Plugin）** — Launcher 自装的授权插件（`@dsh-external/*`），在已装列表中标记但不提供移除按钮，由 Launcher 的修复/卸载流程管理。
-- **已装匹配（Installed Match）** — npm 形态 specifier 的包名部分与 web profile `package.json` dependencies 键比对；`github:` 安装的键名无法从目录预知，不参与匹配。
+- **已装匹配（Installed Match）** — npm 形态 specifier 的包名部分与 web profile `package.json` dependencies 键比对；带协议前缀的形态（`github:`、`npm:`、`file:` 等）安装后的键名无法从目录预知，不参与匹配。
+- **更新检测（Update Check）** — 已安装页对 npm 形态安装的非受管插件自动比对 registry latest（进入市场页即查，可手动重跑）：spec 能解析出具体版本（`pkg@1.2.3` / `npm:pkg@1.0.0` / 裸版本；范围 `^ ~` 与协议形态不可检）即逐包查 `registry.npmjs.org/<name>/latest` 语义版本比对，部分包查询失败不放大为整体失败（如实无 latest、不出按钮），全部可检包都失败才报错。更新动作 = 以 `name@latest` 重装，与一键安装同一 dsh 闸门、策略、审计与构建脚本审批路径；批量更新顺序执行（共享同一 profile，pnpm 并发会争锁），中途撞上审批挂起即停，剩余项待放行后重试。
 
 ### 语义边界
 
-- 目录是社区数据：Launcher 不做分类/验证/排名的二次加工，只按目录原样展示与执行。
+- 目录是社区数据：Launcher 不做分类/验证/排名的二次加工，只按目录原样展示与执行。弃用标记与安装是两件事——弃用插件同样可一键安装，徽章与替代建议让这一点可见。分类显示名取自目录原生双语表（en/zh），缺失时回退展示分类 id。
 - 安装与移除是长操作（pnpm 下载依赖），UI 以 busy 态呈现，不做后台任务化。
 - identifier 经字符白名单校验（npm/pnpm 合法字符集，拒绝相对路径与 `..`），挡写歪的目录数据与手改 IPC 的误用；安装本就只在 loopback 的 dsh profile 目录内进行。
+- 快照、回执、审计、策略都是本机机制：无云控制面、无集中上报；审计台账与壳日志是两个文件、两种保留策略（日志轮转即删，台账保留全部）。
 
 ## 模型配置（Model Configuration）
 

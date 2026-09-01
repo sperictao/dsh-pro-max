@@ -16,6 +16,7 @@ import type {
   LauncherConfig,
   MarketCatalog,
   ModelConfig,
+  PluginUpdateInfo,
   UpdateInfo,
   UpdaterConfigHealth,
 } from "./types";
@@ -82,6 +83,7 @@ interface AppStore {
   dshAccessMode: DshAccessMode;
   dshStartBusy: boolean;
   dshStopBusy: boolean;
+  dshRestartBusy: boolean;
   dshRecheckBusy: boolean;
   dshHasRunSetup: boolean;
   // dsh 版本管理（安装/检查状态跨页面保留）
@@ -113,6 +115,13 @@ interface AppStore {
   marketInstalledBusy: boolean;
   marketInstalling: string | null;
   marketRemoving: string | null;
+  // pnpm 拦截构建脚本 → 挂起等用户审批；确认后才经 market_approve_builds 放行重装
+  marketPendingApproval: { specifier: string; label: string; packages: string[]; workspaceYaml: string } | null;
+  // 更新检测结果（name → info）；null = 尚未检测
+  marketUpdates: Record<string, PluginUpdateInfo> | null;
+  marketUpdatesBusy: boolean;
+  // 正在更新插件的 name（单次或批量中的当前项），与安装 busy 分开计
+  marketUpdating: string | null;
   // 模型配置（配置加载状态跨页保留；编辑草稿在视图本地）
   modelConfigBusy: boolean;
 
@@ -130,6 +139,7 @@ interface AppStore {
   setDshAccessMode: (mode: DshAccessMode) => void;
   setDshStartBusy: (busy: boolean) => void;
   setDshStopBusy: (busy: boolean) => void;
+  setDshRestartBusy: (busy: boolean) => void;
   setDshRecheckBusy: (busy: boolean) => void;
   setDshHasRunSetup: (hasRunSetup: boolean) => void;
   setDshLatest: (info: DshLatestInfo | null) => void;
@@ -150,7 +160,12 @@ interface AppStore {
   refreshMarketCatalog: (force?: boolean) => Promise<void>;
   refreshMarketInstalled: () => Promise<void>;
   installMarketPlugin: (specifier: string, label: string) => Promise<void>;
+  approveMarketBuilds: () => Promise<void>;
+  dismissMarketApproval: () => void;
   removeMarketPlugin: (name: string) => Promise<void>;
+  refreshMarketUpdates: () => Promise<void>;
+  updateMarketPlugin: (name: string, opts?: { silent?: boolean }) => Promise<boolean>;
+  updateAllMarketPlugins: () => Promise<void>;
   loadModelConfig: () => Promise<ModelConfig>;
 }
 
@@ -165,6 +180,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   dshAccessMode: readStoredAccessMode(),
   dshStartBusy: false,
   dshStopBusy: false,
+  dshRestartBusy: false,
   dshRecheckBusy: false,
   dshHasRunSetup: false,
   dshLatest: null,
@@ -189,6 +205,10 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   marketInstalledBusy: false,
   marketInstalling: null,
   marketRemoving: null,
+  marketPendingApproval: null,
+  marketUpdates: null,
+  marketUpdatesBusy: false,
+  marketUpdating: null,
   modelConfigBusy: false,
 
   navigate: (view) => set({ activeView: view }),
@@ -231,6 +251,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   },
   setDshStartBusy: (busy) => set({ dshStartBusy: busy }),
   setDshStopBusy: (busy) => set({ dshStopBusy: busy }),
+  setDshRestartBusy: (busy) => set({ dshRestartBusy: busy }),
   setDshRecheckBusy: (busy) => set({ dshRecheckBusy: busy }),
   setDshHasRunSetup: (hasRunSetup) => set({ dshHasRunSetup: hasRunSetup }),
   setDshLatest: (info) => set({ dshLatest: info }),
@@ -343,15 +364,24 @@ export const useAppStore = create<AppStore>()((set, get) => ({
     }
   },
 
-  // 目录拉取：已有缓存不重拉（刷新按钮传 force）
+  // 目录拉取 stale-while-revalidate：本地快照先秒级上屏（不阻塞在 27MB 网络
+  // 下载上），网络目录后台拉取后整体替换。已有内存缓存不重拉（刷新按钮传
+  // force）；网络失败时已有内容则静默（fromSnapshot 横幅已如实标注来源），
+  // 空手或 force 刷新失败才 toast
   refreshMarketCatalog: async (force = false) => {
     if (!force && get().marketCatalog) return;
     if (get().marketCatalogBusy) return;
     set({ marketCatalogBusy: true });
     try {
+      if (!force) {
+        const snap = await cmd.marketSnapshot();
+        if (snap && !get().marketCatalog) set({ marketCatalog: snap });
+      }
       set({ marketCatalog: await cmd.marketFetch() });
     } catch (e) {
-      get().toast(i18n.t("Failed to load plugin catalog: {{error}}", { error: String(e) }), "error");
+      if (force || !get().marketCatalog) {
+        get().toast(i18n.t("Failed to load plugin catalog: {{error}}", { error: String(e) }), "error");
+      }
     } finally {
       set({ marketCatalogBusy: false });
     }
@@ -369,19 +399,76 @@ export const useAppStore = create<AppStore>()((set, get) => ({
     }
   },
 
-  // 安装长操作（pnpm 下载依赖）：busy 挂在 specifier 上，成功后刷新已装列表
+  // 安装长操作（pnpm 下载依赖）：busy 挂在 specifier 上，成功后刷新已装列表；
+  // 回执携带落盘的 name+spec（可复述装了什么），无法定位落点时回退目录名称。
+  // 被 pnpm 拦截构建脚本时清 busy 挂起审批（对话框需要可交互），不当作失败
   installMarketPlugin: async (specifier, label) => {
     if (get().marketInstalling) return;
     set({ marketInstalling: specifier });
     try {
-      await cmd.marketInstall(specifier);
-      get().toast(i18n.t("Plugin installed: {{name}}", { name: label }), "success");
+      const outcome = await cmd.marketInstall(specifier);
+      if (outcome.status === "needsApproval") {
+        set({
+          marketInstalling: null,
+          marketPendingApproval: {
+            specifier,
+            label,
+            packages: outcome.packages,
+            workspaceYaml: outcome.workspaceYaml,
+          },
+        });
+        return;
+      }
+      const receipt = outcome.receipt;
+      get().toast(
+        receipt
+          ? i18n.t("Plugin installed: {{name}} ({{spec}})", { name: receipt.name, spec: receipt.spec })
+          : i18n.t("Plugin installed: {{name}}", { name: label }),
+        "success",
+      );
       await get().refreshMarketInstalled();
     } catch (e) {
       get().toast(i18n.t("Failed to install plugin: {{error}}", { error: String(e) }), "error");
     } finally {
       set({ marketInstalling: null });
     }
+  },
+
+  // 用户在审批对话框确认放行：写 pnpm-workspace.yaml → 自动重跑安装。
+  // 失败保留挂起状态，用户可重试或取消
+  approveMarketBuilds: async () => {
+    const pending = get().marketPendingApproval;
+    if (!pending || get().marketInstalling) return;
+    set({ marketInstalling: pending.specifier });
+    try {
+      const receipt = await cmd.marketApproveBuilds(pending.specifier, pending.packages);
+      get().toast(
+        receipt
+          ? i18n.t("Plugin installed: {{name}} ({{spec}})", { name: receipt.name, spec: receipt.spec })
+          : i18n.t("Plugin installed: {{name}}", { name: pending.label }),
+        "success",
+      );
+      set({ marketPendingApproval: null });
+      await get().refreshMarketInstalled();
+    } catch (e) {
+      get().toast(i18n.t("Failed to install plugin: {{error}}", { error: String(e) }), "error");
+    } finally {
+      set({ marketInstalling: null });
+    }
+  },
+
+  // 用户拒绝放行：只清挂起，不动已落盘的半成品依赖（重装路径可自然收敛）
+  dismissMarketApproval: () => {
+    const pending = get().marketPendingApproval;
+    if (!pending) return;
+    set({ marketPendingApproval: null });
+    get().toast(
+      i18n.t(
+        'Build scripts not approved. Run "pnpm approve-builds" in {{path}} to allow them later.',
+        { path: pending.workspaceYaml },
+      ),
+      "info",
+    );
   },
 
   removeMarketPlugin: async (name) => {
@@ -396,6 +483,91 @@ export const useAppStore = create<AppStore>()((set, get) => ({
     } finally {
       set({ marketRemoving: null });
     }
+  },
+
+  // 更新检测（registry latest 比对）：进入市场页自动跑，已安装页可手动重跑。
+  // 部分包检测失败不放大为整体失败（如实无 latest、不出更新按钮），
+  // 全部可检包都失败才 toast（Rust 侧聚合的网络错误）
+  refreshMarketUpdates: async () => {
+    if (get().marketUpdatesBusy) return;
+    set({ marketUpdatesBusy: true });
+    try {
+      const infos = await cmd.marketCheckUpdates();
+      set({ marketUpdates: Object.fromEntries(infos.map((i) => [i.name, i])) });
+    } catch (e) {
+      get().toast(i18n.t("Failed to check plugin updates: {{error}}", { error: String(e) }), "error");
+    } finally {
+      set({ marketUpdatesBusy: false });
+    }
+  },
+
+  // 更新单个插件 = 以 name@latest 重装：与安装同一 dsh 闸门、审计与审批路径，
+  // 落盘 spec 形态也与市场安装一致。silent 供批量更新跳过逐条成功/失败 toast；
+  // 撞上 pnpm 构建脚本拦截时挂起审批对话框并提示（批量由调用方中止后续）
+  updateMarketPlugin: async (name, opts) => {
+    const silent = opts?.silent ?? false;
+    if (get().marketUpdating) return false;
+    set({ marketUpdating: name });
+    try {
+      const outcome = await cmd.marketInstall(`${name}@latest`);
+      if (outcome.status === "needsApproval") {
+        set({
+          marketUpdating: null,
+          marketPendingApproval: {
+            specifier: `${name}@latest`,
+            label: name,
+            packages: outcome.packages,
+            workspaceYaml: outcome.workspaceYaml,
+          },
+        });
+        get().toast(
+          i18n.t("Update paused: approve build scripts for {{plugin}}, then retry.", { plugin: name }),
+          "info",
+        );
+        return false;
+      }
+      const receipt = outcome.receipt;
+      if (!silent) {
+        get().toast(
+          receipt
+            ? i18n.t("Plugin updated: {{name}} ({{spec}})", { name: receipt.name, spec: receipt.spec })
+            : i18n.t("Plugin updated: {{name}}", { name }),
+          "success",
+        );
+      }
+      await get().refreshMarketInstalled();
+      if (!silent) void get().refreshMarketUpdates();
+      return true;
+    } catch (e) {
+      if (!silent) get().toast(i18n.t("Failed to update plugin: {{error}}", { error: String(e) }), "error");
+      return false;
+    } finally {
+      set({ marketUpdating: null });
+    }
+  },
+
+  // 一键全部更新：顺序执行（共享同一 profile 目录，pnpm 并发安装会争锁）。
+  // 逐个静默更新，结束汇总一条；中途撞上审批挂起则停下，剩余项待放行后重试
+  updateAllMarketPlugins: async () => {
+    const targets = Object.values(get().marketUpdates ?? {})
+      .filter((u) => u.updateAvailable && !u.managed)
+      .map((u) => u.name);
+    if (targets.length === 0 || get().marketUpdating) return;
+    let ok = 0;
+    let failed = 0;
+    for (const name of targets) {
+      const done = await get().updateMarketPlugin(name, { silent: true });
+      if (!done && get().marketPendingApproval) break;
+      if (done) ok += 1;
+      else failed += 1;
+    }
+    if (failed === 0 && ok > 0) {
+      get().toast(i18n.t("Updated {{count}} plugins", { count: ok }), "success");
+    } else if (failed > 0) {
+      get().toast(i18n.t("Updated {{ok}} plugins, {{failed}} failed", { ok, failed }), "error");
+    }
+    await get().refreshMarketInstalled();
+    void get().refreshMarketUpdates();
   },
 
   loadModelConfig: async () => {
