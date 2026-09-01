@@ -243,6 +243,27 @@
     }
 
     #[test]
+    fn local_access_url_parses_the_last_native_token_line() {
+        // 本地访问遵循 dsh 原生方式：多次启动追加日志，取最后一次带 token 的地址
+        let log = concat!(
+            "dsh web: http://127.0.0.1:3899/?token=Old123\n",
+            "dsh web: http://127.0.0.1:3899\n",
+            "Node.js v26.0.0\n",
+            "dsh web: http://127.0.0.1:3899/?token=New456\n",
+        );
+        assert_eq!(
+            super::start::local_access_url_from_log_contents(log).as_deref(),
+            Some("http://127.0.0.1:3899/?token=New456")
+        );
+        // 授权插件在场时 dsh 打印裸地址，无 token 行则不返回
+        assert_eq!(
+            super::start::local_access_url_from_log_contents("dsh web: http://127.0.0.1:3899\n"),
+            None
+        );
+        assert_eq!(super::start::local_access_url_from_log_contents(""), None);
+    }
+
+    #[test]
     fn plugin_add_postcondition_recreates_the_compat_patch() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

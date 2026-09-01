@@ -49,7 +49,11 @@ pub async fn dsh_detect(
     let dsh_running = port_listening(WEB_PORT);
     let serve_configured = ts.as_deref().map(serve_configured).unwrap_or(false);
     let stack_ready = dsh_running && dsh_compatible && plugins_installed;
-    let local_url = stack_ready.then(|| format!("http://127.0.0.1:{WEB_PORT}"));
+    // 本地地址走 dsh 原生 token 访问（与授权插件无关）：web 在跑即可用，
+    // 优先取日志里带 token 的地址，解析不到回退裸地址
+    let local_url = dsh_running.then(|| {
+        super::start::local_access_url().unwrap_or_else(|| format!("http://127.0.0.1:{WEB_PORT}"))
+    });
     let url = if stack_ready && serve_configured {
         url
     } else {

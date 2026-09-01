@@ -133,7 +133,8 @@ pub struct DshStatus {
     pub tailscale_installed: bool,
     pub tailscale_online: bool,
     pub hostname: Option<String>,
-    /// 本机回环地址（dsh web 正在运行且授权栈就绪时可用）
+    /// 本机访问地址（dsh web 运行中即有，与授权插件无关）：优先 dsh 原生
+    /// 带 launch token 的地址（浏览器打开换取持久 cookie），解析不到回退裸地址
     pub local_url: Option<String>,
     pub url: Option<String>,
     /// 当前 Mac 用同一个 tailnet HTTPS 地址访问时的真实路径状态。

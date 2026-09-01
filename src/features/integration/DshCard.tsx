@@ -387,8 +387,8 @@ export function DshCard() {
   };
 
   // 自启开关与远程授权已迁移到设置页 dsh 分区（配置项归设置，集成卡片只管流程操作）
-  // 当前模式的访问地址：本地模式在 dsh web 运行时显示 loopback 地址，
-  // 远程模式在 serve 就绪且有 URL 时显示 tailnet HTTPS 地址
+  // 当前模式的访问地址：本地模式在 dsh web 运行时显示 dsh 原生带 token 的
+  // 本机地址（Open/复制即用），远程模式在 serve 就绪且有 URL 时显示 tailnet HTTPS 地址
   const activeUrl = !busy
     ? isRemote
       ? status?.url ?? null
