@@ -29,8 +29,7 @@ pub(crate) fn local_access_url_from_log_contents(contents: &str) -> Option<Strin
     let prefix = format!("dsh web: http://127.0.0.1:{WEB_PORT}/?token=");
     contents
         .lines()
-        .filter(|line| line.contains(&prefix))
-        .next_back()
+        .rfind(|line| line.contains(&prefix))
         .and_then(|line| {
             let rest = line.split_once(&prefix)?.1;
             let token: String = rest
