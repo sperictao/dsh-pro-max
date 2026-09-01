@@ -917,7 +917,7 @@ dependencies = [
 
 [[package]]
 name = "dsh-pro-max"
-version = "0.5.6"
+version = "0.6.0"
 dependencies = [
  "libc",
  "log",
@@ -925,6 +925,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "sys-locale",
  "tauri",
  "tauri-build",
@@ -937,6 +938,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "time",
  "tokio",
  "windows",
 ]
