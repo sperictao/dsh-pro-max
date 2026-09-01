@@ -54,7 +54,7 @@ export function MarketView() {
   }, []);
 
   return (
-    <main className="flex flex-1 flex-col" id="market-view">
+    <main className="flex min-h-0 flex-1 flex-col" id="market-view">
       <nav className="flex shrink-0 items-center gap-1 border-b border-border px-4 py-1.5">
         {MARKET_TABS.map((item) => (
           <button
