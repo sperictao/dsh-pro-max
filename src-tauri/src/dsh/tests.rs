@@ -264,6 +264,33 @@
     }
 
     #[test]
+    fn local_access_url_scopes_parsing_to_the_current_boot_region() {
+        // 重启场景：旧实例的 token 行留在只追加的日志里，解析必须只看本次
+        // 启动之后追加的区域，否则会把死 token 交给浏览器（401）
+        let prior = "dsh web: http://127.0.0.1:3899/?token=Old123\n";
+        let offset = prior.len();
+        // 本次启动尚未打印 token 行：新区域为空，绝不能返回旧实例的 token
+        assert_eq!(
+            super::start::local_access_url_from_log_contents(super::start::fresh_log_region(prior, offset)),
+            None
+        );
+        // 本次启动打印后：只认新区域里的 token
+        let log = format!(
+            "{prior}dsh web: http://127.0.0.1:3899\nNode.js v26.0.0\ndsh web: http://127.0.0.1:3899/?token=New456\n"
+        );
+        assert_eq!(
+            super::start::local_access_url_from_log_contents(super::start::fresh_log_region(&log, offset)).as_deref(),
+            Some("http://127.0.0.1:3899/?token=New456")
+        );
+        // 锚点越界（日志被清空/轮转）按空区域处理，等待超时后走裸地址回退
+        assert_eq!(super::start::fresh_log_region(prior, 9999), "");
+        // 锚点落在多字节字符中间（日志被替换为不同内容）回退整份日志，不 panic
+        let multibyte = "dsh web: 中文\n";
+        let mid_char = "dsh web: ".len() + 1;
+        assert_eq!(super::start::fresh_log_region(multibyte, mid_char), multibyte);
+    }
+
+    #[test]
     fn plugin_add_postcondition_recreates_the_compat_patch() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

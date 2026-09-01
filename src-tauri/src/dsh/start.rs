@@ -40,20 +40,39 @@ pub(crate) fn local_access_url_from_log_contents(contents: &str) -> Option<Strin
         })
 }
 
-/// 读取 dsh-web.log 解析本机访问地址；日志缺失/无 token 行返回 None
-pub(crate) fn local_access_url() -> Option<String> {
+/// 读取 dsh-web.log 解析本机访问地址；日志缺失/无 token 行返回 None。
+/// offset 为本次启动动作前记录的日志末尾：日志只追加不轮转，旧实例的
+/// token 行会一直留在文件里，重启后 web 换 token，若把旧行当成本次地址
+/// 返回，浏览器拿死 token 访问必然 401——因此只解析 offset 之后追加的区域
+pub(crate) fn local_access_url(offset: usize) -> Option<String> {
     let log = dsh_dir().ok()?.join("dsh-web.log");
     let contents = fs::read_to_string(log).ok()?;
-    local_access_url_from_log_contents(&contents)
+    local_access_url_from_log_contents(fresh_log_region(&contents, offset))
+}
+
+/// 只取 offset 之后追加的日志区域。offset 越界（日志被清空/轮转）按空区域
+/// 处理：等待超时后走裸地址回退，也不该把来历不明的旧行交出去；offset 恰好
+/// 落在多字节字符中间（文件被替换成不同内容）回退整份日志，保证不 panic
+pub(crate) fn fresh_log_region(contents: &str, offset: usize) -> &str {
+    contents.get(offset.min(contents.len())..).unwrap_or(contents)
+}
+
+/// 记录本次启动动作前的日志末尾偏移，供 local_access_url 圈定解析区域
+fn dsh_web_log_len() -> usize {
+    dsh_dir()
+        .ok()
+        .and_then(|dir| fs::read_to_string(dir.join("dsh-web.log")).ok())
+        .map(|contents| contents.len())
+        .unwrap_or(0)
 }
 
 /// 本地访问地址（dsh_start_web 的返回值）：启动后 dsh 已把带 token 的地址
 /// 打进日志，但打印与端口就绪的先后无保证，短重试兜底时序差；解析不到
-/// （如 web 由外部手工启动、日志被清）回退裸地址，由 dsh 自己的 401 页
-/// 面提示重新打开
-fn wait_local_access_url() -> String {
-    for _ in 0..10 {
-        if let Some(url) = local_access_url() {
+/// （如 web 由外部手工启动、其 token 只落在终端，日志新区域里没有 token 行）
+/// 回退裸地址，由 dsh 自己的 401 页面提示重新打开
+fn wait_local_access_url(offset: usize) -> String {
+    for _ in 0..20 {
+        if let Some(url) = local_access_url(offset) {
             return url;
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -137,6 +156,9 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
             return ctx.fail_err(&err, &tr("Stop the process listening on 127.0.0.1:3899"), &remaining_after(2));
         }
         // 已在跑：本地访问不依赖 trusted-host，直接用。若刚才装了新 dsh 则重启生效
+        // 锚点须在重启动作前记录：重启会换 token，只有重启之后打印的
+        // token 行才是活实例的
+        let log_offset = dsh_web_log_len();
         {
             let ctx = StepCtx {
                 app: &app,
@@ -158,7 +180,7 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
             None,
             None,
         );
-        return Ok(wait_local_access_url());
+        return Ok(wait_local_access_url(log_offset));
     }
 
     let start_idx = 2;
@@ -168,6 +190,7 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
         id: steps[start_idx],
     };
     ctx.running(&tr("Starting dsh web on 127.0.0.1:3899…"));
+    let log_offset = dsh_web_log_len();
     let pid = match spawn_dsh_web(LOCAL_ONLY_LOGIN, None, &AuthConfig::default()) {
         Ok(pid) => pid,
         Err((problem, solution)) => {
@@ -189,5 +212,5 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
         id: steps[3],
     };
     ctx.done(&tr("Local access is ready"));
-    Ok(wait_local_access_url())
+    Ok(wait_local_access_url(log_offset))
 }

@@ -50,9 +50,10 @@ pub async fn dsh_detect(
     let serve_configured = ts.as_deref().map(serve_configured).unwrap_or(false);
     let stack_ready = dsh_running && dsh_compatible && plugins_installed;
     // 本地地址走 dsh 原生 token 访问（与授权插件无关）：web 在跑即可用，
-    // 优先取日志里带 token 的地址，解析不到回退裸地址
+    // 优先取日志里带 token 的地址，解析不到回退裸地址。检测没有"本次启动"
+    // 锚点（offset 0 = 整份日志），陈旧 token 由一键启动流程负责规避
     let local_url = dsh_running.then(|| {
-        super::start::local_access_url().unwrap_or_else(|| format!("http://127.0.0.1:{WEB_PORT}"))
+        super::start::local_access_url(0).unwrap_or_else(|| format!("http://127.0.0.1:{WEB_PORT}"))
     });
     let url = if stack_ready && serve_configured {
         url
