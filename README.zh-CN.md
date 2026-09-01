@@ -5,6 +5,7 @@
 **DeepSeek Harness 桌面启动器——一键本地 Web UI 与 Tailscale 安全远程访问。**
 
 [![GitHub Release](https://img.shields.io/github/v/release/sperictao/dsh-pro-max)](https://github.com/sperictao/dsh-pro-max/releases)
+[![Quality](https://github.com/sperictao/dsh-pro-max/actions/workflows/quality.yml/badge.svg)](https://github.com/sperictao/dsh-pro-max/actions/workflows/quality.yml)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2.x-FFC131?logo=tauri&logoColor=white)](https://tauri.app)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org)
@@ -27,6 +28,14 @@
 - 🌍 **多语言**——英文与简体中文界面，默认跟随系统
 - 🔄 **自更新**——内置 Tauri Updater：检查、下载、重启，完成
 - ⌨️ **键盘**——`Cmd/Ctrl + ,` 打开设置
+
+## 📸 截图
+
+| 一键 Tailscale 远程访问 | 插件市场 |
+| --- | --- |
+| ![一键 Tailscale 远程访问，8 步进度时间线全部就绪](assets/screenshots/home-remote-access.png) | ![插件市场浏览 dshmk.com 社区目录](assets/screenshots/plugin-marketplace.png) |
+| **模型配置** | **主题与外观** |
+| ![默认模型与 LLM 提供商路由](assets/screenshots/model-config.png) | ![42 个主题族，亮 / 暗 / 跟随系统模式](assets/screenshots/theme-appearance.png) |
 
 ## 📦 安装
 

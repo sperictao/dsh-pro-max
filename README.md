@@ -5,6 +5,7 @@
 **A desktop launcher for DeepSeek Harness — one-click local web UI and Tailscale-secured remote access.**
 
 [![GitHub Release](https://img.shields.io/github/v/release/sperictao/dsh-pro-max)](https://github.com/sperictao/dsh-pro-max/releases)
+[![Quality](https://github.com/sperictao/dsh-pro-max/actions/workflows/quality.yml/badge.svg)](https://github.com/sperictao/dsh-pro-max/actions/workflows/quality.yml)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2.x-FFC131?logo=tauri&logoColor=white)](https://tauri.app)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org)
@@ -27,6 +28,14 @@
 - 🌍 **i18n** — English and Simplified Chinese UI, following the system by default
 - 🔄 **Self-Update** — built-in Tauri Updater: check, download, restart, done
 - ⌨️ **Keyboard** — `Cmd/Ctrl + ,` opens Settings
+
+## 📸 Screenshots
+
+| One-click Tailscale remote access | Plugin Marketplace |
+| --- | --- |
+| ![One-click Tailscale remote access with an 8-step setup timeline](assets/screenshots/home-remote-access.png) | ![Plugin marketplace browsing the dshmk.com community catalog](assets/screenshots/plugin-marketplace.png) |
+| **Model Configuration** | **Themes & Appearance** |
+| ![Default model and LLM provider routes](assets/screenshots/model-config.png) | ![42 theme families with light / dark / system modes](assets/screenshots/theme-appearance.png) |
 
 ## 📦 Install
 
