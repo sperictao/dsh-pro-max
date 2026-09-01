@@ -1,6 +1,7 @@
 # dsh 远程授权配置教程
 
 本教程面向操作者，手把手配置 DSH Pro Max 设置页里的 dsh 远程访问授权。
+只要最短路径，先看 [README 的「快速上手：开启远程访问」](../README.zh-CN.md)；
 关于链路原理、身份边界与兼容栈，见 [dsh-remote-access.md](./dsh-remote-access.md)。
 
 ## 1. 三个参数是什么
@@ -34,9 +35,27 @@
 3. **Tailscale 在线且已登录**，MagicDNS / HTTPS Certificates 已启用（远程模式下点
    一键启动时时间轴会自动逐项检查这些前提）。
 4. 能编辑 tailnet 的 **Access controls / Policy**，为远程身份到 dsh 节点放行
-   `tcp:443`（第 6 节给出完整示例）。
+   `tcp:443`（第 7 节给出完整示例）。
 
-## 3. 输入规则
+## 3. dsh 版本兼容与修复
+
+Launcher 当前验证栈为 **dsh 0.1.2-alpha.2**（与内置授权插件一同钉版发布）。兼容判定按
+「支持线」进行，不要求与钉版逐字相等：
+
+- **同线且 ≥ 0.1.2-alpha.2**（如 0.1.2-alpha.3）：兼容，可直接使用。主页会提示
+  "Newer than the verified stack"，表示比已验证组合新；插件出现不兼容症状时，
+  点主页的 **Repair dsh stack** 一键回到验证栈（重装钉版 dsh + 两个授权插件）
+- **低于 0.1.2-alpha.2 或跨线**（如 0.1.1-rc.2、0.1.3-alpha.1）：不兼容，主页出现
+  **Repair dsh stack** 按钮；设置 → dsh Version 的逐版本安装也会被版本闸门拒绝
+- **版本达标但缺授权插件**：不再强制降级 dsh，状态行引导直接点一键启动补装插件
+- **Remove authorization plugins** 按钮供纯本地用户卸载授权插件、摆脱钉版约束；
+  远程授权链路会随之失效（状态停在「插件未安装」），需要远程时再一键启动装回
+
+> 升线（把验证栈 bump 到 0.1.3-alpha.x 等）由 Launcher 仓库显式验证后发布，不做被动
+> 跟随：上游 @next 滚到新 minor 时并不照顾 vendored 授权插件的兼容性，被动跟随会把
+> 用户机器拖进起不来服务的状态。
+
+## 4. 输入规则
 
 ### capability 域名（Admin / Use 两个字段通用）
 
@@ -52,7 +71,7 @@
 - 只允许 ASCII 字母数字及 `@._+-`（Tailscale 登录名字符集）
 - 自动 trim、去重，留空项会被跳过
 
-## 4. 在应用里填写
+## 5. 在应用里填写
 
 1. 打开设置页，进入 **DeepSeek Harness** 分区。
 2. 出现 **Remote authorization** 块后，按你的场景填入字段。
@@ -61,7 +80,7 @@
 > 字段是本地草稿，只有点 Save 才会写入配置。保存后重启应用或切换访问模式，已保存的
 > 配置仍会保留并回填显示。
 
-## 5. 典型场景
+## 6. 典型场景
 
 ### 场景 A：个人远程使用，无需管理
 
@@ -74,7 +93,7 @@
 - 只有当你要用**其它不同的 Tailscale 账号**从别处访问时，才把那个账号填进
   **Extra allowed logins**
 - 两个 capability 域名留空：远程管理接口（settings / credentials）恒 403，最安全
-- 仍需配置第 6 节的 **IP-only grant**，放行远程身份到 dsh 节点的 `tcp:443`；只是不写
+- 仍需配置第 7 节的 **IP-only grant**，放行远程身份到 dsh 节点的 `tcp:443`；只是不写
   `app`
 
 ### 场景 B：个人远程使用，需管理（本人远程也能管理）
@@ -92,7 +111,7 @@ settings / credentials。**需要配置**，完整链条如下：
    - 点 **Save**
    - 修改授权后，先关闭正在运行的 dsh Web，再点 **一键启动**，让新的进程环境与
      `tailscale serve --accept-app-caps` 同时生效
-3. **tailnet grants**（admin console，capability 生效的必须一环，见第 6 节）：
+3. **tailnet grants**（admin console，capability 生效的必须一环，见第 7 节）：
    - `src` 填你本人（账号或你所在的组）
    - `dst` 填 `autogroup:member`（个人场景最省事，不必给节点打 tag）
    - 同一 grant 的 `ip` 放行 `tcp:443`，`app` 给 `<域名>/cap/dsh` 与
@@ -108,7 +127,7 @@ settings / credentials。**需要配置**，完整链条如下：
 
 - 效果：列出的登录名（含本机）可远程访问 dsh Web UI
 - 远程管理接口保持 403
-- 仍需配置第 6 节的 IP-only grant，让这些远程账号能连接 dsh 节点的 `tcp:443`
+- 仍需配置第 7 节的 IP-only grant，让这些远程账号能连接 dsh 节点的 `tcp:443`
 
 ### 场景 D：开放远程普通访问 + 管理
 
@@ -120,11 +139,11 @@ settings / credentials。**需要配置**，完整链条如下：
 ### 场景 E：精细授权（不同人不同权限）
 
 - 两个 capability 域名都填你控制的域名
-- **Extra allowed logins** + **tailnet grants**（见第 6 节）里，普通用户只给
+- **Extra allowed logins** + **tailnet grants**（见第 7 节）里，普通用户只给
   `<域名>/cap/dsh`，管理员再额外给 `<域名>/cap/dsh-admin`
 - 每条普通用户或管理员 grant 都必须同时用 `ip` 放行 `tcp:443`
 
-## 6. 关键一环：tailnet grants（TCP 443 + 可选 capability）
+## 7. 关键一环：tailnet grants（TCP 443 + 可选 capability）
 
 异机请求会先经过 tailnet 网络策略，再到 Serve 与 dsh 授权插件。`app` 只传递
 App Capability，**不会隐式允许 TCP 连接**。因此无论设置页里的 capability 是否留空，
@@ -183,12 +202,12 @@ capability 名必须在三处**同名**：
 - 若只用了 **Use capability**（场景如普通访问需 capability），`app` 里只写
   `"example.com/cap/dsh": [{}]` 即可，不必写 admin；`ip: ["tcp:443"]` 仍需保留。
 
-## 7. 端到端验证
+## 8. 端到端验证
 
 远程模式下点**一键启动**，时间轴应依次通过 8 步：
 
 1. Node.js 与 npm
-2. 锁定版本的 dsh
+2. 支持线内的 dsh（缺装或不兼容时自动装回验证栈 0.1.2-alpha.2，见第 3 节）
 3. 两个授权插件
 4. Tailscale 在线与当前登录身份
 5. MagicDNS / HTTPS Certificates
@@ -210,14 +229,16 @@ tailscale serve status
 
 `tailscale serve status` 的根路由应显示 `proxy http://127.0.0.1:3899`。
 
-## 8. 常见错误与排查
+## 9. 常见错误与排查
 
 | 现象 | 原因 / 解决 |
 | --- | --- |
 | 保存时报"Invalid capability domain" | 域名不含 `.`，或含 `-` / `.` 之外的字符，或以 `-` / `.` 开头结尾。改用 `example.com` 这类合法域名 |
 | 保存时报"Tailscale login name contains unsupported characters" | 登录名含非法字符（如空格、中文）。只允许 ASCII 字母数字及 `@._+-` |
 | Tailscale ping 正常，但异机 HTTPS / RPC / WSS 超时 | tailnet grant 缺少 `"ip": ["tcp:443"]`，或 `src` / `dst` 未匹配实际远程身份与 dsh 节点。App Capability 本身不会放行端口 |
-| 启动时间轴卡在最后一步 / 远程打开提示无权限 | grant 缺少 `tcp:443` 网络授权、capability 只配了设置页没配 `app`，或 capability 名不一致。核对第 6 节 |
+| 启动时间轴卡在最后一步 / 远程打开提示无权限 | grant 缺少 `tcp:443` 网络授权、capability 只配了设置页没配 `app`，或 capability 名不一致。核对第 7 节 |
+| 主页提示 "Newer than the verified stack (…)" | dsh 版本高于验证栈但仍在支持线内（如 0.1.2-alpha.3），可继续使用；插件出现不兼容症状时点 **Repair dsh stack** 回到验证栈 |
+| 状态行显示 "dsh version is not supported by the auth plugins" / 时间轴卡在 Install DeepSeek Harness (dsh) | 装了跨线版本（如 0.1.3-alpha.1）→ 点 **Repair dsh stack**（回装验证栈 + 插件）；版本达标但缺插件 → 直接一键启动补装，无需降级 |
 | serve 报 `unknown flag: --accept-app-caps` | Tailscale 版本过旧，需 1.92+。升级 Tailscale |
 | 已确认 `tcp:443` grant 匹配，但开启代理时打不开 `https://<hostname>.ts.net` | 多被 Shadowrocket / Clash / Surge 或系统代理抢走 tailnet 流量；宿主 Mac 上把 Launcher 显示的精确主机名加入 Shadowrocket“通用 → 跳过代理（skip-proxy）”，其他访问端设备再配置精确 `DOMAIN,<hostname>.<tailnet>.ts.net,DIRECT`（详见 dsh-remote-access.md 的排查节） |
 | 远程管理接口（settings / credentials）始终 403 | Admin capability 未配置或未在 grants 下发。确认 `dsh_admin_cap_domain` 已填、grants 里给了 `<域名>/cap/dsh-admin` |
