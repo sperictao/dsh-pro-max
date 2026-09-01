@@ -34,7 +34,8 @@ pub struct MarketPlugin {
     pub language: Option<String>,
     /// 仅 validation.overall == "verified" 为真（目录约定的唯一判定依据）
     pub verified: bool,
-    /// candidate.action == "add" 时的机器安装标识；None = 无一键安装候选
+    /// candidate.action == "add" 时的机器安装标识；None = 无一键安装候选。
+    /// 已规范化：npm registry spec 剥掉 `npm:` 前缀（pnpm 12+ 不认裸 `npm:`）
     pub install_specifier: Option<String>,
     pub install_executable: bool,
 }
@@ -66,7 +67,12 @@ pub(crate) fn plugin_from_json(v: &serde_json::Value) -> Option<MarketPlugin> {
     let action = candidate.and_then(|c| c.get("action")).and_then(serde_json::Value::as_str);
     let specifier = candidate.and_then(|c| c.get("specifier")).and_then(serde_json::Value::as_str);
     let install_specifier = match (action, specifier) {
-        (Some("add"), Some(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
+        (Some("add"), Some(s)) if !s.trim().is_empty() => {
+            // pnpm 12+ 把裸 `npm:` 前缀当 package-manager spec 解析致 404；
+            // registry 包裸名与目录自身 command 文本一致，全版本 pnpm 等价
+            let s = s.trim().strip_prefix("npm:").unwrap_or_else(|| s.trim());
+            Some(s.to_string())
+        }
         _ => None,
     };
     let name = v
@@ -229,7 +235,7 @@ pub fn market_installed() -> Result<Vec<InstalledPlugin>, String> {
     installed_plugins()
 }
 
-/// 安装一键候选（specifier 如 npm:dsh-better-sidebar@latest 或
+/// 安装一键候选（specifier 如 dsh-better-sidebar@latest 或
 /// github:owner/repo#<sha>）；长操作（pnpm 下载依赖），UI 显示 busy
 #[tauri::command]
 pub fn market_install(specifier: String) -> Result<(), String> {

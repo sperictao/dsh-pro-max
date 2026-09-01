@@ -891,9 +891,32 @@
         let p = plugin_from_json(&item).expect("project");
         assert_eq!(p.full_name, "omdsh-dev/DSH-better-sidebar");
         assert!(p.verified);
-        assert_eq!(p.install_specifier.as_deref(), Some("npm:dsh-better-sidebar@latest"));
+        assert_eq!(p.install_specifier.as_deref(), Some("dsh-better-sidebar@latest"));
         assert!(p.install_executable);
         assert_eq!(p.stars, 3120);
+    }
+
+    #[test]
+    fn market_install_specifier_strips_npm_prefix() {
+        // pnpm 12+ 把裸 `npm:` 前缀走 package-manager add 分支致 404；
+        // 投影层规范化为 registry 裸名（与目录自身 command 文本一致），全版本等价
+        for (raw, expect) in [
+            ("npm:dsh-context", "dsh-context"),
+            ("npm:dsh-context@0.38.5", "dsh-context@0.38.5"),
+            ("npm:@scope/pkg@1.0", "@scope/pkg@1.0"),
+            // 非 npm 协议与裸名原样保留
+            ("github:owner/repo#main", "github:owner/repo#main"),
+            ("dsh-context", "dsh-context"),
+        ] {
+            let item: serde_json::Value = serde_json::from_str(
+                &format!(
+                    r#"{{ "fullName": "a/b", "install": {{ "candidate": {{ "action": "add", "specifier": "{raw}" }} }} }}"#
+                ),
+            )
+            .unwrap();
+            let p = plugin_from_json(&item).expect("project");
+            assert_eq!(p.install_specifier.as_deref(), Some(expect), "raw: {raw}");
+        }
     }
 
     #[test]
