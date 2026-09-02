@@ -100,7 +100,7 @@ pub use models::__tauri_command_name_model_config_save;
 /// 升级时与 vendor 插件 pin、bundle tgz 文件名三处同步 bump（见
 /// scripts/build-dsh-plugins.mjs 与 src-tauri/tauri.conf.json）。
 const DSH_PACKAGE: &str = "@deepseek-ai/dsh";
-const SUPPORTED_DSH_VERSION: &str = "0.1.2-alpha.2";
+const SUPPORTED_DSH_VERSION: &str = "0.1.2-alpha.4";
 const CONNECTION_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-client-connection-authz";
 const AUTH_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-auth-tailscale";
 const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-11929472460d.tgz";

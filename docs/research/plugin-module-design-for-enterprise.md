@@ -40,7 +40,7 @@
 
 - `dsh plugin --profile <name> <args...>` 在上游源码中自述为 "thin pnpm forwarder"：首次使用初始化 profile，然后在 profile 目录 `spawnSync('pnpm', args, { shell: process.platform === 'win32' })` 裸转发参数，退出码 0 时把 `dsh.profile.bundles` 层列表与已安装状态对账；声明了 `dsh.bundle.patch` 的依赖加入层栈（来源：[apps/cli/src/plugin.ts](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/src/plugin.ts)，master 分支）。
 - 同文件明确 pnpm ≥10 的脚本拦截：失败提示写着"git-hosted plugins build on install via their prepare script, which pnpm blocks until allowed — add the exact key pnpm printed above under allowBuilds in <profile>/pnpm-workspace.yaml"。注意 Windows 上 pnpm 经 `.cmd` shim 必须走 `shell: true`（源码注释引 CVE-2024-27980 加固）——因此**链路末端在 Windows 上确实过 shell**，这正是本仓库 `valid_identifier` 字符集排除空格与 shell 元字符的实际意义（`market.rs:191`）。
-- npm registry 元数据（2026-09-01，`npm view @deepseek-ai/dsh`）：`dist-tags: { latest: "0.1.1-rc.2", next: "0.1.1-rc.2", alpha: "0.1.2-alpha.3" }`；本仓库 pin 的是 `0.1.2-alpha.2`（alpha 线，`src-tauri/src/dsh/mod.rs:94`）。
+- npm registry 元数据（2026-09-01，`npm view @deepseek-ai/dsh`）：`dist-tags: { latest: "0.1.1-rc.2", next: "0.1.1-rc.2", alpha: "0.1.2-alpha.3" }`；本仓库现 pin `0.1.2-alpha.4`（alpha 线，`src-tauri/src/dsh/mod.rs:103`）。
 - 插件兼容承诺机制存在于上游生态：本仓库 vendored 插件的 `package.json` 声明 `dsh.bundle.patch`（指向 `cordis.patch.yml`）、`engines` 与 `peerDependencies`（`vendor/dsh-client-connection-authz/package.json`、`vendor/dsh-auth-tailscale/package.json`）。
 
 ### 2.4 内置（受管）插件的打包链
