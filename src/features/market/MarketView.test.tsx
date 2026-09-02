@@ -43,6 +43,19 @@ const installed: InstalledPlugin[] = [
   { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", managed: true },
 ];
 
+// vitest globals: false，jsdom 的 localStorage 不保证就绪：收藏持久化断言用测试桩（DshCard.test 同款）
+const storedValues = new Map<string, string>();
+const testLocalStorage = {
+  getItem: (key: string) => storedValues.get(key) ?? null,
+  removeItem: (key: string) => {
+    storedValues.delete(key);
+  },
+  setItem: (key: string, value: string) => {
+    storedValues.set(key, String(value));
+  },
+  clear: () => storedValues.clear(),
+};
+
 beforeAll(() => {
   // jsdom 无 IntersectionObserver（滚动加载用），测试桩掉
   class IO {
@@ -56,6 +69,8 @@ beforeAll(() => {
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: testLocalStorage });
+  testLocalStorage.clear();
   useAppStore.setState({
     marketCatalog: null,
     marketCatalogBusy: false,
@@ -64,6 +79,7 @@ beforeEach(() => {
     marketInstalling: null,
     marketRemoving: null,
     marketPendingApproval: null,
+    marketFavorites: [],
     toasts: [],
   });
   vi.spyOn(cmd, "marketFetch").mockResolvedValue(catalog);
@@ -91,9 +107,10 @@ describe("MarketView", () => {
     render(createElement(MarketView));
     await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
 
-    // 已装列表收敛到二级导航的 Installed 页，发现页只有目录
+    // 已装列表收敛到二级导航的 Installed 页（受管标记不出现在发现页）；
+    // 已装卡片 meta 行按新设计直接显示落盘 spec
     expect(screen.queryByText("managed by launcher")).not.toBeInTheDocument();
-    expect(screen.queryByText("npm:dsh-better-sidebar@1.0.0")).not.toBeInTheDocument();
+    expect(screen.getByText("npm:dsh-better-sidebar@1.0.0")).toBeInTheDocument();
   });
 
   it("shows the installed list on the Installed tab and switches back", async () => {
@@ -207,6 +224,73 @@ describe("MarketView", () => {
       ),
     );
     expect(checkSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("favorites tab lists starred plugins in favorite order and allows unstarring", async () => {
+    useAppStore.setState({ marketFavorites: ["some/one", "omdsh-dev/DSH-better-sidebar"] });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+
+    await user.click(screen.getByRole("button", { name: "Favorites" }));
+    // 收藏顺序展示（非目录顺序：some/one 在前）；已收藏星标常驻实心。
+    // fullName 已降级：定位卡片用名称节点向上找 article 比较文档顺序
+    const oneCard = (await screen.findByText("one")).closest("article");
+    const sidebarCard = screen.getByText("DSH-better-sidebar").closest("article");
+    expect(
+      oneCard && sidebarCard && oneCard.compareDocumentPosition(sidebarCard) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: `Remove from favorites DSH-better-sidebar` })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: `Remove from favorites one` })).toHaveLength(1);
+
+    // 星标就地取消：卡片消失，localStorage 同步落盘
+    await user.click(screen.getByRole("button", { name: "Remove from favorites DSH-better-sidebar" }));
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem("market-favorites") ?? "[]")).toEqual(["some/one"]),
+    );
+    expect(screen.getByText("one")).toBeInTheDocument();
+    expect(screen.queryByText("DSH-better-sidebar")).not.toBeInTheDocument();
+  });
+
+  it("favoriting on the Discover tab persists to localStorage and shows an empty-state hint when none", async () => {
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    // 目录条目在收藏页交集外（未收藏）→ 空状态提示
+    await user.click(screen.getByRole("button", { name: "Favorites" }));
+    expect(
+      screen.getByText("No favorites yet. Star plugins on the Discover tab to pin them here."),
+    ).toBeInTheDocument();
+
+    // 发现页点亮五角星 → localStorage 记 fullName，收藏页出现该卡片
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await user.click(screen.getByRole("button", { name: "Add to favorites DSH-better-sidebar" }));
+    expect(JSON.parse(localStorage.getItem("market-favorites") ?? "[]")).toEqual([
+      "omdsh-dev/DSH-better-sidebar",
+    ]);
+    await user.click(screen.getByRole("button", { name: "Favorites" }));
+    expect(await screen.findByText("DSH-better-sidebar")).toBeInTheDocument();
+  });
+
+  it("localizes the category label and demotes fullName to owner/spec in card meta", async () => {
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    // 分类用目录本地化名（与筛选下拉同一事实），原始 key 不裸露
+    expect(screen.getAllByText("UI Enhancements").length).toBeGreaterThan(0);
+    expect(screen.queryByText("ui")).not.toBeInTheDocument();
+    // meta 行：未装卡显示 owner（fullName 降级），不常驻整串 owner/repo
+    expect(screen.getByText("some")).toBeInTheDocument();
+    expect(screen.queryByText("some/one")).not.toBeInTheDocument();
+  });
+
+  it("manual-only card offers a README way out instead of a dead end", async () => {
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("one")).toBeInTheDocument());
+
+    // 无 candidate 的插件不再只有一句 Manual install only，还有去 README 的出口
+    expect(screen.getByText("Manual install only")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "README ↗ one" })).toBeInTheDocument();
   });
 
   it("renders catalog entries with install state on the Discover tab", async () => {

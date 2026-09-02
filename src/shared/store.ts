@@ -69,6 +69,19 @@ function storeAccessMode(mode: DshAccessMode): void {
   if (typeof localStorage !== "undefined") localStorage.setItem(ACCESS_MODE_KEY, mode);
 }
 
+// 插件收藏：localStorage 是用户选择的记忆，store 是渲染镜像（与访问模式同理）；
+// 值为目录条目 fullName（目录内唯一）列表，顺序即收藏顺序
+const MARKET_FAVORITES_KEY = "market-favorites";
+
+function readStoredFavorites(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(readStored(MARKET_FAVORITES_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 interface AppStore {
   // 导航
   activeView: View;
@@ -122,6 +135,8 @@ interface AppStore {
   marketUpdatesBusy: boolean;
   // 正在更新插件的 name（单次或批量中的当前项），与安装 busy 分开计
   marketUpdating: string | null;
+  // 收藏的目录条目 fullName（localStorage 事实来源的渲染镜像）
+  marketFavorites: string[];
   // 模型配置（配置加载状态跨页保留；编辑草稿在视图本地）
   modelConfigBusy: boolean;
 
@@ -166,6 +181,7 @@ interface AppStore {
   refreshMarketUpdates: () => Promise<void>;
   updateMarketPlugin: (name: string, opts?: { silent?: boolean }) => Promise<boolean>;
   updateAllMarketPlugins: () => Promise<void>;
+  toggleMarketFavorite: (fullName: string) => void;
   loadModelConfig: () => Promise<ModelConfig>;
 }
 
@@ -209,6 +225,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
   marketUpdates: null,
   marketUpdatesBusy: false,
   marketUpdating: null,
+  marketFavorites: readStoredFavorites(),
   modelConfigBusy: false,
 
   navigate: (view) => set({ activeView: view }),
@@ -568,6 +585,16 @@ export const useAppStore = create<AppStore>()((set, get) => ({
     }
     await get().refreshMarketInstalled();
     void get().refreshMarketUpdates();
+  },
+
+  // 收藏/取消收藏：只认目录条目 fullName；目录下架的条目留在清单里，
+  // 收藏页渲染时与目录取交集（再收藏同类条目自然恢复）
+  toggleMarketFavorite: (fullName) => {
+    const favorites = get().marketFavorites.includes(fullName)
+      ? get().marketFavorites.filter((f) => f !== fullName)
+      : [...get().marketFavorites, fullName];
+    if (typeof localStorage !== "undefined") localStorage.setItem(MARKET_FAVORITES_KEY, JSON.stringify(favorites));
+    set({ marketFavorites: favorites });
   },
 
   loadModelConfig: async () => {

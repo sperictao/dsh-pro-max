@@ -1,11 +1,11 @@
 // 插件市场视图：二级导航拆"发现 / 已安装"两页，发现（目录浏览）为默认页。
 // 安装走 dsh plugin --profile web add（长操作），风险确认内联在卡片上完成。
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
-import { BTN, BTN_DANGER_SM, BTN_PRIMARY, BTN_SM, INPUT, SELECT } from "@/shared/lib/ui";
-import type { InstalledPlugin, MarketPlugin, PluginUpdateInfo } from "@/shared/types";
+import { BTN, BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, INPUT, SELECT } from "@/shared/lib/ui";
+import type { InstalledPlugin, MarketCatalog, MarketPlugin, PluginUpdateInfo } from "@/shared/types";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 
 // 每批渲染条数（2700+ 条目录全量渲染会卡），滚动到底加载下一批
@@ -30,10 +30,11 @@ function catalogLocale(language: string): "en" | "zh" {
   return language.startsWith("zh") ? "zh" : "en";
 }
 
-type MarketTab = "discover" | "installed";
+type MarketTab = "discover" | "favorites" | "installed";
 
 const MARKET_TABS: { id: MarketTab; labelKey: string }[] = [
   { id: "discover", labelKey: "Discover" },
+  { id: "favorites", labelKey: "Favorites" },
   { id: "installed", labelKey: "Installed" },
 ];
 
@@ -66,7 +67,7 @@ export function MarketView() {
           </button>
         ))}
       </nav>
-      {tab === "discover" ? <DiscoverPane /> : <InstalledPane />}
+      {tab === "discover" ? <DiscoverPane /> : tab === "favorites" ? <FavoritesPane /> : <InstalledPane />}
       <BuildApprovalDialog />
     </main>
   );
@@ -79,9 +80,10 @@ function DiscoverPane() {
   const catalog = useAppStore((s) => s.marketCatalog);
   const catalogBusy = useAppStore((s) => s.marketCatalogBusy);
   const installed = useAppStore((s) => s.marketInstalled);
-  const installing = useAppStore((s) => s.marketInstalling);
   const installPlugin = useAppStore((s) => s.installMarketPlugin);
   const refreshCatalog = useAppStore((s) => s.refreshMarketCatalog);
+  const favorites = useAppStore((s) => s.marketFavorites);
+  const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
 
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
@@ -89,7 +91,8 @@ function DiscoverPane() {
   const [visible, setVisible] = useState(PAGE_SIZE);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  const installedNames = useMemo(() => new Set(installed.map((p) => p.name)), [installed]);
+  const installedByName = useMemo(() => new Map(installed.map((p) => [p.name, p])), [installed]);
+  const updates = useAppStore((s) => s.marketUpdates);
 
   const categories = useMemo(() => {
     if (!catalog) return [];
@@ -194,13 +197,17 @@ function DiscoverPane() {
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
         {filtered.slice(0, visible).map((p) => {
           const pkg = packageNameFromSpecifier(p.installSpecifier ?? "");
+          const installedPlugin = pkg !== null ? (installedByName.get(pkg) ?? null) : null;
           return (
-            <PluginCard
+            <MarketCard
               key={p.fullName}
               plugin={p}
+              installed={installedPlugin}
+              info={installedPlugin ? (updates?.[installedPlugin.name] ?? null) : null}
+              catalog={catalog}
               locale={locale}
-              installed={pkg !== null && installedNames.has(pkg)}
-              installing={installing === p.installSpecifier}
+              favorited={favorites.includes(p.fullName)}
+              onToggleFavorite={() => toggleFavorite(p.fullName)}
               onInstall={() => void installPlugin(p.installSpecifier!, p.name)}
             />
           );
@@ -214,6 +221,58 @@ function DiscoverPane() {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/// 收藏页：收藏清单 × 目录条目按收藏顺序取交集，复用发现页同一 PluginCard
+/// （星标可就地取消）。目录未拉到时不谎称"没有收藏"——只渲染交集，如实留白
+function FavoritesPane() {
+  const { t, i18n } = useTranslation();
+  const locale = catalogLocale(i18n.language);
+  const catalog = useAppStore((s) => s.marketCatalog);
+  const catalogBusy = useAppStore((s) => s.marketCatalogBusy);
+  const installed = useAppStore((s) => s.marketInstalled);
+  const installPlugin = useAppStore((s) => s.installMarketPlugin);
+  const favorites = useAppStore((s) => s.marketFavorites);
+  const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
+
+  const installedByName = useMemo(() => new Map(installed.map((p) => [p.name, p])), [installed]);
+  const updates = useAppStore((s) => s.marketUpdates);
+  const byFullName = useMemo(() => new Map((catalog?.plugins ?? []).map((p) => [p.fullName, p])), [catalog]);
+  const plugins = useMemo(() => favorites.flatMap((f) => byFullName.get(f) ?? []), [favorites, byFullName]);
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6" id="market-favorites">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold">{t("Favorites")}</h2>
+        <p className="text-xs opacity-60">{t("{{count}} plugins", { count: plugins.length })}</p>
+      </div>
+
+      {!catalog && catalogBusy && <p className="text-sm opacity-60">{t("Loading catalog…")}</p>}
+      {catalog && plugins.length === 0 && (
+        <p className="text-sm opacity-60">{t("No favorites yet. Star plugins on the Discover tab to pin them here.")}</p>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+        {plugins.map((p) => {
+          const pkg = packageNameFromSpecifier(p.installSpecifier ?? "");
+          const installedPlugin = pkg !== null ? (installedByName.get(pkg) ?? null) : null;
+          return (
+            <MarketCard
+              key={p.fullName}
+              plugin={p}
+              installed={installedPlugin}
+              info={installedPlugin ? (updates?.[installedPlugin.name] ?? null) : null}
+              catalog={catalog}
+              locale={locale}
+              favorited
+              onToggleFavorite={() => toggleFavorite(p.fullName)}
+              onInstall={() => void installPlugin(p.installSpecifier!, p.name)}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -234,6 +293,8 @@ function InstalledPane() {
   const updatePlugin = useAppStore((s) => s.updateMarketPlugin);
   const updateAll = useAppStore((s) => s.updateAllMarketPlugins);
   const updating = useAppStore((s) => s.marketUpdating);
+  const favorites = useAppStore((s) => s.marketFavorites);
+  const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
 
   // 目录匹配表：给已装卡片补全描述/分类/星标/链接（目录没有的如实留白）
   const byName = useMemo(() => new Map((catalog?.plugins ?? []).map((p) => [p.name, p])), [catalog]);
@@ -250,7 +311,7 @@ function InstalledPane() {
           <p className="text-xs opacity-60">{t("{{count}} plugins", { count: installed.length })}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button className={BTN} disabled={updatesBusy} onClick={() => void refreshUpdates()} id="btn-updates-check">
+          <button className={BTN_OUTLINE} disabled={updatesBusy} onClick={() => void refreshUpdates()} id="btn-updates-check">
             {updatesBusy ? t("Working…") : t("Check updates")}
           </button>
           {pendingCount > 0 && (
@@ -270,112 +331,277 @@ function InstalledPane() {
       {!installedBusy && installed.length === 0 && <p className="text-sm opacity-60">{t("No plugins installed yet.")}</p>}
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        {installed.map((p) => (
-          <InstalledCard
-            key={p.name}
-            plugin={p}
-            catalogPlugin={byName.get(p.name) ?? null}
-            locale={locale}
-            info={updates?.[p.name] ?? null}
-            updating={updating === p.name}
-            busy={updating !== null}
-            removing={removing === p.name}
-            onUpdate={() => void updatePlugin(p.name)}
-            onRemove={() => void removePlugin(p.name)}
-          />
-        ))}
+        {installed.map((p) => {
+          const catalogPlugin = byName.get(p.name) ?? null;
+          return (
+            <MarketCard
+              key={p.name}
+              plugin={catalogPlugin}
+              installed={p}
+              info={updates?.[p.name] ?? null}
+              catalog={catalog}
+              locale={locale}
+              updating={updating}
+              removing={removing}
+              favorited={catalogPlugin !== null && favorites.includes(catalogPlugin.fullName)}
+              onToggleFavorite={() => {
+                if (catalogPlugin) toggleFavorite(catalogPlugin.fullName);
+              }}
+              onUpdate={() => void updatePlugin(p.name)}
+              onRemove={() => void removePlugin(p.name)}
+            />
+          );
+        })}
       </div>
     </div>
   );
 }
 
-/// 已安装卡片：同一 PluginCardFrame 骨架保证与发现页观感一致；目录能匹配上
-/// 的插件透传描述/分类/星标/链接，匹配不上的如实只展示落盘事实（name+spec）。
-/// 版本行只在可检形态展示：有更新出 v当前 → v最新 + Update，已最新如实标注
-function InstalledCard({
+/// 市场卡片：发现/收藏/已安装三页唯一实现。数据进、状态机出——目录条目
+/// plugin 与落盘条目 installed 推导出唯一卡片状态，状态条左侧恒为安装事实、
+/// 右侧为该状态下可用的操作（未接回调的操作不出现：发现/收藏页只管浏览与安装，
+/// 更新/移除归已安装页）。目录缺位（已装但目录没有）时如实只展示落盘事实。
+/// 收藏星标独占右上角，★ 计数在 meta 行——两个五角星不再并排撞义
+type CardState =
+  | "managed"
+  | "removing"
+  | "updating"
+  | "outdated"
+  | "installed"
+  | "installing"
+  | "manual"
+  | "confirm"
+  | "idle";
+
+/// 描述按界面语言取，无对应翻译时回退英文、再回退第一条（唯一一份）
+function localizedDescription(
+  d: NonNullable<MarketPlugin["description"]>,
+  locale: "en" | "zh",
+): string {
+  return d[locale] ?? d.en ?? Object.values(d)[0];
+}
+
+function MarketCard({
   plugin,
-  catalogPlugin,
+  installed,
+  info = null,
+  catalog = null,
   locale,
-  info,
-  updating,
-  busy,
-  removing,
+  installing = null,
+  updating = null,
+  removing = null,
+  favorited,
+  onToggleFavorite,
+  onInstall,
   onUpdate,
   onRemove,
 }: {
-  plugin: InstalledPlugin;
-  catalogPlugin: MarketPlugin | null;
+  /** 目录条目；已装但目录没有（如 file: 手动装）为 null */
+  plugin: MarketPlugin | null;
+  /** 落盘条目；未安装为 null */
+  installed: InstalledPlugin | null;
+  /** 更新检测结果（按已装 name 键），未检测为 null */
+  info?: PluginUpdateInfo | null;
+  catalog?: MarketCatalog | null;
   locale: "en" | "zh";
-  info: PluginUpdateInfo | null;
-  updating: boolean;
-  busy: boolean;
-  removing: boolean;
-  onUpdate: () => void;
-  onRemove: () => void;
+  installing?: string | null;
+  updating?: string | null;
+  removing?: string | null;
+  favorited: boolean;
+  onToggleFavorite: () => void;
+  onInstall?: () => void;
+  onUpdate?: () => void;
+  onRemove?: () => void;
 }) {
   const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
+  const name = plugin?.name ?? installed?.name ?? "";
+  const url = plugin?.url ?? null;
+  const description = plugin?.description ? localizedDescription(plugin.description, locale) : null;
   const current = info?.installedVersion ?? null;
   const latest = info?.latestVersion ?? null;
-  const hasUpdate = !!info?.updateAvailable;
-  const description = catalogPlugin?.description
-    ? (catalogPlugin.description[locale] ?? catalogPlugin.description.en ?? Object.values(catalogPlugin.description)[0])
+
+  // 状态推导（自上而下首个命中）：受管 > 移除中 > 更新中 > 已装（比对更新）>
+  // 安装中 > 仅手动 > 确认中 > 可装
+  let state: CardState;
+  if (installed?.managed) state = "managed";
+  else if (removing !== null && installed?.name === removing) state = "removing";
+  else if (updating !== null && installed?.name === updating) state = "updating";
+  else if (installed) state = info?.updateAvailable ? "outdated" : "installed";
+  else if (installing !== null && plugin?.installSpecifier === installing) state = "installing";
+  else if (!plugin?.installSpecifier) state = "manual";
+  else if (confirming) state = "confirm";
+  else state = "idle";
+
+  const outdated = state === "outdated";
+  // 分类用目录本地化名（与筛选下拉同一事实），目录没有该分类时如实透传原 key
+  const categoryLabel = plugin?.category
+    ? (catalog?.categories?.[plugin.category]?.[locale] ?? plugin.category)
     : null;
+  // meta 行尾部：装前关心谁家的仓库（owner），装后关心落盘 spec
+  const metaTail = installed ? installed.spec : (plugin?.fullName.split("/")[0] ?? null);
+
+  const removeBtn = onRemove && (
+    <button
+      className={BTN_DANGER}
+      disabled={state === "removing" || updating !== null}
+      onClick={onRemove}
+      aria-label={`${t("Remove")} ${name}`}
+    >
+      {state === "removing" ? t("Working…") : t("Remove")}
+    </button>
+  );
+
+  const statusLeft: ReactNode =
+    state === "managed" ? (
+      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] opacity-50">{t("managed by launcher")}</span>
+    ) : state === "manual" ? (
+      <span className="text-xs opacity-50">{t("Manual install only")}</span>
+    ) : state === "confirm" ? (
+      <span className="text-xs opacity-70">{t("Install this plugin?")}</span>
+    ) : installed ? (
+      <span className="text-xs">
+        {t("Installed")}
+        {current && (
+          <span className="ml-1.5 font-mono">
+            v{current}
+            {outdated && <span className="ml-1 text-emerald-600 dark:text-emerald-400">→ v{latest}</span>}
+          </span>
+        )}
+      </span>
+    ) : (
+      <span className="text-xs opacity-50">{t("Not installed")}</span>
+    );
+
+  const actions: ReactNode =
+    state === "idle" ? (
+      <button className={BTN_PRIMARY} onClick={() => setConfirming(true)}>
+        {t("Install")}
+      </button>
+    ) : state === "confirm" ? (
+      <>
+        <button
+          className={BTN_PRIMARY}
+          disabled={installing !== null}
+          onClick={() => {
+            setConfirming(false);
+            onInstall?.();
+          }}
+        >
+          {installing !== null ? t("Working…") : t("Confirm")}
+        </button>
+        <button className={BTN_SM} onClick={() => setConfirming(false)}>
+          {t("Cancel")}
+        </button>
+      </>
+    ) : state === "installing" ? (
+      <button className={BTN_PRIMARY} disabled>
+        {t("Installing…")}
+      </button>
+    ) : state === "manual" ? (
+      url && (
+        <button
+          className={BTN_SM}
+          onClick={() => void openUrl(url).catch(() => {})}
+          aria-label={`${t("README ↗")} ${name}`}
+        >
+          {t("README ↗")}
+        </button>
+      )
+    ) : outdated || state === "updating" ? (
+      <>
+        {onUpdate && (
+          <button
+            className={BTN_PRIMARY}
+            disabled={updating !== null}
+            onClick={onUpdate}
+            aria-label={`${t("Update")} ${name}`}
+          >
+            {state === "updating" ? t("Working…") : t("Update")}
+          </button>
+        )}
+        {removeBtn}
+      </>
+    ) : state === "installed" || state === "removing" ? (
+      <>
+        {current && latest !== null && <span className="text-xs opacity-50">{t("Up to date")}</span>}
+        {removeBtn}
+      </>
+    ) : null;
+
+  // meta 行：本地化分类 · owner/落盘spec · ★计数，缺位的部分不占位
+  const metaParts: ReactNode[] = [];
+  if (categoryLabel) metaParts.push(<span key="cat">{categoryLabel}</span>);
+  if (metaTail) metaParts.push(<span key="tail" className={installed ? "font-mono" : undefined}>{metaTail}</span>);
+  if (plugin?.stars != null) metaParts.push(<span key="stars">★ {plugin.stars.toLocaleString()}</span>);
 
   return (
-    <PluginCardFrame
-      name={plugin.name}
-      url={catalogPlugin?.url ?? null}
-      subtitle={<span className="truncate font-mono">{plugin.spec}</span>}
-      badges={
-        <>
-          {plugin.managed && (
-            <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] opacity-50">{t("managed by launcher")}</span>
+    // group 供收藏星标悬浮显隐；已装卡以 emerald 描边与未装区分
+    <article
+      className={`group flex flex-col gap-1.5 rounded-lg border p-4 ${
+        installed ? "border-emerald-500/30 dark:border-emerald-500/40" : "border-border"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {url ? (
+            <button
+              className="cursor-pointer truncate text-sm font-semibold hover:underline"
+              onClick={() => void openUrl(url).catch(() => {})}
+              title={url}
+            >
+              {name}
+            </button>
+          ) : (
+            <span className="truncate text-sm font-semibold">{name}</span>
           )}
-          {catalogPlugin?.deprecated && (
-            <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[11px] text-red-600 dark:text-red-400">
+          {plugin?.deprecated && (
+            <span className="shrink-0 rounded bg-red-500/15 px-1.5 py-0.5 text-[11px] text-red-600 dark:text-red-400">
               {t("Deprecated")}
             </span>
           )}
-          {catalogPlugin?.stars != null && <span className="text-xs opacity-60">★ {catalogPlugin.stars.toLocaleString()}</span>}
-        </>
-      }
-      description={description ? <p className="line-clamp-2 text-xs opacity-70">{description}</p> : null}
-      footer={
-        <div className="mt-1 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-[11px] opacity-60">
-            {current && (
-              <span className="font-mono">
-                v{current}
-                {hasUpdate && latest && (
-                  <span className="ml-1 text-emerald-600 dark:text-emerald-400">→ v{latest}</span>
-                )}
-              </span>
-            )}
-            {catalogPlugin?.category && <span className="rounded bg-muted px-1.5 py-0.5">{catalogPlugin.category}</span>}
-          </div>
-          <div className="flex items-center gap-1.5">
-            {hasUpdate && !plugin.managed && (
-              <button className={BTN_PRIMARY} disabled={busy} onClick={onUpdate} aria-label={`${t("Update")} ${plugin.name}`}>
-                {updating ? t("Working…") : t("Update")}
-              </button>
-            )}
-            {!hasUpdate && current && latest !== null && !plugin.managed && (
-              <span className="text-xs opacity-50">{t("Up to date")}</span>
-            )}
-            {!plugin.managed && (
-              <button
-                className={BTN_DANGER_SM}
-                disabled={removing || busy}
-                onClick={onRemove}
-                aria-label={`${t("Remove")} ${plugin.name}`}
-              >
-                {removing ? t("Working…") : t("Remove")}
-              </button>
-            )}
-          </div>
         </div>
-      }
-    />
+        {/* 收藏星标：未收藏随整卡悬浮/键盘聚焦显隐，已收藏常驻（amber 实心）；
+            纯落盘卡片（目录缺位）无星标 */}
+        {plugin && (
+          <button
+            className={`shrink-0 text-sm leading-none ${
+              favorited ? "text-amber-500" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+            }`}
+            onClick={onToggleFavorite}
+            aria-label={`${favorited ? t("Remove from favorites") : t("Add to favorites")} ${name}`}
+            title={favorited ? t("Remove from favorites") : t("Add to favorites")}
+          >
+            {favorited ? "★" : "☆"}
+          </button>
+        )}
+      </div>
+      {metaParts.length > 0 && (
+        <p className="truncate text-xs opacity-60">
+          {metaParts.map((node, i) => (
+            <Fragment key={i}>
+              {i > 0 && <span className="mx-1.5">·</span>}
+              {node}
+            </Fragment>
+          ))}
+        </p>
+      )}
+      {(description || (plugin?.deprecated && plugin.replacement)) && (
+        <div className="flex flex-col gap-0.5">
+          {description && <p className="line-clamp-2 text-xs opacity-70">{description}</p>}
+          {plugin?.deprecated && plugin.replacement && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              {t("Deprecated — consider {{replacement}} instead.", { replacement: plugin.replacement })}
+            </p>
+          )}
+        </div>
+      )}
+      {/* 状态条：mt-auto + 上边线，grid 拉伸行内所有卡片状态条底对齐 */}
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-border pt-2.5">
+        {statusLeft}
+        <div className="flex items-center gap-1.5">{actions}</div>
+      </div>
+    </article>
   );
 }
 
@@ -421,124 +647,3 @@ function BuildApprovalDialog() {
   );
 }
 
-/// 市场卡片共用骨架：发现与已安装两页同一观感——头部名称区 + 右上徽章、
-/// 描述、底部左信息右操作。结构只此一处，改卡片样式两页同步
-function PluginCardFrame({
-  name,
-  url,
-  subtitle,
-  badges,
-  description,
-  footer,
-}: {
-  name: string;
-  /** 插件主页链接；null = 无处可去，名称退化为纯文本 */
-  url: string | null;
-  subtitle: ReactNode;
-  badges: ReactNode;
-  description: ReactNode;
-  footer: ReactNode;
-}) {
-  return (
-    <article className="flex flex-col gap-1.5 rounded-lg border border-border p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          {url ? (
-            <button
-              className="cursor-pointer truncate text-sm font-semibold hover:underline"
-              onClick={() => void openUrl(url).catch(() => {})}
-              title={url}
-            >
-              {name}
-            </button>
-          ) : (
-            <span className="text-sm font-semibold">{name}</span>
-          )}
-          <p className="truncate text-xs opacity-50">{subtitle}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">{badges}</div>
-      </div>
-      {description}
-      {footer}
-    </article>
-  );
-}
-
-function PluginCard({
-  plugin,
-  locale,
-  installed,
-  installing,
-  onInstall,
-}: {
-  plugin: MarketPlugin;
-  locale: "en" | "zh";
-  installed: boolean;
-  installing: boolean;
-  onInstall: () => void;
-}) {
-  const { t } = useTranslation();
-  const [confirming, setConfirming] = useState(false);
-  const installable = !!plugin.installSpecifier;
-  // 描述按界面语言取，无对应翻译时回退英文、再回退第一条
-  const description = plugin.description
-    ? (plugin.description[locale] ?? plugin.description.en ?? Object.values(plugin.description)[0])
-    : null;
-
-  return (
-    <PluginCardFrame
-      name={plugin.name}
-      url={plugin.url}
-      subtitle={plugin.fullName}
-      badges={
-        <>
-          {/* 目录侧弃用标记原样透传（raw badge，不做二次加工） */}
-          {plugin.deprecated && (
-            <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[11px] text-red-600 dark:text-red-400">
-              {t("Deprecated")}
-            </span>
-          )}
-          {plugin.stars !== null && <span className="text-xs opacity-60">★ {plugin.stars.toLocaleString()}</span>}
-        </>
-      }
-      description={
-        <>
-          {description && <p className="line-clamp-2 text-xs opacity-70">{description}</p>}
-          {plugin.deprecated && plugin.replacement && (
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              {t("Deprecated — consider {{replacement}} instead.", { replacement: plugin.replacement })}
-            </p>
-          )}
-        </>
-      }
-      footer={
-        <div className="mt-1 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-1.5 text-[11px] opacity-60">
-            {plugin.category && <span className="rounded bg-muted px-1.5 py-0.5">{plugin.category}</span>}
-          </div>
-          {installed ? (
-            <span className="text-xs text-emerald-600 dark:text-emerald-400">{t("Installed")}</span>
-          ) : installable ? (
-            confirming ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs opacity-60">{t("Install this plugin?")}</span>
-                <button className={BTN_PRIMARY} disabled={installing} onClick={() => { setConfirming(false); onInstall(); }}>
-                  {installing ? t("Working…") : t("Confirm")}
-                </button>
-                <button className={BTN_SM} onClick={() => setConfirming(false)}>
-                  {t("Cancel")}
-                </button>
-              </div>
-            ) : (
-              <button className={BTN_PRIMARY} disabled={installing} onClick={() => setConfirming(true)}>
-                {installing ? t("Installing…") : t("Install")}
-              </button>
-            )
-          ) : (
-            <span className="text-xs opacity-50">{t("Manual install only")}</span>
-          )}
-        </div>
-      }
-    />
-  );
-}
