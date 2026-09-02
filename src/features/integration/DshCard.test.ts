@@ -6,15 +6,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import { useAppStore } from "@/shared/store";
 import type { DshStatus } from "@/shared/types";
+import { DshCard } from "./DshCard";
 import {
-  DshCard,
   localStatusTextKey,
   localTimelineFromStatus,
   proxyBypassHostForRemoteUrl,
   statusTextKey,
   timelineFromStatus,
   verifiedRemoteUrl,
-} from "./DshCard";
+} from "./dshActions";
 
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
 

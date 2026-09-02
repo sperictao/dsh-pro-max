@@ -4,7 +4,7 @@ import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notif
 import { getVersion } from "@tauri-apps/api/app";
 import { useAppStore, type View } from "./shared/store";
 import { useSystemThemeSync } from "./shared/useSystemThemeSync";
-import { onDshStep, onUpdaterDownloadProgress } from "./shared/events";
+import { onDshStep, onTrayDshAction, onUpdaterDownloadProgress } from "./shared/events";
 import * as cmd from "./shared/commands";
 import { log } from "./shared/logger";
 import { i18n } from "./shared/i18n";
@@ -13,6 +13,7 @@ import { openRepo } from "./shared/lib/links";
 import { UpdateBadge } from "./features/updater/UpdateBadge";
 import { SettingsView } from "./features/settings/SettingsView";
 import { IntegrationView } from "./features/integration/IntegrationView";
+import { restartDshWeb, startDshWeb, stopDshWeb } from "./features/integration/dshActions";
 import { MarketView } from "./features/market/MarketView";
 import { ModelsView } from "./features/models/ModelsView";
 
@@ -40,6 +41,12 @@ export function App() {
     };
     bind(onUpdaterDownloadProgress((p) => useAppStore.getState().setDownloadProgress(p)));
     bind(onDshStep((s) => useAppStore.getState().handleDshStep(s)));
+    // 托盘 dsh 三键：远端触发器，交互逻辑与首页按钮同源（dshActions）
+    bind(onTrayDshAction((id) => {
+      if (id === "dsh-start") void startDshWeb();
+      else if (id === "dsh-stop") void stopDshWeb();
+      else if (id === "dsh-restart") void restartDshWeb();
+    }));
 
     // 进程事故通知需要系统授权（macOS），启动时静默请求一次
     void (async () => {
@@ -86,6 +93,15 @@ export function App() {
 
   // 跟随系统模式：OS 亮暗切换时重解析 data-theme（去抖在 hook 内）
   useSystemThemeSync();
+
+  // 托盘 dsh 三键的可用性镜像首页按钮：running/busy 翻转时推送后端重建菜单
+  const trayRunning = useAppStore((s) => !!s.dshStatus?.dshRunning);
+  const trayBusy = useAppStore((s) => s.dshStartBusy || s.dshStopBusy || s.dshRestartBusy || s.dshRecheckBusy);
+  useEffect(() => {
+    cmd.syncTrayDshActions(trayRunning, trayBusy).catch(() => {
+      /* 推送失败托盘保持上一次状态；invokeTyped 已记日志 */
+    });
+  }, [trayRunning, trayBusy]);
 
   // 键盘快捷键：Cmd/Ctrl + , 打开设置（macOS/Windows 系统惯例）
   useEffect(() => {

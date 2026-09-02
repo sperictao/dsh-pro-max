@@ -9,3 +9,7 @@ export const onUpdaterDownloadProgress = (cb: (p: DownloadProgress) => void) =>
 
 export const onDshStep = (cb: (p: DshStepEvent) => void) =>
   listen<DshStepEvent>("dsh-step", (e) => cb(e.payload));
+
+// 托盘 dsh 三键点击：payload 为菜单项 id（dsh-start / dsh-stop / dsh-restart）
+export const onTrayDshAction = (cb: (id: string) => void) =>
+  listen<string>("tray-dsh-action", (e) => cb(e.payload));

@@ -47,6 +47,9 @@ export const dshRemovePlugins = () => invokeTyped<void>("dsh_remove_plugins");
 export const dshCheckLatest = () => invokeTyped<DshLatestInfo>("dsh_check_latest");
 export const dshInstallVersion = (version: string) => invokeTyped<string>("dsh_install_version", { version });
 export const dshSetAutostart = (enabled: boolean) => invokeTyped<void>("dsh_set_autostart", { enabled });
+// 托盘 dsh 三键的可用性镜像首页按钮：推送 dshRunning / 任一流程 busy
+export const syncTrayDshActions = (running: boolean, busy: boolean) =>
+  invokeTyped<void>("sync_tray_dsh_actions", { running, busy });
 
 // ============ 插件市场 ============
 export const marketFetch = () => invokeTyped<MarketCatalog>("market_fetch");

@@ -54,6 +54,9 @@ fn zh_cn(key: &str) -> Option<&'static str> {
     Some(match key {
         // —— 托盘菜单（main.rs）——
         "Show Main Window" => "显示主窗口",
+        "One-click start dsh web" => "一键启动 dsh web",
+        "One-click stop dsh web" => "一键关闭 dsh web",
+        "One-click restart dsh web" => "一键重启 dsh web",
         "Quit" => "退出",
 
         // —— 进程事故通知（main.rs）——

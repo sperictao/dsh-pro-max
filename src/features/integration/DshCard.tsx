@@ -1,7 +1,8 @@
 // dsh 卡片：DeepSeek Harness 访问模式（本地/远程）切换 + 一键启动/关闭 + 状态链时间轴
 // 模式开关只是选择访问模式（本地 = 127.0.0.1:3899，远程 = 追加 Tailscale HTTPS），
-// 不执行任何启用/停止；一键启动/关闭按钮按当前模式走对应流程。
-// 时间轴步骤由事件桥写入 store.dshTimeline；未跑过流程时用检测结果推导就绪视图
+// 不执行任何启用/停止；一键启动/关闭/重启的流程实现在 dshActions（与托盘共用），
+// 这里只负责触发。时间轴步骤由事件桥写入 store.dshTimeline；
+// 未跑过流程时用检测结果推导就绪视图
 
 import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
@@ -9,30 +10,21 @@ import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { BTN_DESTRUCTIVE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
-import type { DshAccessMode, DshStatus, DshStepEvent } from "@/shared/types";
+import type { DshAccessMode, DshStepEvent } from "@/shared/types";
+import {
+  localStatusTextKey,
+  localTimelineFromStatus,
+  proxyBypassHostForRemoteUrl,
+  restartDshWeb,
+  startDshWeb,
+  statusTextKey,
+  stopDshWeb,
+  timelineFromStatus,
+  verifiedRemoteUrl,
+} from "./dshActions";
 
 // 保持旧导出兼容（类型已上移到 shared/types）
 export type { DshAccessMode };
-
-export function proxyBypassHostForRemoteUrl(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    const host = new URL(url).hostname;
-    return host || null;
-  } catch {
-    return null;
-  }
-}
-
-export function verifiedRemoteUrl(status: DshStatus): string | null {
-  return status.remoteUrlAccess === "ready" ? status.url : null;
-}
-
-// 远程时间轴步骤顺序（与 Rust dsh_setup 的 index 一一对应）
-const STEP_IDS = ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] as const;
-
-// 本地一键启动的时间轴步骤（与 Rust dsh_start_web 的 LOCAL_STEPS 一一对应）
-const LOCAL_STEP_IDS = ["node", "install", "start", "ready"] as const;
 
 // 步骤标题（key 即 i18n key；本地四步 node/install/start/ready 也在其中）
 const STEP_TITLES: Record<string, string> = {
@@ -46,68 +38,6 @@ const STEP_TITLES: Record<string, string> = {
   verify: "Verify remote access",
   ready: "Local access ready",
 };
-
-export function statusTextKey(s: DshStatus): string {
-  if (!s.nodeAvailable) return "Node.js not detected";
-  if (!s.dshInstalled) return "DeepSeek Harness not installed";
-  if (!s.dshCompatible) return "dsh version is not supported by the auth plugins";
-  if (!s.tailscaleInstalled || !s.tailscaleOnline) return "Tailscale not ready";
-  if (!s.magicDnsEnabled) return "MagicDNS not enabled";
-  if (!s.dshRunning) return "dsh web not running";
-  // 授权插件只服务于远程访问链路；纯本地用 dsh 不需要，故放在运行之后
-  if (!s.pluginsInstalled) return "dsh auth plugins not installed";
-  if (!s.serveConfigured) return "Tailscale serve not configured";
-  if (s.remoteUrlAccess === "capability_denied") return "Remote capability grant denied";
-  if (s.remoteUrlAccess === "proxy_interference") return "Local proxy bypass required";
-  if (s.remoteUrlAccess === "endpoint_failure") return "Remote endpoint check failed";
-  if (s.remoteUrlAccess !== "ready") return "Remote access not verified";
-  return "Remote access ready";
-}
-
-// 本地模式状态文案：不要求 Tailscale/插件/serve，只看 node、dsh 安装与 web 是否在跑
-export function localStatusTextKey(s: DshStatus): string {
-  if (!s.nodeAvailable) return "Node.js not detected";
-  if (!s.dshInstalled) return "DeepSeek Harness not installed";
-  if (!s.dshCompatible) return "dsh version is not supported by the auth plugins";
-  if (!s.dshRunning) return "dsh web not running";
-  return "Local access ready";
-}
-
-// 由检测结果推导「就绪时间轴」：已满足的步骤标 done，其余 pending（远程 8 步）
-export function timelineFromStatus(s: DshStatus): DshStepEvent[] {
-  const allReady =
-    s.nodeAvailable && s.dshInstalled && s.dshCompatible && s.pluginsInstalled &&
-    s.dshRunning && s.tailscaleOnline && s.magicDnsEnabled && s.serveConfigured &&
-    s.remoteUrlAccess === "ready";
-  const done = (ok: boolean): DshStepEvent["state"] => (ok ? "done" : "pending");
-  const step = (index: number, id: string, ok: boolean): DshStepEvent => ({
-    index, id, state: done(ok), detail: null, problem: null, solution: null,
-  });
-  return [
-    step(0, "node", s.nodeAvailable),
-    step(1, "install", s.dshInstalled && s.dshCompatible),
-    step(2, "plugins", s.pluginsInstalled),
-    step(3, "tailscale", s.tailscaleInstalled && s.tailscaleOnline),
-    step(4, "magicdns", s.magicDnsEnabled),
-    step(5, "start", s.dshRunning),
-    step(6, "serve", s.serveConfigured),
-    step(7, "verify", allReady),
-  ];
-}
-
-// 本地模式就绪时间轴：node / install / start / ready 四项，与远程 8 步不同
-export function localTimelineFromStatus(s: DshStatus): DshStepEvent[] {
-  const done = (ok: boolean): DshStepEvent["state"] => (ok ? "done" : "pending");
-  const step = (index: number, id: string, ok: boolean): DshStepEvent => ({
-    index, id, state: done(ok), detail: null, problem: null, solution: null,
-  });
-  return [
-    step(0, "node", s.nodeAvailable),
-    step(1, "install", s.dshInstalled && s.dshCompatible),
-    step(2, "start", s.dshRunning),
-    step(3, "ready", s.dshRunning),
-  ];
-}
 
 function StepMarker({ state }: { state: DshStepEvent["state"] }) {
   switch (state) {
@@ -160,8 +90,6 @@ export function DshCard() {
   const mode = useAppStore((s) => s.dshAccessMode);
   const setStatus = useAppStore((s) => s.setDshStatus);
   const setStartBusy = useAppStore((s) => s.setDshStartBusy);
-  const setStopBusy = useAppStore((s) => s.setDshStopBusy);
-  const setRestartBusy = useAppStore((s) => s.setDshRestartBusy);
   const setRecheckBusy = useAppStore((s) => s.setDshRecheckBusy);
   const setHasRunSetup = useAppStore((s) => s.setDshHasRunSetup);
   const setMode = useAppStore((s) => s.setDshAccessMode);
@@ -212,107 +140,6 @@ export function DshCard() {
       toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
     } finally {
       setRecheckBusy(false);
-    }
-  };
-
-  // 启动流程体：初始化时间轴为全 pending（随后由后端 dsh-step 事件逐步推进）→
-  // 按当前模式执行 → 收尾刷新状态。busy 标志由调用方（start/restart）持有到
-  // 收尾 detect 结束，避免流程未完全落地时按钮抢先可用
-  const runStartFlow = async () => {
-    setHasRunSetup(true);
-    const ids = isRemote ? STEP_IDS : LOCAL_STEP_IDS;
-    setDshTimeline(ids.map((id, index) => ({
-      index, id, state: "pending" as const, detail: null, problem: null, solution: null,
-    })));
-    let succeeded = false;
-    try {
-      if (isRemote) {
-        await cmd.dshSetup();
-        // dsh_setup 返回 void：serve 配置完成后远程地址由 detect 给出。三个授权参数
-        // 留空也能正常 serve（普通远程访问仍需身份 allowlist 与 tailnet TCP 443 grant）。只有
-        // HTTPS + WebSocket + 本机代理路径都复查通过才打开远程地址。
-        const s = await cmd.dshDetect(true);
-        setStatus(s);
-        const url = verifiedRemoteUrl(s);
-        if (!url) {
-          setDshTimeline(timelineFromStatus(s));
-          toast(t(statusTextKey(s)), "error");
-          return;
-        }
-        await openUrl(url);
-        toast(t("Remote access ready"), "success");
-      } else {
-        const url = await cmd.dshStartWeb();
-        await openUrl(url);
-      }
-      succeeded = true;
-    } catch (e) {
-      // 远程失败详情已由 dsh-step 事件渲染在时间轴节点上
-      if (!isRemote) toast(t("dsh start failed: {{error}}", { error: String(e) }), "error");
-    } finally {
-      // 成功后回到状态驱动视图；失败时保留事件时间轴（问题+解决方案持续可见）
-      if (succeeded) setHasRunSetup(false);
-      try {
-        const s = await cmd.dshDetect(isRemote);
-        setStatus(s);
-        if (succeeded) {
-          setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
-        }
-      } catch (e) {
-        toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
-      }
-    }
-  };
-
-  // 一键启动：按当前模式走对应启用流程。
-  // 远程 → dsh_setup 全链路（dsh web + Tailscale Serve + 校验）；
-  // 本地 → dsh_start_web（幂等保证 3899 就绪并返回本地地址，这里只管打开浏览器）
-  const startCurrent = async () => {
-    if (busy) return;
-    setStartBusy(true);
-    try {
-      await runStartFlow();
-    } finally {
-      setStartBusy(false);
-    }
-  };
-
-  // 一键重启：先关后启，沿用当前访问模式（运行中模式锁定，重启不改变服务形态）。
-  // dsh_stop 幂等；关闭失败则中止重启，避免在未知状态上强行拉起
-  const restartCurrent = async () => {
-    if (busy) return;
-    setRestartBusy(true);
-    try {
-      await cmd.dshStop();
-      await runStartFlow();
-    } catch (e) {
-      toast(t("Restart failed: {{error}}", { error: String(e) }), "error");
-    } finally {
-      setRestartBusy(false);
-    }
-  };
-
-  // 一键关闭：按当前模式关闭。Rust dsh_stop 对两种模式都是幂等的：
-  // 本地模式会关掉 dsh web（serve/自启若从未配置则为 no-op）
-  const stopCurrent = async () => {
-    if (busy) return;
-    setStopBusy(true);
-    try {
-      await cmd.dshStop();
-      toast(t("dsh web stopped"), "info");
-    } catch (e) {
-      toast(t("Stop failed: {{error}}", { error: String(e) }), "error");
-    } finally {
-      setStopBusy(false);
-      // 停止后回到状态驱动时间轴，避免事件时间轴残留「已就绪」的历史状态
-      setHasRunSetup(false);
-      try {
-        const s = await cmd.dshDetect(isRemote);
-        setStatus(s);
-        setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
-      } catch (e) {
-        toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
-      }
     }
   };
 
@@ -555,21 +382,21 @@ export function DshCard() {
         <button
           className={BTN_PRIMARY}
           disabled={busy || !!status?.dshRunning}
-          onClick={() => void startCurrent()}
+          onClick={() => void startDshWeb()}
         >
           {startBusy ? t("Starting...") : t("One-click start dsh web")}
         </button>
         <button
           className={BTN_DESTRUCTIVE}
           disabled={busy || !status?.dshRunning}
-          onClick={() => void stopCurrent()}
+          onClick={() => void stopDshWeb()}
         >
           {stopBusy ? t("Stopping...") : t("One-click stop dsh web")}
         </button>
         <button
           className={BTN_PRIMARY}
           disabled={busy || !status?.dshRunning}
-          onClick={() => void restartCurrent()}
+          onClick={() => void restartDshWeb()}
         >
           {restartBusy ? t("Restarting...") : t("One-click restart dsh web")}
         </button>
