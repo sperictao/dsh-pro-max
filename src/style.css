@@ -222,6 +222,35 @@
   transition: width 200ms;
 }
 
+/* ================= 首页（dsh 控制台） ================= */
+
+/* 页首光晕：极淡 primary 顶部径向渐变，token 驱动随族随亮暗，不遮内容不接事件 */
+.home-backdrop {
+  background:
+    radial-gradient(60% 100% at 20% 0%, color-mix(in oklab, var(--primary) 6%, transparent), transparent 70%),
+    radial-gradient(50% 90% at 80% 0%, color-mix(in oklab, var(--primary) 4%, transparent), transparent 70%);
+}
+
+/* 状态点：色调走 data-tone，一塘水一个类（语义色同时间轴：ok/warn 固定，错误随族） */
+.dsh-status-dot {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 9999px;
+  background-color: var(--muted-foreground);
+}
+.dsh-status-dot[data-tone="running"] {
+  background-color: var(--status-ok);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--status-ok) 18%, transparent);
+}
+.dsh-status-dot[data-tone="busy"] {
+  background-color: var(--status-warn);
+  animation: timeline-pulse 1s ease-in-out infinite;
+}
+.dsh-status-dot[data-tone="failed"] {
+  background-color: var(--destructive);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--destructive) 15%, transparent);
+}
+
 /* ================= dsh 远程访问时间轴 ================= */
 .timeline-node {
   position: relative;
@@ -273,7 +302,11 @@
   color: #fff;
 }
 .timeline-node[data-state="skipped"] { opacity: 0.45; }
-.timeline-node[data-state="pending"] .timeline-marker { opacity: 0.6; }
+/* 待办节点：虚线圈表达「尚未发生」，与已完成实心区分 */
+.timeline-node[data-state="pending"] .timeline-marker {
+  opacity: 0.7;
+  border-style: dashed;
+}
 
 .timeline-content { min-width: 0; flex: 1; padding-top: 0.125rem; }
 .timeline-title { font-size: 0.8125rem; font-weight: 500; }

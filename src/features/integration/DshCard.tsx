@@ -9,8 +9,8 @@ import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
-import { BTN_DESTRUCTIVE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
-import type { DshAccessMode, DshStepEvent } from "@/shared/types";
+import { BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
+import type { DshAccessMode, DshStatus, DshStepEvent } from "@/shared/types";
 import {
   localStatusTextKey,
   localTimelineFromStatus,
@@ -54,6 +54,14 @@ function StepMarker({ state }: { state: DshStepEvent["state"] }) {
   }
 }
 
+// 状态点色调（纯呈现推导）：流程进行中/检测中 → 工作脉冲，检测出错 → 错误，
+// 服务运行中 → 运行绿，其余 → 中性
+function statusTone(status: DshStatus | null, busy: boolean): "busy" | "failed" | "running" | "idle" {
+  if (busy || status === null) return "busy";
+  if (status.error) return "failed";
+  return status.dshRunning ? "running" : "idle";
+}
+
 // 单个可用地址行：地址 + 复制/打开（本地与远程各一行，互不混淆）
 function AddressRow({
   url,
@@ -69,7 +77,7 @@ function AddressRow({
   const { t } = useTranslation();
   return (
     <div className="flex flex-wrap items-center justify-end gap-1.5">
-      <span className="shrink-0 rounded-full bg-primary/15 px-2.5 py-0.5 font-mono text-xs text-primary">{url}</span>
+      <span className="shrink-0 rounded-full border border-primary/20 bg-primary/15 px-2.5 py-0.5 font-mono text-xs text-primary">{url}</span>
       <button className={BTN_SM} onClick={() => void onCopy(url)}>{t("Copy")}</button>
       <button className={BTN_SM} disabled={openDisabled} onClick={() => void onOpen(url)}>{t("Open")}</button>
     </div>
@@ -253,17 +261,89 @@ export function DshCard() {
   const statusText = busy ? t("Working…") : status ? t(isRemote ? statusTextKey(status) : localStatusTextKey(status)) : t("Detecting…");
 
   return (
-    <div className="rounded-xl border border-border bg-card text-card-foreground flex flex-col gap-3 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-sm font-medium">{t("DeepSeek Harness")}</div>
-        <div className="flex min-w-0 items-center justify-end gap-2">
+    <div className="flex flex-col gap-5">
+      {/* 状态英雄区：品牌降为眉题，状态文案升为页面主标题，一眼读到达之处 */}
+      <header className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-xs font-medium uppercase tracking-widest opacity-60">{t("DeepSeek Harness")}</div>
+          <div className="mt-2 flex items-center gap-2.5">
+            <span aria-hidden className="dsh-status-dot shrink-0" data-tone={statusTone(status, busy)} />
+            <h1 className="truncate text-2xl font-semibold tracking-tight">{statusText}</h1>
+          </div>
+          <div className="mt-1.5 flex flex-col gap-1">
+            {status?.error && !busy && (
+              <div className="text-xs text-destructive">
+                {t("dsh integration check failed: {{error}}", { error: status.error })}
+              </div>
+            )}
+            {status?.dshVersionAboveSupported && !busy && (
+              <div className="text-xs opacity-60">
+                {t("Newer than the verified stack ({{version}}); authorization plugins may be incompatible", { version: status.supportedVersion })}
+              </div>
+            )}
+            {isRemote ? (
+              <>
+                <div className="text-xs opacity-60">
+                  {t("Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Remote settings and credentials require the configured admin capability in tailnet grants.")}
+                </div>
+                {status?.remoteUrlAccess === "capability_denied" ? (
+                  <div className="mt-1 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-capability-warning">
+                    <div className="font-medium text-destructive">
+                      {t("Remote capability grant denied")}
+                    </div>
+                    <div className="mt-1 opacity-70">
+                      {t("Grant TCP 443 and the configured use/admin capabilities to this identity and dsh node in the same tailnet grant, then stop and run one-click start again.")}
+                    </div>
+                  </div>
+                ) : status?.remoteUrlAccess === "proxy_interference" && proxyBypassHost ? (
+                  <div className="mt-1 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-local-proxy-warning">
+                    <div className="font-medium text-destructive">
+                      {t("This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.")}
+                    </div>
+                    <div className="mt-1 opacity-70">
+                      {t("Add this host to the macOS proxy bypass list. In Shadowrocket: General → Skip Proxy:")}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <code className="rounded bg-muted px-2 py-1 font-mono text-xs">{proxyBypassHost}</code>
+                      <button className={BTN_SM} disabled={busy} onClick={() => void copyProxyBypassHost(proxyBypassHost)}>
+                        {t("Copy bypass host")}
+                      </button>
+                      <button className={BTN_SM} disabled={busy} onClick={() => void recheckRemoteAccess()}>
+                        {recheckBusy ? t("Rechecking...") : t("Recheck and open")}
+                      </button>
+                    </div>
+                  </div>
+                ) : status?.url && status.remoteUrlAccess === "ready" && !busy && (
+                  <div className="text-xs opacity-60">
+                    {t("URL won't open? On the host Mac, use proxy bypass / skip-proxy; on another client device, use a DIRECT rule.")}{" "}
+                    <a
+                      className="underline underline-offset-2 hover:opacity-80"
+                      href="https://github.com/sperictao/dsh-pro-max/blob/main/docs/dsh-remote-access.md"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        void openUrl("https://github.com/sperictao/dsh-pro-max/blob/main/docs/dsh-remote-access.md");
+                      }}
+                    >
+                      {t("Troubleshooting guide")}
+                    </a>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-xs opacity-60">
+                {t("Local access to the dsh Web UI at http://127.0.0.1:3899.")}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-2">
           {status?.dshVersion && (
-            <span className="shrink-0 rounded-full border border-border px-2.5 py-0.5 font-mono text-xs opacity-70">
+            <span className="rounded-full border border-border px-2.5 py-0.5 font-mono text-xs opacity-70">
               {status.dshVersion}
             </span>
           )}
           {/* 修复只在版本不兼容时出现：回退到 Launcher 锁定栈（装回 rc 钉版 + 插件）。
-              版本够但缺插件不再强制降级 dsh，由下方状态行引导走一键启动安装插件 */}
+              版本够但缺插件不再强制降级 dsh，由状态区引导走一键启动安装插件 */}
           {status && !status.dshCompatible && (
             <button
               className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground whitespace-nowrap transition-colors outline-none hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
@@ -284,136 +364,75 @@ export function DshCard() {
             </button>
           )}
         </div>
-      </div>
+      </header>
 
-      <div className="min-w-0">
-        <div className="truncate text-sm">{statusText}</div>
-        {status?.error && !busy && (
-          <div className="mt-1 text-xs text-destructive">
-            {t("dsh integration check failed: {{error}}", { error: status.error })}
-          </div>
-        )}
-        {status?.dshVersionAboveSupported && !busy && (
-          <div className="mt-1 text-xs opacity-60">
-            {t("Newer than the verified stack ({{version}}); authorization plugins may be incompatible", { version: status.supportedVersion })}
-          </div>
-        )}
-        {isRemote ? (
-          <>
-            <div className="mt-1 text-xs opacity-60">
-              {t("Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Remote settings and credentials require the configured admin capability in tailnet grants.")}
-            </div>
-            {status?.remoteUrlAccess === "capability_denied" ? (
-              <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-capability-warning">
-                <div className="font-medium text-destructive">
-                  {t("Remote capability grant denied")}
-                </div>
-                <div className="mt-1 opacity-70">
-                  {t("Grant TCP 443 and the configured use/admin capabilities to this identity and dsh node in the same tailnet grant, then stop and run one-click start again.")}
-                </div>
-              </div>
-            ) : status?.remoteUrlAccess === "proxy_interference" && proxyBypassHost ? (
-              <div className="mt-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-local-proxy-warning">
-                <div className="font-medium text-destructive">
-                  {t("This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.")}
-                </div>
-                <div className="mt-1 opacity-70">
-                  {t("Add this host to the macOS proxy bypass list. In Shadowrocket: General → Skip Proxy:")}
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <code className="rounded bg-muted px-2 py-1 font-mono text-xs">{proxyBypassHost}</code>
-                  <button className={BTN_SM} disabled={busy} onClick={() => void copyProxyBypassHost(proxyBypassHost)}>
-                    {t("Copy bypass host")}
-                  </button>
-                  <button className={BTN_SM} disabled={busy} onClick={() => void recheckRemoteAccess()}>
-                    {recheckBusy ? t("Rechecking...") : t("Recheck and open")}
-                  </button>
-                </div>
-              </div>
-            ) : status?.url && status.remoteUrlAccess === "ready" && !busy && (
-              <div className="mt-1 text-xs opacity-60">
-                {t("URL won't open? On the host Mac, use proxy bypass / skip-proxy; on another client device, use a DIRECT rule.")}{" "}
-                <a
-                  className="underline underline-offset-2 hover:opacity-80"
-                  href="https://github.com/sperictao/dsh-pro-max/blob/main/docs/dsh-remote-access.md"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    void openUrl("https://github.com/sperictao/dsh-pro-max/blob/main/docs/dsh-remote-access.md");
-                  }}
-                >
-                  {t("Troubleshooting guide")}
-                </a>
-              </div>
+      {/* 控制台卡：一键操作 + 访问地址 + 访问模式 */}
+      <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            className={BTN_PRIMARY}
+            disabled={busy || !!status?.dshRunning}
+            onClick={() => void startDshWeb()}
+          >
+            {startBusy ? t("Starting...") : t("One-click start dsh web")}
+          </button>
+          <button
+            className={BTN_DANGER}
+            disabled={busy || !status?.dshRunning}
+            onClick={() => void stopDshWeb()}
+          >
+            {stopBusy ? t("Stopping...") : t("One-click stop dsh web")}
+          </button>
+          <button
+            className={BTN_OUTLINE}
+            disabled={busy || !status?.dshRunning}
+            onClick={() => void restartDshWeb()}
+          >
+            {restartBusy ? t("Restarting...") : t("One-click restart dsh web")}
+          </button>
+          <div className="ml-auto flex min-w-0 items-center">
+            {activeUrl && (
+              <AddressRow
+                url={activeUrl}
+                onCopy={copyUrl}
+                onOpen={open}
+                openDisabled={isRemote && status?.remoteUrlAccess !== "ready"}
+              />
             )}
-          </>
-        ) : (
-          <div className="mt-1 text-xs opacity-60">
-            {t("Local access to the dsh Web UI at http://127.0.0.1:3899.")}
           </div>
-        )}
-      </div>
-
-      <label
-        className={`flex flex-1 items-center justify-between gap-4 rounded-lg border border-border p-3${modeLocked ? "" : " cursor-pointer"}`}
-        id="dsh-remote-access-row"
-      >
-        <span className="flex flex-col gap-0.5">
-          <span className="text-sm">{t("Remote access")}</span>
-          <span className="text-sm">
-            {t(isRemote ? "Remote access mode" : "Local access mode")}
-          </span>
-          <span className="text-xs opacity-60">
-            {modeLocked
-              ? t("dsh web is running; stop it before switching the access mode.")
-              : t("Switching the access mode only selects the setup/close flow; click Start or Stop below to apply it. It does not start or stop anything by itself.")}
-          </span>
-        </span>
-        <input
-          type="checkbox"
-          className={TOGGLE}
-          id="toggle-dsh-remote-access"
-          checked={isRemote}
-          disabled={busy || modeLocked}
-          onChange={(e) => void switchMode(e.target.checked ? "remote" : "local")}
-        />
-      </label>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          className={BTN_PRIMARY}
-          disabled={busy || !!status?.dshRunning}
-          onClick={() => void startDshWeb()}
-        >
-          {startBusy ? t("Starting...") : t("One-click start dsh web")}
-        </button>
-        <button
-          className={BTN_DESTRUCTIVE}
-          disabled={busy || !status?.dshRunning}
-          onClick={() => void stopDshWeb()}
-        >
-          {stopBusy ? t("Stopping...") : t("One-click stop dsh web")}
-        </button>
-        <button
-          className={BTN_PRIMARY}
-          disabled={busy || !status?.dshRunning}
-          onClick={() => void restartDshWeb()}
-        >
-          {restartBusy ? t("Restarting...") : t("One-click restart dsh web")}
-        </button>
-        <div className="ml-auto flex min-w-0 flex-col items-end gap-1.5">
-          {activeUrl && (
-            <AddressRow
-              url={activeUrl}
-              onCopy={copyUrl}
-              onOpen={open}
-              openDisabled={isRemote && status?.remoteUrlAccess !== "ready"}
-            />
-          )}
         </div>
-      </div>
 
-      <div className="border-t border-border pt-3">
-        <div className="mb-2 text-sm font-medium">{t("Setup Progress")}</div>
+        <label
+          className={`flex flex-1 items-center justify-between gap-4 rounded-lg border border-border bg-muted/40 p-3${modeLocked ? "" : " cursor-pointer"}`}
+          id="dsh-remote-access-row"
+        >
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="flex flex-wrap items-baseline gap-x-2">
+              <span className="text-sm font-medium">{t("Remote access")}</span>
+              <span className="text-xs opacity-60">
+                {t(isRemote ? "Remote access mode" : "Local access mode")}
+              </span>
+            </span>
+            <span className="text-xs opacity-60">
+              {modeLocked
+                ? t("dsh web is running; stop it before switching the access mode.")
+                : t("Switching the access mode only selects the setup/close flow; click Start or Stop below to apply it. It does not start or stop anything by itself.")}
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className={TOGGLE}
+            id="toggle-dsh-remote-access"
+            checked={isRemote}
+            disabled={busy || modeLocked}
+            onChange={(e) => void switchMode(e.target.checked ? "remote" : "local")}
+          />
+        </label>
+      </section>
+
+      {/* 进度卡：状态链时间轴 */}
+      <section className="rounded-xl border border-border bg-card p-4 text-card-foreground shadow-xs">
+        <div className="mb-3 text-sm font-medium">{t("Setup Progress")}</div>
         <div className="flex flex-col">
           {timeline.map((step) => (
             <div className="timeline-node" data-state={step.state} key={step.index}>
@@ -433,7 +452,7 @@ export function DshCard() {
             </div>
           ))}
         </div>
-      </div>
+      </section>
     </div>
   );
 }
