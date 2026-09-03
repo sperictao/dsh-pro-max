@@ -445,3 +445,11 @@
 .update-badge:hover { background-color: rgb(22 163 74 / 0.08); }
 [data-theme$="-dark"] .update-badge { color: #4ade80; }
 [data-theme$="-dark"] .update-badge:hover { background-color: rgb(74 222 128 / 0.12); }
+
+/* 收藏星标切换回弹：外层 span 以 favorited 为 key 重挂载重播 */
+.star-pop { animation: star-pop 0.3s ease; }
+@keyframes star-pop {
+  0% { transform: scale(0.6); }
+  60% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}

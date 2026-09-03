@@ -169,29 +169,38 @@ function DiscoverPane() {
         </p>
       )}
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <input
-          className={`${INPUT} max-w-72`}
-          placeholder={t("Search plugins…")}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          id="market-search"
-        />
-        <select className={`${SELECT} w-44`} value={category} onChange={(e) => setCategory(e.target.value)} id="market-category">
-          <option value="">{t("All Categories")}</option>
-          {categories.map(([c, n]) => (
-            <option key={c} value={c}>
-              {`${catalog?.categories?.[c]?.[locale] ?? c} (${n})`}
-            </option>
-          ))}
-        </select>
-        <select className={`${SELECT} w-40`} value={sort} onChange={(e) => setSort(e.target.value as "stars" | "name")} id="market-sort">
-          <option value="stars">{t("Most Stars")}</option>
-          <option value="name">{t("By Name")}</option>
-        </select>
-        <span className="ml-auto text-xs opacity-60" id="market-count">
-          {t("{{count}} plugins", { count: filtered.length })}
-        </span>
+      {/* 筛选区两行制：分类/排序一行；搜索框弹性占满与计数同行（计数右对齐） */}
+      <div className="mb-4 flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <select className={`${SELECT} w-44`} value={category} onChange={(e) => setCategory(e.target.value)} id="market-category">
+            <option value="">{t("All Categories")}</option>
+            {categories.map(([c, n]) => (
+              <option key={c} value={c}>
+                {`${catalog?.categories?.[c]?.[locale] ?? c} (${n})`}
+              </option>
+            ))}
+          </select>
+          <select className={`${SELECT} w-40`} value={sort} onChange={(e) => setSort(e.target.value as "stars" | "name")} id="market-sort">
+            <option value="stars">{t("Most Stars")}</option>
+            <option value="name">{t("By Name")}</option>
+          </select>
+        </div>
+        {/* 计数徽章化（与卡内灰徽章同一语言），与搜索框留大间隔（gap-10） */}
+        <div className="flex items-center gap-10">
+          <input
+            className={`${INPUT} flex-1`}
+            placeholder={t("Search plugins…")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            id="market-search"
+          />
+          <span
+            className="shrink-0 whitespace-nowrap rounded bg-muted px-3.5 py-1.5 text-sm font-medium tabular-nums text-muted-foreground"
+            id="market-count"
+          >
+            {t("{{count}} plugins", { count: filtered.length })}
+          </span>
+        </div>
       </div>
 
       {!catalog && catalogBusy && <p className="text-sm opacity-60">{t("Loading catalog…")}</p>}
@@ -498,17 +507,24 @@ function MarketCard({
         {t("Install failed: {{error}}", { error: installError?.message ?? "" })}
       </span>
     ) : installed ? (
-      <span className="text-xs">
-        {t("Installed")}
+      // 安装事实用徽章呈现（与卡内 deprecated/managed 徽章同一语言），
+      // 网格扫读时绿=已装、灰=未装一眼分层；版本号 mono 跟在徽章右侧
+      <span className="flex min-w-0 items-center gap-1.5 text-xs">
+        <span className="inline-flex shrink-0 items-center gap-1.5 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+          {t("Installed")}
+        </span>
         {current && (
-          <span className="ml-1.5 font-mono">
+          <span className="font-mono">
             v{current}
             {outdated && <span className="ml-1 text-emerald-600 dark:text-emerald-400">→ v{latest}</span>}
           </span>
         )}
       </span>
     ) : (
-      <span className="text-xs opacity-50">{t("Not installed")}</span>
+      <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+        {t("Not installed")}
+      </span>
     );
 
   const actions: ReactNode =
@@ -608,18 +624,31 @@ function MarketCard({
             </span>
           )}
         </div>
-        {/* 收藏星标：未收藏随整卡悬浮/键盘聚焦显隐，已收藏常驻（amber 实心）；
-            纯落盘卡片（目录缺位）无星标 */}
+        {/* 收藏星标：已收藏 amber 实心，未收藏随整卡悬浮/键盘聚焦显现；
+            内层 span 以 favorited 为 key，切换时重挂载重播 pop 动画，按钮本体
+            不重挂载、焦点保留。纯落盘卡片（目录缺位）无星标 */}
         {plugin && (
           <button
-            className={`shrink-0 text-sm leading-none ${
-              favorited ? "text-amber-500" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+            type="button"
+            className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+              favorited ? "text-amber-500" : "text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
             }`}
             onClick={onToggleFavorite}
+            aria-pressed={favorited}
             aria-label={`${favorited ? t("Remove from favorites") : t("Add to favorites")} ${name}`}
             title={favorited ? t("Remove from favorites") : t("Add to favorites")}
           >
-            {favorited ? "★" : "☆"}
+            <span key={favorited ? "on" : "off"} className="star-pop flex">
+              <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                <path
+                  d="M12 2.5l2.9 5.9 6.5.95-4.7 4.6 1.1 6.5L12 17.4l-5.8 3.05 1.1-6.5-4.7-4.6 6.5-.95z"
+                  fill={favorited ? "currentColor" : "none"}
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
           </button>
         )}
       </div>
