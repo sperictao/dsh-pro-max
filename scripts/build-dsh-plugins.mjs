@@ -16,13 +16,13 @@ const lockDir = resolve(root, ".artifacts/dsh-plugins.lock");
 const plugins = [
   {
     source: "vendor/dsh-client-connection-authz",
-    commit: "11929472460dd4d2c8bddc64fcb7a652152f32b8",
-    output: "dsh-client-connection-authz-11929472460d.tgz",
+    commit: "8a27dc344a79acdb59af19a708acb206fab28ece",
+    output: "dsh-client-connection-authz-8a27dc344a79.tgz",
   },
   {
     source: "vendor/dsh-auth-tailscale",
-    commit: "57ca6cab6b3f626315e46f40bbb7b738ca355528",
-    output: "dsh-auth-tailscale-57ca6cab6b3f.tgz",
+    commit: "5958d1ed265186af02fbd40ad2e804072a5ed95a",
+    output: "dsh-auth-tailscale-5958d1ed2651.tgz",
   },
 ];
 

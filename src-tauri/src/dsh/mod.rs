@@ -94,8 +94,8 @@ const DSH_PACKAGE: &str = "@deepseek-ai/dsh";
 const SUPPORTED_DSH_VERSION: &str = "0.1.2-alpha.4";
 const CONNECTION_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-client-connection-authz";
 const AUTH_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-auth-tailscale";
-const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-11929472460d.tgz";
-const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-57ca6cab6b3f.tgz";
+const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-8a27dc344a79.tgz";
+const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-5958d1ed2651.tgz";
 const TAILSCALE_LOGIN_ENV: &str = "DSH_TAILSCALE_ALLOWED_LOGINS";
 const LOCAL_ONLY_LOGIN: &str = "local-only@localhost.invalid";
 /// 远程特权接口（settings/credentials/host 等 loopback authority）与普通远程
