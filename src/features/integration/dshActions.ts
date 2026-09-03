@@ -55,6 +55,14 @@ export function localStatusTextKey(s: DshStatus): string {
   return "Local access ready";
 }
 
+// 状态行文案总入口（首页状态球与卡片状态行共用）：流程进行中 → Working…，
+// 尚无检测结果 → Detecting…，其余按访问模式取对应状态键
+export function statusLineKey(status: DshStatus | null, busy: boolean, isRemote: boolean): string {
+  if (busy) return "Working…";
+  if (!status) return "Detecting…";
+  return isRemote ? statusTextKey(status) : localStatusTextKey(status);
+}
+
 // 由检测结果推导「就绪时间轴」：已满足的步骤标 done，其余 pending（远程 8 步）
 export function timelineFromStatus(s: DshStatus): DshStepEvent[] {
   const allReady =

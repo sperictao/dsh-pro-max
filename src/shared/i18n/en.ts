@@ -152,6 +152,7 @@ export const en = {
   "Source code, issue tracker, and release history.": "Source code, issue tracker, and release history.",
   "dsh is the DeepSeek Harness CLI; this app bundles a verified compatibility stack (CLI + authorization plugins) for one-click local & remote access.": "dsh is the DeepSeek Harness CLI; this app bundles a verified compatibility stack (CLI + authorization plugins) for one-click local & remote access.",
   "Local access to the dsh Web UI at http://127.0.0.1:3899.": "Local access to the dsh Web UI at http://127.0.0.1:3899.",
+  "The access address appears here while dsh web is running.": "The access address appears here while dsh web is running.",
   "One-click start dsh web": "One-click start dsh web",
   "One-click stop dsh web": "One-click stop dsh web",
   "One-click restart dsh web": "One-click restart dsh web",

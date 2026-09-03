@@ -24,6 +24,10 @@ export const BTN_OUTLINE =
 export const BTN_DANGER =
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground bg-destructive text-destructive-foreground hover:bg-destructive/90 h-9 px-4";
 
+// v0.6.2 首页形态的实心危险按钮（disabled 整体半透明），首页回退后继续由 DshCard 使用
+export const BTN_DESTRUCTIVE =
+  "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-destructive text-destructive-foreground hover:bg-destructive/90 h-9 px-4";
+
 export const BTN_PRIMARY_LG =
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md text-base font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-12 w-64";
 

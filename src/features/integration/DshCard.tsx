@@ -1,4 +1,6 @@
-// dsh 卡片：DeepSeek Harness 访问模式（本地/远程）切换 + 一键启动/关闭 + 状态链时间轴
+// dsh 首页主视图：标题行（大写 DEEPSEEK HARNESS + 版本/条件操作胶囊）+
+// 状态球区（StatusBall，含状态文字与访问模式说明）+ 访问模式行卡 + dsh 卡片
+// （状态诊断、一键操作、流程时间轴）。
 // 模式开关只是选择访问模式（本地 = 127.0.0.1:3899，远程 = 追加 Tailscale HTTPS），
 // 不执行任何启用/停止；一键启动/关闭/重启的流程实现在 dshActions（与托盘共用），
 // 这里只负责触发。时间轴步骤由事件桥写入 store.dshTimeline；
@@ -9,10 +11,10 @@ import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
-import { BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
-import type { DshAccessMode, DshStatus, DshStepEvent } from "@/shared/types";
+import { BTN_DESTRUCTIVE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
+import type { DshAccessMode, DshStepEvent } from "@/shared/types";
+import { StatusBall } from "./StatusBall";
 import {
-  localStatusTextKey,
   localTimelineFromStatus,
   proxyBypassHostForRemoteUrl,
   restartDshWeb,
@@ -54,15 +56,7 @@ function StepMarker({ state }: { state: DshStepEvent["state"] }) {
   }
 }
 
-// 状态点色调（纯呈现推导）：流程进行中/检测中 → 工作脉冲，检测出错 → 错误，
-// 服务运行中 → 运行绿，其余 → 中性
-function statusTone(status: DshStatus | null, busy: boolean): "busy" | "failed" | "running" | "idle" {
-  if (busy || status === null) return "busy";
-  if (status.error) return "failed";
-  return status.dshRunning ? "running" : "idle";
-}
-
-// 单个可用地址行：地址 + 复制/打开（本地与远程各一行，互不混淆）
+// 地址行：URL 胶囊靠左、复制/打开靠右（自按钮行右侧迁来，独占一行）
 function AddressRow({
   url,
   onCopy,
@@ -76,10 +70,12 @@ function AddressRow({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-wrap items-center justify-end gap-1.5">
-      <span className="shrink-0 rounded-full border border-primary/20 bg-primary/15 px-2.5 py-0.5 font-mono text-xs text-primary">{url}</span>
-      <button className={BTN_SM} onClick={() => void onCopy(url)}>{t("Copy")}</button>
-      <button className={BTN_SM} disabled={openDisabled} onClick={() => void onOpen(url)}>{t("Open")}</button>
+    <div className="flex items-center justify-between gap-2">
+      <span className="min-w-0 truncate rounded-full bg-primary/15 px-2.5 py-0.5 font-mono text-xs text-primary">{url}</span>
+      <span className="flex shrink-0 items-center gap-1.5">
+        <button className={BTN_SM} onClick={() => void onCopy(url)}>{t("Copy")}</button>
+        <button className={BTN_SM} disabled={openDisabled} onClick={() => void onOpen(url)}>{t("Open")}</button>
+      </span>
     </div>
   );
 }
@@ -258,19 +254,83 @@ export function DshCard() {
     : null;
   const proxyBypassHost = proxyBypassHostForRemoteUrl(status?.url ?? null);
 
-  const statusText = busy ? t("Working…") : status ? t(isRemote ? statusTextKey(status) : localStatusTextKey(status)) : t("Detecting…");
+  // 卡内诊断区：检测错误/超版提示与远程告警盒（状态文字已由球区承载）。
+  // 全部条件为假时整块不渲染，避免空块占一段间距
+  const showDiagnostics =
+    !!status &&
+    (((!!status.error || status.dshVersionAboveSupported) && !busy) ||
+      (isRemote &&
+        (status.remoteUrlAccess === "capability_denied" ||
+          (status.remoteUrlAccess === "proxy_interference" && !!proxyBypassHost) ||
+          (status.remoteUrlAccess === "ready" && !!status.url && !busy))));
 
   return (
-    <div className="flex flex-col gap-5">
-      {/* 状态英雄区：品牌降为眉题，状态文案升为页面主标题，一眼读到达之处 */}
-      <header className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="text-xs font-medium uppercase tracking-widest opacity-60">{t("DeepSeek Harness")}</div>
-          <div className="mt-2 flex items-center gap-2.5">
-            <span aria-hidden className="dsh-status-dot shrink-0" data-tone={statusTone(status, busy)} />
-            <h1 className="truncate text-2xl font-semibold tracking-tight">{statusText}</h1>
-          </div>
-          <div className="mt-1.5 flex flex-col gap-1">
+    <div className="flex flex-col gap-4">
+      {/* 标题行：升到页面顶部（状态球上方），右侧为版本胶囊与条件操作胶囊 */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm font-medium uppercase">{t("DeepSeek Harness")}</div>
+        <div className="flex min-w-0 items-center justify-end gap-2">
+          {status?.dshVersion && (
+            <span className="shrink-0 rounded-full border border-border px-2.5 py-0.5 font-mono text-xs opacity-70">
+              {status.dshVersion}
+            </span>
+          )}
+          {/* 修复只在版本不兼容时出现：回退到 Launcher 锁定栈（装回 rc 钉版 + 插件）。
+              版本够但缺插件不再强制降级 dsh，由下方状态行引导走一键启动安装插件 */}
+          {status && !status.dshCompatible && (
+            <button
+              className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground whitespace-nowrap transition-colors outline-none hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+              disabled={busy}
+              onClick={() => void repair()}
+            >
+              {t("Repair dsh stack ({{version}})", { version: status.supportedVersion })}
+            </button>
+          )}
+          {/* 卸载授权插件：摆脱 rc 钉版插件的纯本地入口；远程授权链路随之失效 */}
+          {status?.pluginsInstalled && (
+            <button
+              className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+              disabled={busy}
+              onClick={() => void removePlugins()}
+            >
+              {t("Remove authorization plugins")}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 状态球区：一眼读状态 + 访问模式说明 */}
+      <StatusBall />
+
+      {/* 访问模式行卡：只选模式不执行启停，应用见下方一键按钮；紧跟球区说明小字 */}
+      <label
+        className={`flex items-center justify-between gap-4 rounded-lg border border-border p-3${modeLocked ? "" : " cursor-pointer"}`}
+        id="dsh-remote-access-row"
+      >
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm">{t("Remote access")}</span>
+          <span className="text-sm">
+            {t(isRemote ? "Remote access mode" : "Local access mode")}
+          </span>
+          <span className="text-xs opacity-60">
+            {modeLocked
+              ? t("dsh web is running; stop it before switching the access mode.")
+              : t("Switching the access mode only selects the setup/close flow; click Start or Stop below to apply it. It does not start or stop anything by itself.")}
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          className={TOGGLE}
+          id="toggle-dsh-remote-access"
+          checked={isRemote}
+          disabled={busy || modeLocked}
+          onChange={(e) => void switchMode(e.target.checked ? "remote" : "local")}
+        />
+      </label>
+
+      <div className="rounded-xl border border-border bg-card text-card-foreground flex flex-col gap-3 p-4">
+        {showDiagnostics && (
+          <div className="flex flex-col gap-1.5 min-w-0">
             {status?.error && !busy && (
               <div className="text-xs text-destructive">
                 {t("dsh integration check failed: {{error}}", { error: status.error })}
@@ -281,13 +341,10 @@ export function DshCard() {
                 {t("Newer than the verified stack ({{version}}); authorization plugins may be incompatible", { version: status.supportedVersion })}
               </div>
             )}
-            {isRemote ? (
+            {isRemote && (
               <>
-                <div className="text-xs opacity-60">
-                  {t("Remote access to the dsh Web UI over Tailscale HTTPS: https://<hostname>.ts.net → dsh web :3899. Remote settings and credentials require the configured admin capability in tailnet grants.")}
-                </div>
                 {status?.remoteUrlAccess === "capability_denied" ? (
-                  <div className="mt-1 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-capability-warning">
+                  <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-capability-warning">
                     <div className="font-medium text-destructive">
                       {t("Remote capability grant denied")}
                     </div>
@@ -296,7 +353,7 @@ export function DshCard() {
                     </div>
                   </div>
                 ) : status?.remoteUrlAccess === "proxy_interference" && proxyBypassHost ? (
-                  <div className="mt-1 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-local-proxy-warning">
+                  <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs" id="dsh-local-proxy-warning">
                     <div className="font-medium text-destructive">
                       {t("This Mac can reach the service directly, but its proxy blocks the same Tailscale URL.")}
                     </div>
@@ -329,46 +386,20 @@ export function DshCard() {
                   </div>
                 )}
               </>
-            ) : (
-              <div className="text-xs opacity-60">
-                {t("Local access to the dsh Web UI at http://127.0.0.1:3899.")}
-              </div>
             )}
           </div>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          {status?.dshVersion && (
-            <span className="rounded-full border border-border px-2.5 py-0.5 font-mono text-xs opacity-70">
-              {status.dshVersion}
-            </span>
-          )}
-          {/* 修复只在版本不兼容时出现：回退到 Launcher 锁定栈（装回 rc 钉版 + 插件）。
-              版本够但缺插件不再强制降级 dsh，由状态区引导走一键启动安装插件 */}
-          {status && !status.dshCompatible && (
-            <button
-              className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground whitespace-nowrap transition-colors outline-none hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-              disabled={busy}
-              onClick={() => void repair()}
-            >
-              {t("Repair dsh stack ({{version}})", { version: status.supportedVersion })}
-            </button>
-          )}
-          {/* 卸载授权插件：摆脱 rc 钉版插件的纯本地入口；远程授权链路随之失效 */}
-          {status?.pluginsInstalled && (
-            <button
-              className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-              disabled={busy}
-              onClick={() => void removePlugins()}
-            >
-              {t("Remove authorization plugins")}
-            </button>
-          )}
-        </div>
-      </header>
+        )}
 
-      {/* 控制台卡：一键操作 + 访问地址 + 访问模式 */}
-      <section className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground shadow-xs">
-        <div className="flex flex-wrap items-center gap-2">
+        {activeUrl && (
+          <AddressRow
+            url={activeUrl}
+            onCopy={copyUrl}
+            onOpen={open}
+            openDisabled={isRemote && status?.remoteUrlAccess !== "ready"}
+          />
+        )}
+
+        <div className="flex flex-wrap items-center justify-center gap-2">
           <button
             className={BTN_PRIMARY}
             disabled={busy || !!status?.dshRunning}
@@ -377,82 +408,44 @@ export function DshCard() {
             {startBusy ? t("Starting...") : t("One-click start dsh web")}
           </button>
           <button
-            className={BTN_DANGER}
+            className={BTN_DESTRUCTIVE}
             disabled={busy || !status?.dshRunning}
             onClick={() => void stopDshWeb()}
           >
             {stopBusy ? t("Stopping...") : t("One-click stop dsh web")}
           </button>
           <button
-            className={BTN_OUTLINE}
+            className={BTN_PRIMARY}
             disabled={busy || !status?.dshRunning}
             onClick={() => void restartDshWeb()}
           >
             {restartBusy ? t("Restarting...") : t("One-click restart dsh web")}
           </button>
-          <div className="ml-auto flex min-w-0 items-center">
-            {activeUrl && (
-              <AddressRow
-                url={activeUrl}
-                onCopy={copyUrl}
-                onOpen={open}
-                openDisabled={isRemote && status?.remoteUrlAccess !== "ready"}
-              />
-            )}
+        </div>
+
+        <div className="border-t border-border pt-3">
+          <div className="mb-2 text-sm font-medium">{t("Setup Progress")}</div>
+          <div className="flex flex-col">
+            {timeline.map((step) => (
+              <div className="timeline-node" data-state={step.state} key={step.index}>
+                <div className="timeline-marker">
+                  <StepMarker state={step.state} />
+                </div>
+                <div className="timeline-content">
+                  <div className="timeline-title">{t(STEP_TITLES[step.id] ?? step.id)}</div>
+                  {step.detail && <div className="timeline-detail">{step.detail}</div>}
+                  {step.state === "failed" && (step.problem || step.solution) && (
+                    <div className="timeline-issue">
+                      {step.problem && <div className="timeline-problem">{step.problem}</div>}
+                      {step.solution && <div className="timeline-solution">{step.solution}</div>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         </div>
-
-        <label
-          className={`flex flex-1 items-center justify-between gap-4 rounded-lg border border-border bg-muted/40 p-3${modeLocked ? "" : " cursor-pointer"}`}
-          id="dsh-remote-access-row"
-        >
-          <span className="flex min-w-0 flex-col gap-0.5">
-            <span className="flex flex-wrap items-baseline gap-x-2">
-              <span className="text-sm font-medium">{t("Remote access")}</span>
-              <span className="text-xs opacity-60">
-                {t(isRemote ? "Remote access mode" : "Local access mode")}
-              </span>
-            </span>
-            <span className="text-xs opacity-60">
-              {modeLocked
-                ? t("dsh web is running; stop it before switching the access mode.")
-                : t("Switching the access mode only selects the setup/close flow; click Start or Stop below to apply it. It does not start or stop anything by itself.")}
-            </span>
-          </span>
-          <input
-            type="checkbox"
-            className={TOGGLE}
-            id="toggle-dsh-remote-access"
-            checked={isRemote}
-            disabled={busy || modeLocked}
-            onChange={(e) => void switchMode(e.target.checked ? "remote" : "local")}
-          />
-        </label>
-      </section>
-
-      {/* 进度卡：状态链时间轴 */}
-      <section className="rounded-xl border border-border bg-card p-4 text-card-foreground shadow-xs">
-        <div className="mb-3 text-sm font-medium">{t("Setup Progress")}</div>
-        <div className="flex flex-col">
-          {timeline.map((step) => (
-            <div className="timeline-node" data-state={step.state} key={step.index}>
-              <div className="timeline-marker">
-                <StepMarker state={step.state} />
-              </div>
-              <div className="timeline-content">
-                <div className="timeline-title">{t(STEP_TITLES[step.id] ?? step.id)}</div>
-                {step.detail && <div className="timeline-detail">{step.detail}</div>}
-                {step.state === "failed" && (step.problem || step.solution) && (
-                  <div className="timeline-issue">
-                    {step.problem && <div className="timeline-problem">{step.problem}</div>}
-                    {step.solution && <div className="timeline-solution">{step.solution}</div>}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      </div>
     </div>
   );
 }

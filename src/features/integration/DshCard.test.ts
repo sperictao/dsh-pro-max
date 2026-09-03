@@ -177,6 +177,7 @@ describe("remote URL verification flow", () => {
 
     render(createElement(DshCard));
 
+    // 两处：状态球文字 + 告警盒标题（卡片状态行已移除，状态文字由球区承载）
     expect(await screen.findAllByText("Remote capability grant denied")).toHaveLength(2);
     expect(screen.getByText(
       "Grant TCP 443 and the configured use/admin capabilities to this identity and dsh node in the same tailnet grant, then stop and run one-click start again.",

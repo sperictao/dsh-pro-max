@@ -154,6 +154,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Source code, issue tracker, and release history.": "源代码、问题跟踪与历史版本。",
   "dsh is the DeepSeek Harness CLI; this app bundles a verified compatibility stack (CLI + authorization plugins) for one-click local & remote access.": "dsh 是 DeepSeek Harness CLI；本应用内置验证过的兼容栈（CLI + 授权插件），支持一键本地与远程访问。",
   "Local access to the dsh Web UI at http://127.0.0.1:3899.": "在 http://127.0.0.1:3899 本地访问 dsh Web UI。",
+  "The access address appears here while dsh web is running.": "dsh web 运行期间，访问地址显示在这里。",
   "One-click start dsh web": "一键启动 dsh web",
   "One-click stop dsh web": "一键关闭 dsh web",
   "One-click restart dsh web": "一键重启 dsh web",
