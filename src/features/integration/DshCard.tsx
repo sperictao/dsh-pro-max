@@ -490,7 +490,7 @@ export function DshCard() {
         )}
 
         <div className="border-t border-border pt-3">
-          <div className="mb-2 text-sm font-medium">{t("Setup Progress")}</div>
+          <div className="mb-2 text-sm font-medium">{t("Startup Progress")}</div>
           <div className="flex flex-col">
             {timeline.map((step) => (
               <div className="timeline-node" data-state={step.state} key={step.index}>

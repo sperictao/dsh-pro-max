@@ -162,7 +162,7 @@ export const zhCN: Record<I18nKey, string> = {
   "dsh web stopped": "dsh web 已停止",
   "dsh start failed: {{error}}": "dsh 启动失败: {{error}}",
   "Restart failed: {{error}}": "重启失败: {{error}}",
-  "Setup Progress": "安装进度",
+  "Startup Progress": "启动进度",
   "Boot Auto-start": "开机自启",
   "Auto-start the authorized dsh web service in the background at login": "登录时后台自动启动带授权的 dsh Web 服务",
   "Keeps remote access available without opening this app. Tailscale serve is managed by the Tailscale app itself.": "无需打开本应用即可保持远程访问可用。Tailscale serve 由 Tailscale 应用自身托管。",

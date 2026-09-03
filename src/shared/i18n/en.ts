@@ -160,7 +160,7 @@ export const en = {
   "dsh web stopped": "dsh web stopped",
   "dsh start failed: {{error}}": "dsh start failed: {{error}}",
   "Restart failed: {{error}}": "Restart failed: {{error}}",
-  "Setup Progress": "Setup Progress",
+  "Startup Progress": "Startup Progress",
   "Boot Auto-start": "Boot Auto-start",
   "Auto-start the authorized dsh web service in the background at login": "Auto-start the authorized dsh web service in the background at login",
   "Keeps remote access available without opening this app. Tailscale serve is managed by the Tailscale app itself.": "Keeps remote access available without opening this app. Tailscale serve is managed by the Tailscale app itself.",
