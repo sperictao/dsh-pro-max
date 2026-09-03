@@ -224,13 +224,6 @@
 
 /* ================= 首页（dsh 控制台） ================= */
 
-/* 页首光晕：极淡 primary 顶部径向渐变，token 驱动随族随亮暗，不遮内容不接事件 */
-.home-backdrop {
-  background:
-    radial-gradient(60% 100% at 20% 0%, color-mix(in oklab, var(--primary) 6%, transparent), transparent 70%),
-    radial-gradient(50% 90% at 80% 0%, color-mix(in oklab, var(--primary) 4%, transparent), transparent 70%);
-}
-
 /* 状态点：色调走 data-tone，一塘水一个类（语义色同时间轴：ok/warn 固定，错误随族） */
 .dsh-status-dot {
   width: 0.625rem;
@@ -335,6 +328,16 @@
   font-size: 0.75rem;
   line-height: 1.5;
   opacity: 0.6;
+}
+
+/* 首页一键三键放大档：仅作用于 .dsh-actions-row 内的按钮，
+   覆盖 BTN_PRIMARY/BTN_DESTRUCTIVE/BTN_OUTLINE 共享配方的 h-9 px-4 text-sm，
+   不影响市场/设置页同配方按钮 */
+.dsh-actions-row > button {
+  height: 2.75rem;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+  font-size: 1rem;
 }
 
 @keyframes service-status-pulse {

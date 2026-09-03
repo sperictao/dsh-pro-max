@@ -212,7 +212,7 @@ describe("remote URL verification flow", () => {
     render(createElement(DshCard));
     await waitFor(() => expect(detect).toHaveBeenCalledWith(false));
 
-    await userEvent.click(screen.getByRole("checkbox", { name: /Remote access/i }));
+    await userEvent.click(screen.getByRole("checkbox", { name: /access mode/i }));
 
     await waitFor(() => expect(detect).toHaveBeenCalledWith(true));
   });

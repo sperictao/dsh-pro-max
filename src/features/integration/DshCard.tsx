@@ -1,4 +1,4 @@
-// dsh 首页主视图：标题行（大写 DEEPSEEK HARNESS + 版本/条件操作胶囊）+
+// dsh 首页主视图：标题行（eyebrow 服务名+版本随行，右侧条件操作胶囊）+
 // 状态球区（StatusBall，含状态文字与访问模式说明）+ 访问模式行卡 + dsh 卡片
 // （状态诊断、一键操作、流程时间轴）。
 // 模式开关只是选择访问模式（本地 = 127.0.0.1:3899，远程 = 追加 Tailscale HTTPS），
@@ -11,7 +11,7 @@ import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
-import { BTN_DESTRUCTIVE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
+import { BTN_DESTRUCTIVE, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
 import type { DshAccessMode, DshStepEvent } from "@/shared/types";
 import { StatusBall } from "./StatusBall";
 import {
@@ -323,15 +323,20 @@ export function DshCard() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* 标题行：升到页面顶部（状态球上方），右侧为版本胶囊与条件操作胶囊 */}
+      {/* 标题行：安静的 eyebrow（服务名+版本随行），右侧只留条件操作胶囊；
+          页面视觉重心让给状态球（最大字号留给当前状态） */}
       <div className="flex items-center justify-between gap-3">
-        <div className="text-sm font-medium uppercase">{t("DeepSeek Harness")}</div>
-        <div className="flex min-w-0 items-center justify-end gap-2">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span className="truncate text-xs font-medium uppercase tracking-widest opacity-60">
+            {t("DeepSeek Harness")}
+          </span>
           {status?.dshVersion && (
             <span className="shrink-0 rounded-full border border-border px-2.5 py-0.5 font-mono text-xs opacity-70">
               {status.dshVersion}
             </span>
           )}
+        </div>
+        <div className="flex min-w-0 items-center justify-end gap-2">
           {/* 修复只在版本不兼容时出现：回退到 Launcher 锁定栈（装回 rc 钉版 + 插件）。
               版本够但缺插件不再强制降级 dsh，由下方状态行引导走一键启动安装插件 */}
           {status && !status.dshCompatible && (
@@ -359,20 +364,20 @@ export function DshCard() {
       {/* 状态球区：一眼读状态 + 访问模式说明 */}
       <StatusBall />
 
-      {/* 访问模式行卡：只选模式不执行启停，应用见下方一键按钮；紧跟球区说明小字 */}
+      {/* 访问模式行卡：只选模式不执行启停，应用见下方一键按钮；紧跟球区说明小字。
+          两行制：模式名即 toggle 语义标签（可访问名），说明小字讲切换行为 */}
       <label
         className={`flex items-center justify-between gap-4 rounded-lg border border-border p-3${modeLocked ? "" : " cursor-pointer"}`}
         id="dsh-remote-access-row"
       >
         <span className="flex flex-col gap-0.5">
-          <span className="text-sm">{t("Remote access")}</span>
-          <span className="text-sm">
+          <span className="text-sm font-medium">
             {t(isRemote ? "Remote access mode" : "Local access mode")}
           </span>
           <span className="text-xs opacity-60">
             {modeLocked
               ? t("dsh web is running; stop it before switching the access mode.")
-              : t("Switching the access mode only selects the setup/close flow; click Start or Stop below to apply it. It does not start or stop anything by itself.")}
+              : t("Selects the flow used by Start and Stop below; it does not start or stop anything by itself.")}
           </span>
         </span>
         <input
@@ -386,6 +391,43 @@ export function DshCard() {
       </label>
 
       <div className="rounded-xl border border-border bg-card text-card-foreground flex flex-col gap-3 p-4">
+        {activeUrl && (
+          <AddressRow
+            url={activeUrl}
+            onCopy={copyUrl}
+            onOpen={open}
+            openDisabled={isRemote && status?.remoteUrlAccess !== "ready"}
+          />
+        )}
+
+        {/* 一键三键：样式放大档见 style.css .dsh-actions-row；my-3 加大行上下间距 */}
+        <div className="dsh-actions-row my-3 flex flex-wrap items-center justify-center gap-2">
+          <button
+            className={BTN_PRIMARY}
+            disabled={busy || !!status?.dshRunning}
+            onClick={() => void startDshWeb()}
+          >
+            {startBusy ? t("Starting...") : t("One-click start dsh web")}
+          </button>
+          <button
+            className={BTN_DESTRUCTIVE}
+            disabled={busy || !status?.dshRunning}
+            onClick={() => void stopDshWeb()}
+          >
+            {stopBusy ? t("Stopping...") : t("One-click stop dsh web")}
+          </button>
+          {/* Restart 是非主导操作：描边不与 Start 抢主色（BTN_OUTLINE 注释的本意） */}
+          <button
+            className={BTN_OUTLINE}
+            disabled={busy || !status?.dshRunning}
+            onClick={() => void restartDshWeb()}
+          >
+            {restartBusy ? t("Restarting...") : t("One-click restart dsh web")}
+          </button>
+        </div>
+
+        {/* 诊断区：检测错误/超版提示与远程告警盒（按钮行之下、时间轴之前）。
+            全部条件为假时整块不渲染，避免空块占一段间距 */}
         {showDiagnostics && (
           <div className="flex flex-col gap-1.5 min-w-0">
             {status?.error && !busy && (
@@ -446,39 +488,6 @@ export function DshCard() {
             )}
           </div>
         )}
-
-        {activeUrl && (
-          <AddressRow
-            url={activeUrl}
-            onCopy={copyUrl}
-            onOpen={open}
-            openDisabled={isRemote && status?.remoteUrlAccess !== "ready"}
-          />
-        )}
-
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <button
-            className={BTN_PRIMARY}
-            disabled={busy || !!status?.dshRunning}
-            onClick={() => void startDshWeb()}
-          >
-            {startBusy ? t("Starting...") : t("One-click start dsh web")}
-          </button>
-          <button
-            className={BTN_DESTRUCTIVE}
-            disabled={busy || !status?.dshRunning}
-            onClick={() => void stopDshWeb()}
-          >
-            {stopBusy ? t("Stopping...") : t("One-click stop dsh web")}
-          </button>
-          <button
-            className={BTN_PRIMARY}
-            disabled={busy || !status?.dshRunning}
-            onClick={() => void restartDshWeb()}
-          >
-            {restartBusy ? t("Restarting...") : t("One-click restart dsh web")}
-          </button>
-        </div>
 
         <div className="border-t border-border pt-3">
           <div className="mb-2 text-sm font-medium">{t("Setup Progress")}</div>
