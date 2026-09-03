@@ -33,6 +33,7 @@ npm-debug.log*
 
 # Local agent working notes
 .zcode/
+.impeccable/
 docs/agent/
 
 # OS metadata
