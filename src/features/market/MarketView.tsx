@@ -25,6 +25,35 @@ export function packageNameFromSpecifier(specifier: string): string | null {
   return s || null;
 }
 
+/// specifier → 目录条目的 name。目录条目与安装 specifier 同源于目录
+/// install 命令串的 ` add ` 后缀，命名规范稳定（owner/name、github:owner/repo、
+/// npm 裸包名）：prefix 形态取最后一段（github:owner/repo → repo），npm 形态
+/// 即包名。Rust 侧 specifier_to_catalog_name 同一套语义，改一侧必须同步另一侧
+export function specifierToCatalogName(specifier: string): string {
+  const i = specifier.lastIndexOf("/");
+  const last = i >= 0 ? specifier.slice(i + 1) : specifier;
+  return packageNameFromSpecifier(last) ?? last;
+}
+
+/// 协议形态安装的已装匹配：specifier 非 npm 形态时按"spec 的仓库标识是
+/// specifier 前缀、边界在 # / / ? - 或结尾"（git+https://... 与
+/// github:owner/repo 同属仓库族；- 覆盖 dsh-relay 这类连字符前缀兄弟的
+/// 误撞）再要求目录名在 spec 中出现（specifier 与落盘键名不一致的唯一
+/// 信号）双条件判定；命中数量唯一才采信，如实不落猜。命中为 0 或 ≥2 → null
+export function protocolInstalledMatch(
+  specifier: string,
+  catalogName: string,
+  installed: InstalledPlugin[],
+): InstalledPlugin | null {
+  const hits = installed.filter(
+    (p) =>
+      (p.spec === specifier ||
+        (p.spec.startsWith(specifier) && ["#", "/", "?", "-"].includes(p.spec.charAt(specifier.length)))) &&
+      p.spec.includes(catalogName),
+  );
+  return hits.length === 1 ? hits[0] : null;
+}
+
 /// 目录分类表的语言键：目录只供应 en/zh 两语，界面语言映射到其一
 function catalogLocale(language: string): "en" | "zh" {
   return language.startsWith("zh") ? "zh" : "en";
@@ -155,7 +184,6 @@ function DiscoverPane() {
           {catalogBusy ? t("Working…") : t("Refresh")}
         </button>
       </div>
-
       {/* 快照数据（首屏直读或断网降级）如实标注来源与时点；刷新进行中不标注，
           等结果落定：成功则替换为在线目录，失败则横幅如实说明 */}
       {catalog?.fromSnapshot && !catalogBusy && (
@@ -210,8 +238,14 @@ function DiscoverPane() {
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
         {filtered.slice(0, visible).map((p) => {
-          const pkg = packageNameFromSpecifier(p.installSpecifier ?? "");
-          const installedPlugin = pkg !== null ? (installedByName.get(pkg) ?? null) : null;
+          const spec = p.installSpecifier ?? null;
+          const pkg = spec !== null ? packageNameFromSpecifier(spec) : null;
+          const installedPlugin =
+            pkg !== null
+              ? (installedByName.get(pkg) ?? null)
+              : spec !== null
+                ? protocolInstalledMatch(spec, specifierToCatalogName(spec), installed)
+                : null;
           return (
             <MarketCard
               key={p.fullName}
@@ -276,8 +310,14 @@ function FavoritesPane() {
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
         {plugins.map((p) => {
-          const pkg = packageNameFromSpecifier(p.installSpecifier ?? "");
-          const installedPlugin = pkg !== null ? (installedByName.get(pkg) ?? null) : null;
+          const spec = p.installSpecifier ?? null;
+          const pkg = spec !== null ? packageNameFromSpecifier(spec) : null;
+          const installedPlugin =
+            pkg !== null
+              ? (installedByName.get(pkg) ?? null)
+              : spec !== null
+                ? protocolInstalledMatch(spec, specifierToCatalogName(spec), installed)
+                : null;
           return (
             <MarketCard
               key={p.fullName}

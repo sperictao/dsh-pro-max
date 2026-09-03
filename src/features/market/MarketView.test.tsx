@@ -5,7 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import { useAppStore } from "@/shared/store";
 import type { InstalledPlugin, InstallOutcome, MarketCatalog } from "@/shared/types";
-import { MarketView, packageNameFromSpecifier } from "./MarketView";
+import { MarketView, packageNameFromSpecifier, protocolInstalledMatch, specifierToCatalogName } from "./MarketView";
 
 const catalog: MarketCatalog = {
   updated: "2026-08-30",
@@ -101,6 +101,46 @@ describe("packageNameFromSpecifier", () => {
     expect(packageNameFromSpecifier("github:owner/repo#c0ffee")).toBeNull();
     expect(packageNameFromSpecifier("npm:pkg@latest")).toBeNull();
     expect(packageNameFromSpecifier("file:/x/y.tgz")).toBeNull();
+  });
+});
+
+describe("specifierToCatalogName", () => {
+  it("derives the catalog entry name from the install specifier", () => {
+    expect(specifierToCatalogName("github:toby-bridges/api-relay-audit")).toBe("api-relay-audit");
+    expect(specifierToCatalogName("git+https://github.com/omdsh-dev/dsh-at-file.git")).toBe("dsh-at-file.git");
+    expect(specifierToCatalogName("dsh-context@1.2.3")).toBe("dsh-context");
+    expect(specifierToCatalogName("@scope/pkg@1.0")).toBe("pkg");
+  });
+});
+
+describe("protocolInstalledMatch", () => {
+  it("matches a github-installed plugin whose key differs from the catalog name", () => {
+    const list: InstalledPlugin[] = [
+      { name: "dsh-api-relay-audit", spec: "github:toby-bridges/api-relay-audit", managed: false },
+      { name: "dsh-at-file", spec: "git+https://github.com/omdsh-dev/dsh-at-file.git", managed: false },
+    ];
+    const hit = protocolInstalledMatch("github:toby-bridges/api-relay-audit", "api-relay-audit", list);
+    expect(hit?.name).toBe("dsh-api-relay-audit");
+  });
+
+  it("matches a specifier with a trailing ref on disk (#sha/#path:)", () => {
+    const list: InstalledPlugin[] = [
+      { name: "dsh-api-relay-audit", spec: "github:toby-bridges/api-relay-audit#c0ffee", managed: false },
+    ];
+    const hit = protocolInstalledMatch("github:toby-bridges/api-relay-audit", "api-relay-audit", list);
+    expect(hit?.name).toBe("dsh-api-relay-audit");
+  });
+
+  it("refuses ambiguous prefix hits (dsh vs dsh-relay)", () => {
+    const list: InstalledPlugin[] = [
+      { name: "dsh", spec: "github:owner/dsh", managed: false },
+      { name: "dsh-relay", spec: "github:owner/dsh-relay", managed: false },
+    ];
+    expect(protocolInstalledMatch("github:owner/dsh", "dsh", list)).toBeNull();
+  });
+
+  it("refuses a zero hit", () => {
+    expect(protocolInstalledMatch("github:owner/missing", "missing", [])).toBeNull();
   });
 });
 

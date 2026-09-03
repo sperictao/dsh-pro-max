@@ -1163,8 +1163,8 @@
     use super::market::{
         audit_line, blocked_build_packages, catalog_from_raw, catalog_snapshot_decision, install_failure_message,
         install_receipt, merge_allow_builds, package_name_from_specifier, policy_allows, policy_entries_from_raw,
-        resolve_catalog_url, load_catalog_snapshot_file, write_catalog_snapshot_file, CatalogLoadError, InstallOutcome,
-        InstalledPlugin,
+        resolve_catalog_url, load_catalog_snapshot_file, specifier_to_catalog_name, write_catalog_snapshot_file,
+        CatalogLoadError, InstallOutcome, InstalledPlugin,
     };
 
     #[test]
@@ -1211,6 +1211,25 @@
         let before = std::fs::read_to_string(&path).unwrap();
         merge_allow_builds(&path, &["node-pty".to_string()]).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// 用户手动跑过 `pnpm approve-builds` 但没完成交互：yaml 留下
+    /// `allowBuilds: {node-pty: "set this to true or false"}` 占位符。
+    /// launcher 再次审批时必须覆盖该占位符为 true，否则重跑仍被拦
+    #[test]
+    fn merge_allow_builds_overwrites_interactive_placeholder() {
+        let dir = std::env::temp_dir().join(format!("dsh-pro-max-allow-builds-placeholder-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pnpm-workspace.yaml");
+        std::fs::write(
+            &path,
+            "packages:\n  - .\nallowBuilds:\n  node-pty: set this to true or false\n",
+        )
+        .unwrap();
+        merge_allow_builds(&path, &["node-pty".to_string()]).unwrap();
+        let v: serde_yaml::Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["allowBuilds"]["node-pty"], serde_yaml::Value::Bool(true));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1411,17 +1430,62 @@
             InstalledPlugin { name: "dsh-new".into(), spec: "dsh-new@2.0".into(), managed: false },
         ];
         // 首装：before/after 差集唯一（github: 首装只有这条路）
-        let r = install_receipt("github:owner/repo#sha", Some(vec!["old".into()]), &list).unwrap();
+        let r = install_receipt("github:owner/repo#sha", Some(vec!["old".into()]), &list, Some("repo")).unwrap();
         assert_eq!(r.name, "dsh-new");
         // 同键重装/升版：无新键，npm 名定位
-        let r = install_receipt("dsh-new@3.0", Some(vec!["old".into(), "dsh-new".into()]), &list).unwrap();
+        let r = install_receipt("dsh-new@3.0", Some(vec!["old".into(), "dsh-new".into()]), &list, Some("dsh-new")).unwrap();
         assert_eq!(r.spec, "dsh-new@2.0");
-        // github 重装：无法唯一定位 → None，不猜
+        // github 重装：键名与目录名不符（repo → dsh-new），无法唯一定位 → None，不猜
         assert!(
-            install_receipt("github:owner/repo#sha", Some(vec!["old".into(), "dsh-new".into()]), &list).is_none()
+            install_receipt("github:owner/repo#sha", Some(vec!["old".into(), "dsh-new".into()]), &list, Some("repo")).is_none()
         );
         // before 缺失时回退 npm 名
-        assert!(install_receipt("dsh-new@3.0", None, &list).is_some());
+        assert!(install_receipt("dsh-new@3.0", None, &list, Some("dsh-new")).is_some());
+    }
+
+    #[test]
+    fn install_receipt_protocol_reinstall_locates_existing_key() {
+        // api-relay-audit 场景：目录名与落盘键名不一致（api-relay-audit →
+        // dsh-api-relay-audit），spec 是唯一连接。无新键时靠
+        // protocol_installed_match 唯一命中回收据
+        let list = vec![
+            InstalledPlugin {
+                name: "dsh-api-relay-audit".into(),
+                spec: "github:toby-bridges/api-relay-audit".into(),
+                managed: false,
+            },
+            InstalledPlugin {
+                name: "dsh-at-file".into(),
+                spec: "git+https://github.com/omdsh-dev/dsh-at-file.git".into(),
+                managed: false,
+            },
+        ];
+        let before = list.iter().map(|p| p.name.clone()).collect::<Vec<_>>();
+        let r = install_receipt(
+            "github:toby-bridges/api-relay-audit",
+            Some(before),
+            &list,
+            Some(&specifier_to_catalog_name("github:toby-bridges/api-relay-audit")),
+        )
+        .unwrap();
+        assert_eq!(r.name, "dsh-api-relay-audit");
+        // 多命中（dsh 前缀兄弟）→ None
+        let list = vec![
+            InstalledPlugin { name: "dsh".into(), spec: "github:owner/dsh".into(), managed: false },
+            InstalledPlugin { name: "dsh-relay".into(), spec: "github:owner/dsh-relay".into(), managed: false },
+        ];
+        assert!(
+            install_receipt("github:owner/dsh", Some(vec![]), &list, Some("dsh")).is_none()
+        );
+    }
+
+    #[test]
+    fn specifier_to_catalog_name_mirrors_frontend_semantics() {
+        assert_eq!(specifier_to_catalog_name("github:toby-bridges/api-relay-audit"), "api-relay-audit");
+        assert_eq!(specifier_to_catalog_name("git+https://github.com/omdsh-dev/dsh-at-file.git"), "dsh-at-file.git");
+        assert_eq!(specifier_to_catalog_name("@scope/pkg@1.0"), "pkg");
+        assert_eq!(specifier_to_catalog_name("dsh-context"), "dsh-context");
+        assert_eq!(specifier_to_catalog_name("dsh-context@1.2.3"), "dsh-context");
     }
 
     #[test]

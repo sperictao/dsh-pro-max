@@ -524,6 +524,15 @@ pub(crate) fn package_name_from_specifier(specifier: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
+/// specifier → 目录条目的 name。目录条目与安装 specifier 同源于目录
+/// install 命令串的 ` add ` 后缀：prefix 形态取最后一段
+/// （github:owner/repo → repo），npm 形态即包名。前端
+/// specifierToCatalogName 同一套语义，改一侧必须同步另一侧
+pub(crate) fn specifier_to_catalog_name(specifier: &str) -> String {
+    let last = specifier.rsplit('/').next().unwrap_or(specifier);
+    package_name_from_specifier(last).unwrap_or_else(|| last.to_string())
+}
+
 /// 安装策略匹配规则（任一命中即允许）：
 /// 1. identifier 与条目完全一致；
 /// 2. 条目以 `/` 结尾 → 前缀匹配（`@scope/` 或 `github:owner/` 粒度）；
@@ -735,9 +744,18 @@ pub(crate) fn merge_allow_builds(path: &std::path::Path, packages: &[String]) ->
         .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
     let allows_map = allows.as_mapping_mut().ok_or_else(yaml_invalid)?;
     for p in packages {
-        allows_map
-            .entry(serde_yaml::Value::from(p.as_str()))
-            .or_insert(serde_yaml::Value::Bool(true));
+        let entry = allows_map.entry(serde_yaml::Value::from(p.as_str()));
+        // 保留用户显式 false；覆盖 pnpm approve-builds 交互占位符等非布尔值
+        match entry {
+            serde_yaml::mapping::Entry::Occupied(mut e) => {
+                if e.get().as_bool().is_none() {
+                    e.insert(serde_yaml::Value::Bool(true));
+                }
+            }
+            serde_yaml::mapping::Entry::Vacant(e) => {
+                e.insert(serde_yaml::Value::Bool(true));
+            }
+        }
     }
     let only = map
         .entry(serde_yaml::Value::from("onlyBuiltDependencies"))
@@ -809,12 +827,14 @@ fn append_audit(app: &tauri::AppHandle, action: &str, identifier: &str, error: O
 // ============ 安装回执 ============
 
 /// 安装回执定位：优先取 before/after 差集里的唯一新键（github: 首装只有
-/// 这条路）；差集不可用或为空时按 npm 包名定位（覆盖同键重装/升版）。
-/// 都无法唯一确定 → None，如实返回，不猜
+/// 这条路）；差集不可用或为空时按 npm 包名定位（覆盖同键重装/升版）；
+/// 协议形态重装（键已在 before，差集为空且包名解析不出）退到
+/// protocol_installed_match 找既有落点。都无法唯一确定 → None，如实返回，不猜
 pub(crate) fn install_receipt(
     specifier: &str,
     before: Option<Vec<String>>,
     list: &[InstalledPlugin],
+    catalog_name: Option<&str>,
 ) -> Option<InstallReceipt> {
     if let Some(before) = before {
         let added: Vec<&InstalledPlugin> = list.iter().filter(|p| !before.contains(&p.name)).collect();
@@ -825,11 +845,41 @@ pub(crate) fn install_receipt(
             });
         }
     }
-    let name = package_name_from_specifier(specifier)?;
-    list.iter().find(|p| p.name == name).map(|p| InstallReceipt {
+    if let Some(name) = package_name_from_specifier(specifier) {
+        return list.iter().find(|p| p.name == name).map(|p| InstallReceipt {
+            name: p.name.clone(),
+            spec: p.spec.clone(),
+        });
+    }
+    protocol_installed_match(specifier, catalog_name?, list).map(|p| InstallReceipt {
         name: p.name.clone(),
         spec: p.spec.clone(),
     })
+}
+
+/// 协议形态安装的已装匹配（前端 protocolInstalledMatch 同一套语义，改一侧
+/// 必须同步另一侧）：spec 的仓库标识是 specifier 前缀、边界在 # / / ? - 或
+/// 结尾（git+https://... 与 github:owner/repo 同属仓库族；- 覆盖 dsh-relay
+/// 这类连字符前缀兄弟的误撞），且目录名在 spec 中出现；命中数量唯一才采信
+pub(crate) fn protocol_installed_match<'a>(
+    specifier: &str,
+    catalog_name: &str,
+    list: &'a [InstalledPlugin],
+) -> Option<&'a InstalledPlugin> {
+    let mut hits = list.iter().filter(|p| {
+        (p.spec == specifier
+            || (p.spec.starts_with(specifier)
+                && p.spec[specifier.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| matches!(c, '#' | '/' | '?' | '-'))))
+            && p.spec.contains(catalog_name)
+    });
+    let first = hits.next()?;
+    if hits.next().is_some() {
+        return None;
+    }
+    Some(first)
 }
 
 // ============ IPC ============
@@ -871,7 +921,7 @@ fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcom
             append_audit(app, "add", specifier, None);
             let receipt = installed_plugins()
                 .ok()
-                .and_then(|list| install_receipt(specifier, before, &list));
+                .and_then(|list| install_receipt(specifier, before, &list, Some(&specifier_to_catalog_name(specifier))));
             Ok(InstallOutcome::Installed { receipt })
         }
         Err((raw, display)) => {
@@ -925,7 +975,7 @@ fn approve_builds_once(app: &tauri::AppHandle, specifier: &str, packages: Vec<St
             append_audit(app, "add", specifier, None);
             let receipt = installed_plugins()
                 .ok()
-                .and_then(|list| install_receipt(specifier, before, &list));
+                .and_then(|list| install_receipt(specifier, before, &list, Some(&specifier_to_catalog_name(specifier))));
             Ok(receipt)
         }
         Err((raw, display)) => {
