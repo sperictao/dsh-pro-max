@@ -4,7 +4,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
-import { BTN, BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, INPUT, SELECT } from "@/shared/lib/ui";
+import { BTN, BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, INPUT } from "@/shared/lib/ui";
 import type { InstalledPlugin, MarketCatalog, MarketPlugin, PluginUpdateInfo } from "@/shared/types";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 
@@ -169,31 +169,33 @@ function DiscoverPane() {
         </p>
       )}
 
-      {/* 筛选区两行制：分类/排序一行；搜索框弹性占满与计数同行（计数右对齐） */}
+      {/* 筛选区两行制：分类按钮组一行；搜索框 + 排序按钮组（计数左侧）+ 计数徽章一行 */}
       <div className="mb-4 flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <select className={`${SELECT} w-44`} value={category} onChange={(e) => setCategory(e.target.value)} id="market-category">
-            <option value="">{t("All Categories")}</option>
-            {categories.map(([c, n]) => (
-              <option key={c} value={c}>
-                {`${catalog?.categories?.[c]?.[locale] ?? c} (${n})`}
-              </option>
-            ))}
-          </select>
-          <select className={`${SELECT} w-40`} value={sort} onChange={(e) => setSort(e.target.value as "stars" | "name")} id="market-sort">
-            <option value="stars">{t("Most Stars")}</option>
-            <option value="name">{t("By Name")}</option>
-          </select>
+          <FilterBtn active={category === ""} onClick={() => setCategory("")}>
+            {t("All Categories")}
+          </FilterBtn>
+          {categories.map(([c, n]) => (
+            <FilterBtn key={c} active={category === c} onClick={() => setCategory(c)}>
+              {`${catalog?.categories?.[c]?.[locale] ?? c} (${n})`}
+            </FilterBtn>
+          ))}
         </div>
-        {/* 计数徽章化（与卡内灰徽章同一语言），与搜索框留大间隔（gap-10） */}
-        <div className="flex items-center gap-10">
+        {/* 搜索框与排序组之间留大间隔（gap-3 + mr-6），计数紧随排序组（gap-3） */}
+        <div className="flex items-center gap-3">
           <input
-            className={`${INPUT} flex-1`}
+            className={`${INPUT} mr-6 flex-1`}
             placeholder={t("Search plugins…")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             id="market-search"
           />
+          <FilterBtn active={sort === "stars"} onClick={() => setSort("stars")}>
+            {t("Most Stars")}
+          </FilterBtn>
+          <FilterBtn active={sort === "name"} onClick={() => setSort("name")}>
+            {t("By Name")}
+          </FilterBtn>
           <span
             className="shrink-0 whitespace-nowrap rounded bg-muted px-3.5 py-1.5 text-sm font-medium tabular-nums text-muted-foreground"
             id="market-count"
@@ -405,6 +407,23 @@ function localizedDescription(
   locale: "en" | "zh",
 ): string {
   return d[locale] ?? d.en ?? Object.values(d)[0];
+}
+
+/// 筛选按钮组单元：选中实底主色、未选描边——结构对比在 42 主题族下稳健
+function FilterBtn({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button type="button" className={active ? BTN_PRIMARY : BTN_OUTLINE} aria-pressed={active} onClick={onClick}>
+      {children}
+    </button>
+  );
 }
 
 function MarketCard({
