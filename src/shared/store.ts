@@ -297,7 +297,12 @@ export const useAppStore = create<AppStore>()((set, get) => ({
         tl.push(step);
         tl.sort((a, b) => a.index - b.index);
       }
-      return { dshTimeline: tl };
+      // running 事件兜底置位：流程真实启动后时间轴必须以事件流为准，
+      // 即使入口因并发回声没走到置位（见 dshActions start/restart 的注释）
+      return {
+        dshTimeline: tl,
+        dshHasRunSetup: step.state === "running" ? true : s.dshHasRunSetup,
+      };
     }),
   setDshTimeline: (steps) => set({ dshTimeline: steps }),
   setDownloadProgress: (p) => set({ downloadProgress: p }),
@@ -558,7 +563,7 @@ export const useAppStore = create<AppStore>()((set, get) => ({
           },
         });
         get().toast(
-          i18n.t("Update paused: approve build scripts for {{plugin}}, then retry.", { plugin: name }),
+          i18n.t("Paused: approve build scripts for {{plugin}}, then retry.", { plugin: name }),
           "info",
         );
         return false;

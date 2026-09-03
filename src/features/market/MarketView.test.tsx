@@ -228,6 +228,55 @@ describe("MarketView", () => {
     expect(checkSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("reinstall button reruns install at latest and pauses on build approval", async () => {
+    // 终端手动 add 被 pnpm 拦构建脚本留下的半成品（依赖已写入但构建未跑）
+    // 走同一修复闭环：Reinstall → 被拦 → 审批对话框
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "needsApproval",
+      packages: ["node-pty"],
+      workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    // 无更新的已装卡出 Reinstall；受管卡只读
+    await screen.findByRole("button", { name: "Reinstall dsh-better-sidebar" });
+    expect(screen.queryByRole("button", { name: "Reinstall @dsh-external/dsh-auth-tailscale" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reinstall dsh-better-sidebar" }));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual(
+      "Paused: approve build scripts for dsh-better-sidebar, then retry.",
+    );
+  });
+
+  it("outdated card offers Update instead of Reinstall", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
+      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", managed: false },
+    ]);
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "DSH-better-sidebar",
+        spec: "dsh-better-sidebar@1.0.0",
+        managed: false,
+        installedVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        updateAvailable: true,
+      },
+    ]);
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    expect(await screen.findByRole("button", { name: "Update DSH-better-sidebar" })).toBeInTheDocument();
+    // 更新本身就是重装到 latest，不与 Reinstall 同卡并存
+    expect(screen.queryByRole("button", { name: "Reinstall DSH-better-sidebar" })).not.toBeInTheDocument();
+  });
+
   it("favorites tab lists starred plugins in favorite order and allows unstarring", async () => {
     useAppStore.setState({ marketFavorites: ["some/one", "omdsh-dev/DSH-better-sidebar"] });
     const user = userEvent.setup();

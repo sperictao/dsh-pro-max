@@ -106,17 +106,12 @@ const busyNow = (): boolean => {
   return s.dshStartBusy || s.dshStopBusy || s.dshRestartBusy || s.dshRecheckBusy;
 };
 
-// 启动流程体：初始化时间轴为全 pending（随后由后端 dsh-step 事件逐步推进）→
-// 按当前模式执行 → 收尾刷新状态。busy 标志由调用方（start/restart）持有到
-// 收尾 detect 结束，避免流程未完全落地时按钮抢先可用
+// 启动流程体：时间轴骨架的初始化由入口（start/restart）负责（随后由后端
+// dsh-step 事件逐步推进）；这里按当前模式执行 → 收尾刷新状态。busy 标志由
+// 调用方持有到收尾 detect 结束，避免流程未完全落地时按钮抢先可用
 async function runStartFlow(): Promise<void> {
   const s = store();
   const isRemote = s.dshAccessMode === "remote";
-  s.setDshHasRunSetup(true);
-  const ids = isRemote ? STEP_IDS : LOCAL_STEP_IDS;
-  s.setDshTimeline(ids.map((id, index) => ({
-    index, id, state: "pending" as const, detail: null, problem: null, solution: null,
-  })));
   let succeeded = false;
   try {
     if (isRemote) {
@@ -160,8 +155,18 @@ async function runStartFlow(): Promise<void> {
 // 一键启动：按当前模式走对应启用流程。
 // 远程 → dsh_setup 全链路（dsh web + Tailscale Serve + 校验）；
 // 本地 → dsh_start_web（幂等保证 3899 就绪并返回本地地址，这里只管打开浏览器）
+// hasRunSetup 必须在 busy 守卫之前设置：托盘点击经 app.emit 广播，同窗口会
+// 收到回声再进这里，回声被守卫挡下时也要让时间轴以事件流为准——否则主流程
+// 发出的 dsh-step 事件会被状态推导视图盖掉，界面上「点了没进度」。
+// 骨架重置放在守卫之后：回声走不到这里，不会清掉主触发已推进的事件时间轴；
+// 而一次真实的新启动总是先把时间轴整体翻回 pending，再随事件逐步点亮
 export async function startDshWeb(): Promise<void> {
+  store().setDshHasRunSetup(true);
   if (busyNow()) return;
+  const ids = store().dshAccessMode === "remote" ? STEP_IDS : LOCAL_STEP_IDS;
+  store().setDshTimeline(ids.map((id, index) => ({
+    index, id, state: "pending" as const, detail: null, problem: null, solution: null,
+  })));
   store().setDshStartBusy(true);
   try {
     await runStartFlow();
@@ -173,12 +178,19 @@ export async function startDshWeb(): Promise<void> {
 // 一键重启：先关后启，沿用当前访问模式（运行中模式锁定，重启不改变服务形态）。
 // dsh_stop 幂等；关闭失败则中止重启，避免在未知状态上强行拉起
 export async function restartDshWeb(): Promise<void> {
+  store().setDshHasRunSetup(true);
   if (busyNow()) return;
+  const ids = store().dshAccessMode === "remote" ? STEP_IDS : LOCAL_STEP_IDS;
+  store().setDshTimeline(ids.map((id, index) => ({
+    index, id, state: "pending" as const, detail: null, problem: null, solution: null,
+  })));
   store().setDshRestartBusy(true);
   try {
     await cmd.dshStop();
     await runStartFlow();
   } catch (e) {
+    // stop 阶段失败时流程根本没跑起来，回到状态驱动视图，不留半吊子时间轴
+    store().setDshHasRunSetup(false);
     store().toast(i18n.t("Restart failed: {{error}}", { error: String(e) }), "error");
   } finally {
     store().setDshRestartBusy(false);

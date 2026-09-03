@@ -461,6 +461,8 @@ function MarketCard({
   favorited: boolean;
   onToggleFavorite: () => void;
   onInstall?: () => void;
+  /** 更新/重装共用：以 name@latest 重跑安装，同一命令通道；已装页必传，
+      发现/收藏页不传（永不渲染对应分支） */
   onUpdate?: () => void;
   onRemove?: () => void;
 }) {
@@ -607,6 +609,19 @@ function MarketCard({
     ) : state === "installed" || state === "removing" ? (
       <>
         {current && latest !== null && <span className="text-xs opacity-50">{t("Up to date")}</span>}
+        {/* 无更新时提供重装：与 Update 同一回调（onUpdate = name@latest 重跑安装），
+            覆盖终端手动 add 被拦构建脚本留下的半成品（依赖已写入但构建未跑）；
+            与 Update 所在 outdated 分支互斥，永不共存 */}
+        {state === "installed" && onUpdate && (
+          <button
+            className={BTN_OUTLINE}
+            disabled={updating !== null}
+            onClick={onUpdate}
+            aria-label={`${t("Reinstall")} ${name}`}
+          >
+            {t("Reinstall")}
+          </button>
+        )}
         {removeBtn}
       </>
     ) : null;

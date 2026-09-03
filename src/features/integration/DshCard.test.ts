@@ -11,6 +11,8 @@ import {
   localStatusTextKey,
   localTimelineFromStatus,
   proxyBypassHostForRemoteUrl,
+  startDshWeb,
+  restartDshWeb,
   statusTextKey,
   timelineFromStatus,
   verifiedRemoteUrl,
@@ -344,6 +346,87 @@ describe("start failure log disclosure", () => {
 
     expect(screen.getByText(/dsh web failed to start/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "View log" })).not.toBeInTheDocument();
+  });
+});
+
+describe("tray echo keeps the timeline on the event stream", () => {
+  it("a fresh start resets the timeline skeleton to all-pending before events land", async () => {
+    // 正常触发：上一轮的 ✓ 不能残留，时间轴先整体翻回 pending 再随事件点亮
+    useAppStore.setState({
+      dshHasRunSetup: false,
+      dshTimeline: [
+        { index: 0, id: "node", state: "done", detail: "old", problem: null, solution: null },
+      ],
+    });
+    vi.spyOn(cmd, "dshStartWeb").mockResolvedValue("http://127.0.0.1:3899");
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue(ready);
+    vi.mocked(shell.open).mockResolvedValue();
+
+    await startDshWeb();
+
+    const tl = useAppStore.getState().dshTimeline;
+    expect(tl.map((s) => s.id)).toEqual(["node", "install", "start", "ready"]);
+    // 成功收尾后被就绪视图覆盖；此处只断言骨架确实被重置过（非残留的 done）
+    expect(tl.some((s) => s.detail === "old")).toBe(false);
+  });
+
+  it("a re-entrant startDshWeb claims the timeline for events without resetting it", async () => {
+    // 回声路径：主触发已把 startBusy 置 true，托盘回声再进 startDshWeb
+    // 会被 busy 守卫挡下，但 hasRunSetup 必须在守卫之前置位
+    useAppStore.setState({ dshStartBusy: true, dshHasRunSetup: false, dshTimeline: [] });
+    const startWeb = vi.spyOn(cmd, "dshStartWeb").mockResolvedValue("http://127.0.0.1:3899");
+
+    await startDshWeb();
+
+    expect(useAppStore.getState().dshHasRunSetup).toBe(true);
+    // 回声走不到骨架重置，主触发的事件时间轴保留原样
+    expect(useAppStore.getState().dshTimeline).toEqual([]);
+    // 回声被守卫挡下，不重复执行启动命令
+    expect(startWeb).not.toHaveBeenCalled();
+  });
+
+  it("a re-entrant restartDshWeb claims the timeline for events without resetting it", async () => {
+    useAppStore.setState({ dshRestartBusy: true, dshHasRunSetup: false, dshTimeline: [] });
+    const stop = vi.spyOn(cmd, "dshStop").mockResolvedValue();
+    const startWeb = vi.spyOn(cmd, "dshStartWeb").mockResolvedValue("http://127.0.0.1:3899");
+
+    await restartDshWeb();
+
+    expect(useAppStore.getState().dshHasRunSetup).toBe(true);
+    expect(useAppStore.getState().dshTimeline).toEqual([]);
+    expect(stop).not.toHaveBeenCalled();
+    expect(startWeb).not.toHaveBeenCalled();
+  });
+
+  it("handleDshStep flips hasRunSetup on the first running event", () => {
+    useAppStore.setState({ dshHasRunSetup: false, dshTimeline: [] });
+
+    useAppStore.getState().handleDshStep({
+      index: 0,
+      id: "node",
+      state: "running",
+      detail: "Checking Node.js & npm…",
+      problem: null,
+      solution: null,
+    });
+
+    expect(useAppStore.getState().dshHasRunSetup).toBe(true);
+    expect(useAppStore.getState().dshTimeline[0]?.state).toBe("running");
+  });
+
+  it("handleDshStep leaves hasRunSetup untouched for non-running events", () => {
+    useAppStore.setState({ dshHasRunSetup: false, dshTimeline: [] });
+
+    useAppStore.getState().handleDshStep({
+      index: 0,
+      id: "node",
+      state: "done",
+      detail: "Node.js is available",
+      problem: null,
+      solution: null,
+    });
+
+    expect(useAppStore.getState().dshHasRunSetup).toBe(false);
   });
 });
 
