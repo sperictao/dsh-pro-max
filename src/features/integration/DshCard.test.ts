@@ -279,6 +279,74 @@ describe("one-click restart", () => {
   });
 });
 
+describe("start failure log disclosure", () => {
+  const failedStart = {
+    index: 2,
+    id: "start",
+    state: "failed" as const,
+    detail: null,
+    problem: "dsh web failed to start; log says:\nError: boom",
+    solution: "Check the log at ~/.dsh/dsh-web.log",
+  };
+
+  function renderFailedStart() {
+    useAppStore.setState({
+      dshHasRunSetup: true,
+      dshStatus: { ...ready, dshRunning: false },
+      dshTimeline: [failedStart],
+    });
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue({ ...ready, dshRunning: false });
+    return render(createElement(DshCard));
+  }
+
+  it("loads and shows the web log tail with a copy action", async () => {
+    renderFailedStart();
+    const webLog = vi.spyOn(cmd, "dshWebLog").mockResolvedValue("Error: boom\n    at frame");
+    // jsdom 没有 clipboard 实现，与 beforeEach 的 localStorage 同法打桩
+    const writeText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "View log" }));
+
+    expect(webLog).toHaveBeenCalledOnce();
+    // problem 摘要也含 "Error: boom"，用只在完整日志里出现的堆栈行断言
+    expect(await screen.findByText(/at frame/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Copy log" }));
+    expect(writeText).toHaveBeenCalledWith("Error: boom\n    at frame");
+  });
+
+  it("refetches on each expand and shows a placeholder for an empty log", async () => {
+    renderFailedStart();
+    const webLog = vi.spyOn(cmd, "dshWebLog").mockResolvedValue("");
+
+    await userEvent.click(await screen.findByRole("button", { name: "View log" }));
+    expect(await screen.findByText("Log is empty or missing.")).toBeInTheDocument();
+
+    // 收起再展开：重新读日志（重试后能看到最新现场），不显示复制按钮
+    await userEvent.click(screen.getByRole("button", { name: "Hide log" }));
+    await userEvent.click(screen.getByRole("button", { name: "View log" }));
+    expect(webLog).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("button", { name: "Copy log" })).not.toBeInTheDocument();
+  });
+
+  it("does not offer the log viewer on non-start failures", () => {
+    useAppStore.setState({
+      dshHasRunSetup: true,
+      dshStatus: { ...ready, dshRunning: false },
+      dshTimeline: [{ ...failedStart, id: "node" }],
+    });
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue({ ...ready, dshRunning: false });
+
+    render(createElement(DshCard));
+
+    expect(screen.getByText(/dsh web failed to start/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "View log" })).not.toBeInTheDocument();
+  });
+});
+
 describe("cross-page state preservation", () => {
   it("keeps running/failed one-click state after unmount and remount", async () => {
     const failedStep = {

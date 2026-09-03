@@ -6,8 +6,8 @@
     use crate::version::parse_version;
     use super::{RemoteRpcAccess, RemoteUrlAccess, SUPPORTED_DSH_VERSION};
     use super::probe::{classify_remote_rpc_response, classify_remote_url_access, curl_direct_args, curl_remote_rpc_args, parse_macos_https_proxy, proxy_bypass_host, proxy_bypasses_host, REMOTE_WS_PATH};
-    use super::process::{dsh_web_cmd_pattern, ere_to_ps_wildcards, run_capture, which, win_cmd_line, win_quote};
-    use super::setup::{format_verification_checks, serve_command, serve_failure_solution, start_failure_diagnosis};
+    use super::process::{dsh_web_cmd_pattern, ere_to_ps_wildcards, run_capture, run_capture_lines, stream_chunk_lines, which, win_cmd_line, win_quote};
+    use super::setup::{format_verification_checks, plugin_failure_from_log_tail, read_log_tail, serve_command, serve_failure_solution, start_failure_diagnosis};
     use super::update::{WEB_PROFILE_COMPAT_ID_LINE, insert_web_profile_compat_entry, remove_web_profile_compat_entry, rewrite_web_profile_patch_at};
     use crate::i18n::set_current;
     use std::path::Path;
@@ -218,6 +218,92 @@
             format!("{inserted}---\n[]\n")
         );
         assert_eq!(remove_web_profile_compat_entry(&inserted), empty);
+    }
+
+    #[test]
+    fn log_tail_is_capped_drops_blank_lines_and_missing_file_is_none() {
+        // dsh_web_log 命令把尾部交给前端内嵌展示：上限必须生效（超长日志
+        // 不整份进 webview）、空行剔除、文件缺失返回 None（命令层转空串占位）
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-pro-max-logtail-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("dsh-web.log");
+        std::fs::write(&log, "boot ok\n\nError: boom\nat frame\n").unwrap();
+        assert_eq!(read_log_tail(&log, 2).as_deref(), Some("Error: boom\nat frame"));
+        assert_eq!(read_log_tail(&log, 10).as_deref(), Some("boot ok\nError: boom\nat frame"));
+        assert_eq!(read_log_tail(&log, 0), None);
+        assert_eq!(read_log_tail(&dir.join("missing.log"), 10), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn plugin_failure_names_the_innermost_non_builtin_entry() {
+        // 真实崩溃形态（本机 dsh-web.log 的 agent-teams 事故）：致命横幅 +
+        // 多层 loader 链，最内层非 cordis: 的名字即肇事插件，根因在末段冒号后
+        let tail = concat!(
+            "Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): ",
+            "failed to apply loader entry agent-teams (@nanmicoder/dsh-agent-teams): ctx.subagents.registerContinuableSetup is not a function\n",
+            "    at updateError (cordis-plugin-loader/lib/index.js:309:9)\n",
+        );
+        let (plugin, error) = plugin_failure_from_log_tail(tail).unwrap();
+        assert_eq!(plugin, "@nanmicoder/dsh-agent-teams");
+        assert!(error.contains("registerContinuableSetup is not a function"));
+    }
+
+    #[test]
+    fn plugin_failure_falls_back_to_missing_module_in_builtin_only_chain() {
+        // 内置 include 节点导入插件失败：链上没有非内置名字，从根因引号取包名
+        let tail = concat!(
+            "dsh: fatal load failure: Error: dsh: plugin tree failed to load: ",
+            "failed to apply loader entry include (cordis:include): Cannot find module '@foo/bar'\n",
+        );
+        let (plugin, error) = plugin_failure_from_log_tail(tail).unwrap();
+        assert_eq!(plugin, "@foo/bar");
+        assert!(error.contains("Cannot find module '@foo/bar'"));
+    }
+
+    #[test]
+    fn plugin_soft_failure_warnings_do_not_masquerade_as_fatal() {
+        // 非致命告警（allSettled 软失败转储、probe warn）没有致命标记，
+        // 不得把它们当死因点名插件
+        let soft = "SyntaxError: The requested module '@deepseek-ai/dsh-settings' does not provide an export named 'settingsNamespace'\n";
+        assert_eq!(plugin_failure_from_log_tail(soft), None);
+        let probe_warn = "[@wxg-prc-cpg/browser-skill-dsh-plugin] bsk probe failed (spawn bsk ENOENT)\n";
+        assert_eq!(plugin_failure_from_log_tail(probe_warn), None);
+    }
+
+    #[test]
+    fn start_diagnosis_names_the_culprit_plugin_and_points_at_the_plugins_page() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "dsh-pro-max-plugindiag-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("dsh-web.log");
+        std::fs::write(
+            &log,
+            concat!(
+                "dsh web: http://127.0.0.1:3899\n",
+                "Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): ",
+                "failed to apply loader entry agent-teams (@nanmicoder/dsh-agent-teams): ctx.subagents.registerContinuableSetup is not a function\n",
+            ),
+        )
+        .unwrap();
+        let (problem, solution) = start_failure_diagnosis(&log);
+        assert!(problem.contains("@nanmicoder/dsh-agent-teams"));
+        assert!(problem.contains("registerContinuableSetup is not a function"));
+        assert!(solution.contains("@nanmicoder/dsh-agent-teams"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -595,6 +681,43 @@
             .unwrap();
             assert!(ok, "WS probe JavaScript must parse: {stderr}");
         }
+    }
+
+    #[test]
+    fn stream_chunk_lines_splits_newlines_and_carriage_returns() {
+        assert_eq!(stream_chunk_lines("a\nb\r\nc"), vec!["a", "b", "c"]);
+        // pnpm 进度条用 \r 原地刷新同一行：每次刷新要成为独立展示行
+        assert_eq!(
+            stream_chunk_lines("Progress: 1\rProgress: 2\rProgress: 3\ndone"),
+            vec!["Progress: 1", "Progress: 2", "Progress: 3", "done"]
+        );
+        // 空段与首尾空白不产生噪音行
+        assert_eq!(stream_chunk_lines("  x  \n\n\r\n"), vec!["x"]);
+        assert!(stream_chunk_lines("").is_empty());
+    }
+
+    #[test]
+    fn run_capture_lines_streams_lines_from_real_process() {
+        // 端到端：真实子进程 stdout 多行 + stderr \r 刷新行，回调收到切好的行，
+        // 返回值保持 run_capture 的全量捕获语义
+        let Some(node) = which("node") else { return };
+        let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = lines.clone();
+        let (stdout, _, ok) = run_capture_lines(
+            &node,
+            &[
+                "-e",
+                "process.stdout.write('out1\\nout2\\n'); process.stderr.write('err1\\rerr2\\n');",
+            ],
+            move |l| sink.lock().unwrap().push(l.to_string()),
+        )
+        .unwrap();
+        assert!(ok);
+        assert!(stdout.contains("out1") && stdout.contains("out2"), "stdout: {stdout}");
+        let got = lines.lock().unwrap();
+        assert!(got.contains(&"out1".to_string()), "lines: {got:?}");
+        assert!(got.contains(&"err1".to_string()), "stderr 行也要实时回调: {got:?}");
+        assert!(got.contains(&"err2".to_string()), "\\r 切行后 err2 独立成行: {got:?}");
     }
 
     #[test]

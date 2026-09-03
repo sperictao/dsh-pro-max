@@ -114,16 +114,76 @@ pub(crate) fn probe_path() -> String {
 
 /// 跑命令并捕获 (stdout, stderr, 成功)。命令经 probe PATH 执行
 pub(crate) fn run_capture(program: &str, args: &[&str]) -> Result<(String, String, bool), String> {
-    let output = cli_command(program, args)
+    run_capture_lines(program, args, |_| {})
+}
+
+/// 把一段流输出切成展示行：`\n` 分段后再按 `\r` 拆（pnpm 进度条用 \r 刷新
+/// 同一行，不拆会积成一行巨文本），去空行去首尾空白
+pub(crate) fn stream_chunk_lines(chunk: &str) -> Vec<String> {
+    chunk
+        .split('\n')
+        .flat_map(|l| l.split('\r'))
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// 读尽一条管道：回调逐行输出（经 stream_chunk_lines 切行），同时返回拼接全文
+fn collect_pipe_lines(
+    pipe: impl std::io::Read + Send + 'static,
+    on_line: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+) -> std::thread::JoinHandle<String> {
+    use std::io::BufRead;
+    std::thread::spawn(move || {
+        let mut collected = String::new();
+        for chunk in std::io::BufReader::new(pipe).split(b'\n').flatten() {
+            for line in stream_chunk_lines(&String::from_utf8_lossy(&chunk)) {
+                on_line(&line);
+                collected.push_str(&line);
+                collected.push('\n');
+            }
+        }
+        collected
+    })
+}
+
+/// 跑命令并逐行回调输出（stdout/stderr 交错顺序不保证），仍返回与 run_capture
+/// 相同的完整捕获。流式形态与 run_capture 唯一差异是回调：market 安装用它把
+/// dsh/pnpm 输出实时推进前端。stdin 接 null 防子进程等输入（与 output() 一致）；
+/// stdout/stderr 各一个读线程防单读堵塞；读尽再 wait，避免管道写满死锁
+pub(crate) fn run_capture_lines(
+    program: &str,
+    args: &[&str],
+    on_line: impl Fn(&str) + Send + Sync + 'static,
+) -> Result<(String, String, bool), String> {
+    let mut child = cli_command(program, args)
         .env("PATH", probe_path())
-        .output()
-        .map_err(|e| trf("Cannot execute {program}: {error}", &[
-            ("program", program.to_string()),
-            ("error", e.to_string()),
-        ]))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Ok((stdout, stderr, output.status.success()))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            trf("Cannot execute {program}: {error}", &[
+                ("program", program.to_string()),
+                ("error", e.to_string()),
+            ])
+        })?;
+    let on_line = std::sync::Arc::new(on_line);
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .expect("stdout is piped, so take() always succeeds");
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .expect("stderr is piped, so take() always succeeds");
+    let out_handle = collect_pipe_lines(stdout_pipe, on_line.clone());
+    let err_handle = collect_pipe_lines(stderr_pipe, on_line);
+    let stdout = out_handle.join().unwrap_or_default();
+    let stderr = err_handle.join().unwrap_or_default();
+    let status = child.wait().map_err(|e| e.to_string())?;
+    Ok((stdout.trim().to_string(), stderr.trim().to_string(), status.success()))
 }
 
 pub(crate) fn string_args(args: &[String]) -> Vec<&str> {

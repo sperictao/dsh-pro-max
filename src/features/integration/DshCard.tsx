@@ -6,7 +6,7 @@
 // 这里只负责触发。时间轴步骤由事件桥写入 store.dshTimeline；
 // 未跑过流程时用检测结果推导就绪视图
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
@@ -54,6 +54,63 @@ function StepMarker({ state }: { state: DshStepEvent["state"] }) {
     default:
       return <>○</>;
   }
+}
+
+// 启动失败节点的日志展开区：problem 里只摘了日志前几行，完整现场在这里看。
+// 每次展开都重新拉取（重试后再点开看到的是最新日志），收起即隐藏不缓存
+function StartLogDisclosure() {
+  const { t } = useTranslation();
+  const toast = useAppStore((s) => s.toast);
+  const [open, setOpen] = useState(false);
+  const [log, setLog] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const toggle = async () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setLoadError(null);
+    try {
+      setLog(await cmd.dshWebLog());
+    } catch (e) {
+      setLoadError(String(e));
+    }
+    setOpen(true);
+  };
+
+  const copy = async () => {
+    if (log == null) return;
+    try {
+      await navigator.clipboard.writeText(log);
+      toast(t("Log copied"), "info");
+    } catch (e) {
+      toast(t("Failed to copy: {{error}}", { error: String(e) }), "error");
+    }
+  };
+
+  const hasLog = log != null && log.trim() !== "";
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5">
+        <button className={BTN_SM} onClick={() => void toggle()}>
+          {t(open ? "Hide log" : "View log")}
+        </button>
+        {open && hasLog && (
+          <button className={BTN_SM} onClick={() => void copy()}>{t("Copy log")}</button>
+        )}
+      </div>
+      {open && (
+        loadError ? (
+          <div className="text-xs text-destructive">{t("Failed to load log: {{error}}", { error: loadError })}</div>
+        ) : hasLog ? (
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted px-2.5 py-2 font-mono text-xs leading-relaxed">{log}</pre>
+        ) : (
+          <div className="text-xs opacity-60">{t("Log is empty or missing.")}</div>
+        )
+      )}
+    </div>
+  );
 }
 
 // 地址行：URL 胶囊靠左、复制/打开靠右（自按钮行右侧迁来，独占一行）
@@ -438,6 +495,7 @@ export function DshCard() {
                     <div className="timeline-issue">
                       {step.problem && <div className="timeline-problem">{step.problem}</div>}
                       {step.solution && <div className="timeline-solution">{step.solution}</div>}
+                      {step.id === "start" && <StartLogDisclosure />}
                     </div>
                   )}
                 </div>

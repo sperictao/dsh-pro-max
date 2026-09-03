@@ -165,6 +165,12 @@ export type InstallOutcome =
   | { status: "installed"; receipt: InstallReceipt | null }
   | { status: "needsApproval"; packages: string[]; workspaceYaml: string };
 
+/** 安装输出行事件（market-install-log）：specifier 锚定发起安装的卡片 */
+export interface MarketInstallLogEvent {
+  specifier: string;
+  line: string;
+}
+
 /** 插件更新检测单包结果：npm 形态安装的非受管插件才可检（registry latest 比对），
  * 协议形态（github:/file: 等）与范围 spec 如实返回 None */
 export interface PluginUpdateInfo {

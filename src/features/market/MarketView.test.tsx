@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import { useAppStore } from "@/shared/store";
-import type { InstalledPlugin, MarketCatalog } from "@/shared/types";
+import type { InstalledPlugin, InstallOutcome, MarketCatalog } from "@/shared/types";
 import { MarketView, packageNameFromSpecifier } from "./MarketView";
 
 const catalog: MarketCatalog = {
@@ -77,6 +77,8 @@ beforeEach(() => {
     marketInstalled: [],
     marketInstalledBusy: false,
     marketInstalling: null,
+    marketInstallLog: null,
+    marketInstallError: null,
     marketRemoving: null,
     marketPendingApproval: null,
     marketFavorites: [],
@@ -471,5 +473,76 @@ describe("MarketView", () => {
         "Failed to load plugin catalog: Error: boom",
       ),
     );
+  });
+
+  it("shows Installing… on the card between confirm and completion", async () => {
+    // 回归：发现页此前没把 marketInstalling 传进卡片，确认后按钮弹回 Install
+    let resolveInstall: (v: InstallOutcome) => void = () => {};
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    useAppStore.setState({ marketInstalled: [] });
+    vi.spyOn(cmd, "marketInstall").mockReturnValue(
+      new Promise<InstallOutcome>((resolve) => {
+        resolveInstall = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Install" }));
+    await user.click(await screen.findByText("Confirm"));
+    // 安装挂起期间按钮恒为 Installing…（disabled），不弹回可再点的 Install
+    const busy = await screen.findByRole("button", { name: "Installing…" });
+    expect(busy).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
+
+    resolveInstall({ status: "installed", receipt: { name: "dsh-better-sidebar", spec: "dsh-better-sidebar@1.2.3" } });
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual(
+        "Plugin installed: dsh-better-sidebar (dsh-better-sidebar@1.2.3)",
+      ),
+    );
+  });
+
+  it("streams install output lines into the in-card log while installing", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    useAppStore.setState({ marketInstalled: [] });
+    vi.spyOn(cmd, "marketInstall").mockReturnValue(new Promise<InstallOutcome>(() => {}));
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Install" }));
+    await user.click(await screen.findByText("Confirm"));
+    // 事件桥逐行直写 store（首行命令 + pnpm 输出），明细区实时可见
+    useAppStore.getState().appendMarketInstallLog({ specifier: "dsh-better-sidebar@latest", line: "$ dsh plugin --profile web add dsh-better-sidebar@latest" });
+    useAppStore.getState().appendMarketInstallLog({ specifier: "dsh-better-sidebar@latest", line: "Packages: +1" });
+    expect(await screen.findByText("Packages: +1")).toBeInTheDocument();
+    expect(screen.getByText("$ dsh plugin --profile web add dsh-better-sidebar@latest")).toBeInTheDocument();
+    // 别的 specifier（理论上不该发生）不落进当前明细
+    useAppStore.getState().appendMarketInstallLog({ specifier: "other@latest", line: "noise" });
+    expect(screen.queryByText("noise")).not.toBeInTheDocument();
+  });
+
+  it("keeps the log on failure, offers retry and dismiss, and clears on dismiss", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    useAppStore.setState({ marketInstalled: [] });
+    vi.spyOn(cmd, "marketInstall").mockRejectedValue(new Error("network down"));
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Install" }));
+    await user.click(await screen.findByText("Confirm"));
+    // 失败态持久在卡片上：错误原因 + 留存明细 + 重试/关闭
+    expect(await screen.findByText("Install failed: Error: network down")).toBeInTheDocument();
+    expect(screen.getByText("$ dsh plugin --profile web add dsh-better-sidebar@latest")).toBeInTheDocument();
+    expect(useAppStore.getState().marketInstallError?.specifier).toBe("dsh-better-sidebar@latest");
+
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    // 关闭后错误与明细一并清，卡片回可安装态
+    expect(useAppStore.getState().marketInstallError).toBeNull();
+    expect(useAppStore.getState().marketInstallLog).toBeNull();
+    expect(await screen.findByRole("button", { name: "Install" })).toBeInTheDocument();
   });
 });

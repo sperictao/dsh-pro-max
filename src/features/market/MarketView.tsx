@@ -81,6 +81,9 @@ function DiscoverPane() {
   const catalogBusy = useAppStore((s) => s.marketCatalogBusy);
   const installed = useAppStore((s) => s.marketInstalled);
   const installPlugin = useAppStore((s) => s.installMarketPlugin);
+  const installing = useAppStore((s) => s.marketInstalling);
+  const installLog = useAppStore((s) => s.marketInstallLog);
+  const installError = useAppStore((s) => s.marketInstallError);
   const refreshCatalog = useAppStore((s) => s.refreshMarketCatalog);
   const favorites = useAppStore((s) => s.marketFavorites);
   const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
@@ -206,6 +209,9 @@ function DiscoverPane() {
               info={installedPlugin ? (updates?.[installedPlugin.name] ?? null) : null}
               catalog={catalog}
               locale={locale}
+              installing={installing}
+              installLog={installLog}
+              installError={installError}
               favorited={favorites.includes(p.fullName)}
               onToggleFavorite={() => toggleFavorite(p.fullName)}
               onInstall={() => void installPlugin(p.installSpecifier!, p.name)}
@@ -234,6 +240,9 @@ function FavoritesPane() {
   const catalogBusy = useAppStore((s) => s.marketCatalogBusy);
   const installed = useAppStore((s) => s.marketInstalled);
   const installPlugin = useAppStore((s) => s.installMarketPlugin);
+  const installing = useAppStore((s) => s.marketInstalling);
+  const installLog = useAppStore((s) => s.marketInstallLog);
+  const installError = useAppStore((s) => s.marketInstallError);
   const favorites = useAppStore((s) => s.marketFavorites);
   const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
 
@@ -266,6 +275,9 @@ function FavoritesPane() {
               info={installedPlugin ? (updates?.[installedPlugin.name] ?? null) : null}
               catalog={catalog}
               locale={locale}
+              installing={installing}
+              installLog={installLog}
+              installError={installError}
               favorited
               onToggleFavorite={() => toggleFavorite(p.fullName)}
               onInstall={() => void installPlugin(p.installSpecifier!, p.name)}
@@ -293,6 +305,8 @@ function InstalledPane() {
   const updatePlugin = useAppStore((s) => s.updateMarketPlugin);
   const updateAll = useAppStore((s) => s.updateAllMarketPlugins);
   const updating = useAppStore((s) => s.marketUpdating);
+  const installLog = useAppStore((s) => s.marketInstallLog);
+  const installError = useAppStore((s) => s.marketInstallError);
   const favorites = useAppStore((s) => s.marketFavorites);
   const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
 
@@ -343,6 +357,8 @@ function InstalledPane() {
               locale={locale}
               updating={updating}
               removing={removing}
+              installLog={installLog}
+              installError={installError}
               favorited={catalogPlugin !== null && favorites.includes(catalogPlugin.fullName)}
               onToggleFavorite={() => {
                 if (catalogPlugin) toggleFavorite(catalogPlugin.fullName);
@@ -369,6 +385,7 @@ type CardState =
   | "outdated"
   | "installed"
   | "installing"
+  | "installFailed"
   | "manual"
   | "confirm"
   | "idle";
@@ -390,6 +407,8 @@ function MarketCard({
   installing = null,
   updating = null,
   removing = null,
+  installLog = null,
+  installError = null,
   favorited,
   onToggleFavorite,
   onInstall,
@@ -407,6 +426,10 @@ function MarketCard({
   installing?: string | null;
   updating?: string | null;
   removing?: string | null;
+  /** 单飞安装的流式输出（安装中/更新中/失败明细共用） */
+  installLog?: { specifier: string; lines: string[] } | null;
+  /** 最近一次安装失败（specifier 锚定卡片；重试/关闭时清除） */
+  installError?: { specifier: string; message: string } | null;
   favorited: boolean;
   onToggleFavorite: () => void;
   onInstall?: () => void;
@@ -415,18 +438,24 @@ function MarketCard({
 }) {
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
+  const dismissMarketInstallError = useAppStore((s) => s.dismissMarketInstallError);
   const name = plugin?.name ?? installed?.name ?? "";
   const url = plugin?.url ?? null;
   const description = plugin?.description ? localizedDescription(plugin.description, locale) : null;
   const current = info?.installedVersion ?? null;
   const latest = info?.latestVersion ?? null;
+  // 卡片的安装身份：未装卡片是目录安装标识；已装卡片是更新重装标识
+  // （更新 = 以 name@latest 重装，与安装同一命令通道）
+  const ownSpecifier = installed ? `${installed.name}@latest` : (plugin?.installSpecifier ?? null);
 
-  // 状态推导（自上而下首个命中）：受管 > 移除中 > 更新中 > 已装（比对更新）>
-  // 安装中 > 仅手动 > 确认中 > 可装
+  // 状态推导（自上而下首个命中）：受管 > 移除中 > 更新中 > 安装失败 > 已装
+  // （比对更新）> 安装中 > 仅手动 > 确认中 > 可装。失败优先于已装/未装：
+  // 错误是最新事实，且失败=未落盘，已装页不会有无主失败卡
   let state: CardState;
   if (installed?.managed) state = "managed";
   else if (removing !== null && installed?.name === removing) state = "removing";
   else if (updating !== null && installed?.name === updating) state = "updating";
+  else if (installError !== null && installError.specifier === ownSpecifier) state = "installFailed";
   else if (installed) state = info?.updateAvailable ? "outdated" : "installed";
   else if (installing !== null && plugin?.installSpecifier === installing) state = "installing";
   else if (!plugin?.installSpecifier) state = "manual";
@@ -459,6 +488,15 @@ function MarketCard({
       <span className="text-xs opacity-50">{t("Manual install only")}</span>
     ) : state === "confirm" ? (
       <span className="text-xs opacity-70">{t("Install this plugin?")}</span>
+    ) : state === "installing" ? (
+      <span className="text-xs">{t("Installing…")}</span>
+    ) : state === "installFailed" ? (
+      <span
+        className="min-w-0 flex-1 truncate text-xs text-red-600 dark:text-red-400"
+        title={installError?.message}
+      >
+        {t("Install failed: {{error}}", { error: installError?.message ?? "" })}
+      </span>
     ) : installed ? (
       <span className="text-xs">
         {t("Installed")}
@@ -498,6 +536,15 @@ function MarketCard({
       <button className={BTN_PRIMARY} disabled>
         {t("Installing…")}
       </button>
+    ) : state === "installFailed" ? (
+      <>
+        <button className={BTN_PRIMARY} onClick={onInstall ?? onUpdate}>
+          {t("Retry")}
+        </button>
+        <button className={BTN_SM} onClick={dismissMarketInstallError}>
+          {t("Dismiss")}
+        </button>
+      </>
     ) : state === "manual" ? (
       url && (
         <button
@@ -596,12 +643,45 @@ function MarketCard({
           )}
         </div>
       )}
+      {/* 安装过程明细：安装中/更新中实时流式输出；失败留存供排查（重试/关闭清除）。
+          状态推导已保证此区间只会命中发起操作的那张卡 */}
+      {(state === "installing" || state === "updating" || state === "installFailed") && installLog && (
+        <InstallLogView log={installLog} failed={state === "installFailed"} />
+      )}
       {/* 状态条：mt-auto + 上边线，grid 拉伸行内所有卡片状态条底对齐 */}
       <div className="mt-auto flex items-center justify-between gap-2 border-t border-border pt-2.5">
         {statusLeft}
         <div className="flex items-center gap-1.5">{actions}</div>
       </div>
     </article>
+  );
+}
+
+/// 卡内安装明细区：首行是执行的命令（Rust 侧与实际 argv 同一拼装推来），
+/// 其余为 dsh/pnpm 输出；新行到达贴底滚动，限高防长输出撑爆卡片
+function InstallLogView({ log, failed }: { log: { specifier: string; lines: string[] }; failed: boolean }) {
+  const boxRef = useRef<HTMLPreElement | null>(null);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [log.lines.length]);
+  const [first, ...rest] = log.lines;
+  return (
+    <div
+      className={`rounded border px-2.5 py-2 ${failed ? "border-red-500/40 bg-red-500/5" : "border-border bg-muted/40"}`}
+      aria-busy={!failed}
+    >
+      <p className="truncate font-mono text-[11px] opacity-60">
+        {first ?? `\$ dsh plugin --profile web add ${log.specifier}`}
+      </p>
+      <pre
+        ref={boxRef}
+        aria-live="polite"
+        className="install-log max-h-28 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed"
+      >
+        {rest.length > 0 ? rest.join("\n") : failed ? "" : "…"}
+      </pre>
+    </div>
   );
 }
 

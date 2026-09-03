@@ -41,6 +41,8 @@ export const dshDetect = (verifyRemoteUrl = false) =>
   invokeTyped<DshStatus>("dsh_detect", { verifyRemoteUrl });
 export const dshSetup = () => invokeTyped<void>("dsh_setup");
 export const dshStartWeb = () => invokeTyped<string>("dsh_start_web");
+// dsh-web.log 尾部：启动失败节点「查看日志」内嵌展示用（缺失/为空返回空串）
+export const dshWebLog = () => invokeTyped<string>("dsh_web_log");
 export const dshStop = () => invokeTyped<void>("dsh_stop");
 export const dshUpdate = () => invokeTyped<string>("dsh_update");
 export const dshRemovePlugins = () => invokeTyped<void>("dsh_remove_plugins");

@@ -4,7 +4,7 @@ import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notif
 import { getVersion } from "@tauri-apps/api/app";
 import { useAppStore, type View } from "./shared/store";
 import { useSystemThemeSync } from "./shared/useSystemThemeSync";
-import { onDshStep, onTrayDshAction, onUpdaterDownloadProgress } from "./shared/events";
+import { onDshStep, onMarketInstallLog, onTrayDshAction, onUpdaterDownloadProgress } from "./shared/events";
 import * as cmd from "./shared/commands";
 import { log } from "./shared/logger";
 import { i18n } from "./shared/i18n";
@@ -41,6 +41,8 @@ export function App() {
     };
     bind(onUpdaterDownloadProgress((p) => useAppStore.getState().setDownloadProgress(p)));
     bind(onDshStep((s) => useAppStore.getState().handleDshStep(s)));
+    // 插件安装过程明细：事件桥直写 store（specifier 锚定卡片）
+    bind(onMarketInstallLog((p) => useAppStore.getState().appendMarketInstallLog(p)));
     // 托盘 dsh 三键：远端触发器，交互逻辑与首页按钮同源（dshActions）
     bind(onTrayDshAction((id) => {
       if (id === "dsh-start") void startDshWeb();

@@ -346,6 +346,7 @@ pub fn run() {
             update_settings,
             dsh::dsh_detect,
             dsh::dsh_setup,
+            dsh::dsh_web_log,
             dsh::dsh_start_web,
             dsh::dsh_stop,
             dsh::dsh_set_autostart,

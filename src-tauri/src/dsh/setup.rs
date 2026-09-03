@@ -132,10 +132,69 @@ pub(crate) fn read_log_tail(path: &Path, max_lines: usize) -> Option<String> {
     if tail.trim().is_empty() { None } else { Some(tail) }
 }
 
+/// 解析一行 loader 链 `failed to {stage} loader entry {id} ({name}): {inner}`：
+/// 链可多层嵌套（内置 include → 真插件），最内层非 `cordis:` 的名字即肇事
+/// 插件；链上全是内置节点时（include 导入失败）从根因文本的引号里取缺失的
+/// 模块名。行内无完整链则 None
+fn loader_entry_culprit(line: &str) -> Option<(&str, &str)> {
+    let mut name: Option<&str> = None;
+    let mut saw_chain = false;
+    let mut rest = line;
+    while let Some(pos) = rest.find("loader entry ") {
+        saw_chain = true;
+        rest = &rest[pos + "loader entry ".len()..];
+        let (_, after_id) = rest.split_once(" (")?;
+        let (entry_name, detail) = after_id.split_once("): ")?;
+        if !entry_name.starts_with("cordis:") {
+            name = Some(entry_name);
+        }
+        rest = detail;
+    }
+    if !saw_chain {
+        return None;
+    }
+    let plugin = match name {
+        Some(n) => n,
+        None => {
+            let (_, quoted) = rest.split_once('\'')?;
+            let (module, _) = quoted.split_once('\'')?;
+            module
+        }
+    };
+    Some((plugin, rest.trim()))
+}
+
+/// 从日志尾提取插件加载失败的（插件包名，根因报错）。门控是致命标记——
+/// `plugin tree failed to load`（boot 断言）或 `fatal load failure`（fail-loud
+/// 横幅）：非致命的插件告警（allSettled 软失败转储、probe warn）不得被
+/// 误判成死因。多条链时取最后一处（越靠后越接近最终致命现场）
+pub(crate) fn plugin_failure_from_log_tail(tail: &str) -> Option<(String, String)> {
+    if !tail.contains("plugin tree failed to load") && !tail.contains("fatal load failure") {
+        return None;
+    }
+    tail.lines()
+        .rev()
+        .find_map(loader_entry_culprit)
+        .map(|(name, error)| (name.to_string(), error.to_string()))
+}
+
 /// 启动失败诊断：把 dsh-web.log 尾部的真实错误带进时间轴（进程崩溃时这里就是
 /// 堆栈），并按常见崩溃原因给出针对性方案。只读日志，不修改任何状态
 pub(crate) fn start_failure_diagnosis(log: &Path) -> (String, String) {
     let tail = read_log_tail(log, 40);
+    // 插件加载失败优先点名具体插件与根因报错（致命标记门控在提取函数内）
+    if let Some((plugin, error)) = tail.as_deref().and_then(plugin_failure_from_log_tail) {
+        return (
+            trf(
+                "dsh web failed to start; plugin {plugin} failed to load:\n{error}",
+                &[("plugin", plugin.clone()), ("error", error)],
+            ),
+            trf(
+                "Remove or update the plugin {plugin} on the Plugins page, then retry; launcher-managed authorization plugins are restored by Repair dsh stack",
+                &[("plugin", plugin)],
+            ),
+        );
+    }
     let problem = match &tail {
         Some(t) => {
             // 问题区只取前 8 行，避免长堆栈淹没时间轴
@@ -157,6 +216,17 @@ pub(crate) fn start_failure_diagnosis(log: &Path) -> (String, String) {
         _ => tr("Check the log at ~/.dsh/dsh-web.log; port 3899 may be occupied or the dsh CLI may need a newer Node.js"),
     };
     (problem, solution)
+}
+
+/// dsh-web.log 尾部（前端在失败节点「查看日志」里内嵌展示）。只读不改状态；
+/// 文件缺失/为空返回空串，由前端显示占位文案。尾部 200 行足以覆盖一次
+/// 崩溃输出，又不会把超长日志整份塞进 webview
+#[tauri::command]
+pub async fn dsh_web_log() -> String {
+    let log = dsh_dir()
+        .map(|d| d.join("dsh-web.log"))
+        .unwrap_or_else(|_| PathBuf::from("dsh-web.log"));
+    read_log_tail(&log, 200).unwrap_or_default()
 }
 
 /// tailscale serve 命令（按配置转发 use/admin App Capability 到 dsh），供

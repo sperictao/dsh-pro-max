@@ -17,12 +17,13 @@
 //! 落盘回执（name + spec）。
 
 use super::components::{resolve_dsh_bin, web_profile_package_path};
-use super::process::run_capture;
+use super::process::{run_capture_lines};
 use crate::i18n::{tr, trf};
 use crate::version::{is_newer, parse_version};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::Duration;
+use tauri::Emitter;
 
 pub(crate) const MARKET_CATALOG_URL: &str = "https://awesome-dsh-plugin.com/plugins.json";
 /// 目录约 300KB（curated 精选列表），30s 足够慢网走完
@@ -623,9 +624,23 @@ pub(crate) fn install_failure_message(action: &str, error: &str) -> String {
     trf("Failed to install plugin: {error}", &[("error", error.to_string())])
 }
 
-/// 执行 dsh plugin 子命令；Err 的 (raw, display) 中 raw 是本地化前的原始
+/// 安装输出行事件（`market-install-log`）：specifier 锚定前端卡片（安装全局
+/// 单飞，带上是防御错位），line 为 dsh/pnpm 子进程的展示行
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarketInstallLogEvent {
+    pub specifier: String,
+    pub line: String,
+}
+
+/// 执行 dsh plugin 子命令；每行输出经 on_line 实时回调（首行是执行命令本身，
+/// 与实际 argv 同一拼装），Err 的 (raw, display) 中 raw 是本地化前的原始
 /// 错误（审计台账的可复述事实，不随界面语言漂移），display 是加工后的用户文案
-fn run_plugin_cmd(action: &str, arg: &str) -> Result<(), (String, String)> {
+fn run_plugin_cmd(
+    action: &str,
+    arg: &str,
+    on_line: impl Fn(&str) + Send + Sync + 'static,
+) -> Result<(), (String, String)> {
     if !valid_identifier(arg) {
         let raw = format!("invalid plugin identifier: {arg}");
         return Err((raw, tr("Invalid plugin identifier")));
@@ -637,7 +652,9 @@ fn run_plugin_cmd(action: &str, arg: &str) -> Result<(), (String, String)> {
     }
     let dsh = resolve_dsh_bin().map_err(|e| (e.clone(), e))?;
     let dsh = dsh.display().to_string();
-    match run_capture(&dsh, &["plugin", "--profile", "web", action, arg]) {
+    let argv: [&str; 5] = ["plugin", "--profile", "web", action, arg];
+    on_line(&format!("$ dsh {}", argv.join(" ")));
+    match run_capture_lines(&dsh, &argv, on_line) {
         Ok((_, _, true)) => Ok(()),
         Ok((_, err, false)) => {
             let raw = if err.is_empty() {
@@ -849,7 +866,7 @@ fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcom
     let before = installed_plugins()
         .ok()
         .map(|l| l.iter().map(|p| p.name.clone()).collect::<Vec<_>>());
-    match run_plugin_cmd("add", specifier) {
+    match run_plugin_cmd("add", specifier, emit_install_line(app, specifier)) {
         Ok(()) => {
             append_audit(app, "add", specifier, None);
             let receipt = installed_plugins()
@@ -873,6 +890,18 @@ fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcom
     }
 }
 
+/// 安装输出行的 emit 闭包（run_plugin_cmd 回调）：逐行推 `market-install-log`
+fn emit_install_line(app: &tauri::AppHandle, specifier: &str) -> impl Fn(&str) + Send + Sync + 'static {
+    let app = app.clone();
+    let specifier = specifier.to_string();
+    move |line| {
+        let _ = app.emit(
+            "market-install-log",
+            MarketInstallLogEvent { specifier: specifier.clone(), line: line.to_string() },
+        );
+    }
+}
+
 /// 安装一键候选（specifier 为 npm 包名/版本或 github:owner/repo 形态，由
 /// 目录 install 命令串解析而来）；长操作（pnpm 下载依赖），UI 显示 busy。
 /// 成功返回落盘回执（无法唯一定位落点时为 None）；被 pnpm 拦截构建脚本时
@@ -891,7 +920,7 @@ fn approve_builds_once(app: &tauri::AppHandle, specifier: &str, packages: Vec<St
     let before = installed_plugins()
         .ok()
         .map(|l| l.iter().map(|p| p.name.clone()).collect::<Vec<_>>());
-    match run_plugin_cmd("add", specifier) {
+    match run_plugin_cmd("add", specifier, emit_install_line(app, specifier)) {
         Ok(()) => {
             append_audit(app, "add", specifier, None);
             let receipt = installed_plugins()
@@ -926,7 +955,7 @@ pub async fn market_approve_builds(
 
 /// 移除插件的执行体（market_remove 的阻塞部分）
 fn remove_once(app: &tauri::AppHandle, name: &str) -> Result<(), String> {
-    match run_plugin_cmd("remove", name) {
+    match run_plugin_cmd("remove", name, |_| {}) {
         Ok(()) => {
             append_audit(app, "remove", name, None);
             Ok(())
