@@ -252,8 +252,8 @@
 }
 
 /* 状态球：移植自 codex-pro-max 首页总状态指示器（视觉动效同源）。
-   尺寸取其 520px 紧凑档（默认窗口 960×680，球不能把操作区挤出首屏）；
-   常驻呼吸与悬停暂停/放大均为源项目行为，reduced-motion 兜底 */
+   尺寸取其默认档（球 170px/图标 88px/文字 24px）；常驻呼吸与
+   悬停定住/放大均为源项目行为，reduced-motion 兜底 */
 .status-indicator {
   display: flex;
   flex-direction: column;
@@ -266,17 +266,17 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 132px;
-  height: 132px;
-  margin-bottom: 12px;
+  width: 180px;
+  height: 180px;
+  margin-bottom: 16px;
   border-radius: 50%;
 }
 .status-indicator-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 124px;
-  height: 124px;
+  width: 170px;
+  height: 170px;
   border-radius: 50%;
   color: #fff;
   transition: transform 200ms ease, box-shadow 300ms ease, background 300ms ease;
@@ -300,8 +300,8 @@
 }
 .status-indicator-symbol svg {
   display: block;
-  width: 64px;
-  height: 64px;
+  width: 88px;
+  height: 88px;
 }
 .status-indicator-icon.running {
   background: radial-gradient(circle at 35% 30%, #78f59c 0%, #34c759 58%, #168d34 100%);
@@ -320,7 +320,7 @@
   box-shadow: 0 10px 28px rgba(255, 59, 48, 0.3);
 }
 .status-indicator-text {
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 600;
   line-height: 1.35;
 }
