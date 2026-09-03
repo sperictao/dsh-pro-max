@@ -13,11 +13,12 @@ use std::path::{PathBuf};
 use std::time::Duration;
 
 
-use crate::i18n::{tr, trf};
+use crate::i18n::keyf;
 
 // ============ 一键启动 dsh（纯本地链路） ============
 
-/// 本地一键启动的步骤集（与远程 dsh_setup 的 8 步不同，只含 node/install/start/ready）
+/// 本地一键启动的步骤集（与远程 dsh_setup 的 8 步不同，只含 node/install/start/ready）。
+/// 步骤编排序列的唯一事实来源：super::steps() 供派生时间轴与前端 schema 共用
 pub(crate) const LOCAL_STEPS: [&str; 4] = ["node", "install", "start", "ready"];
 
 /// 从 dsh-web.log 内容解析最近一次启动打印的本机访问地址。dsh 原生方式：
@@ -66,18 +67,28 @@ fn dsh_web_log_len() -> usize {
         .unwrap_or(0)
 }
 
+/// 本地访问地址的等待编排（dsh_start_web 返回值的决策核）：probe 模拟一次日志
+/// 解析尝试，sleep 模拟一轮等待间隔。重试预算、间隔与裸地址回退全部在这一个
+/// 函数里，真实 fs/时钟停在调它的薄壳上（编排 bug 的实测面）
+pub(crate) fn resolve_local_access_url(
+    mut probe: impl FnMut() -> Option<String>,
+    mut sleep: impl FnMut(),
+) -> String {
+    for _ in 0..20 {
+        if let Some(url) = probe() {
+            return url;
+        }
+        sleep();
+    }
+    format!("http://127.0.0.1:{WEB_PORT}")
+}
+
 /// 本地访问地址（dsh_start_web 的返回值）：启动后 dsh 已把带 token 的地址
 /// 打进日志，但打印与端口就绪的先后无保证，短重试兜底时序差；解析不到
 /// （如 web 由外部手工启动、其 token 只落在终端，日志新区域里没有 token 行）
 /// 回退裸地址，由 dsh 自己的 401 页面提示重新打开
 fn wait_local_access_url(offset: usize) -> String {
-    for _ in 0..20 {
-        if let Some(url) = local_access_url(offset) {
-            return url;
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    format!("http://127.0.0.1:{WEB_PORT}")
+    resolve_local_access_url(|| local_access_url(offset), || std::thread::sleep(Duration::from_millis(500)))
 }
 
 /// 一键启动 dsh web 并返回本机访问地址（不碰 Tailscale Serve）。
@@ -89,6 +100,12 @@ fn wait_local_access_url(offset: usize) -> String {
 /// 前端时间轴据此显示本地模式安装进度
 #[tauri::command]
 pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
+    // 全程阻塞 I/O（npm 安装、进程拉起、最长 60s 端口等待 + 10s token 轮询）：
+    // 走统一 adapter，事件经 move 进去的 AppHandle 照常 emit
+    super::ipc_blocking(move || dsh_start_web_once(&app)).await
+}
+
+fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
     let steps = LOCAL_STEPS;
     let remaining_after = |cur: usize| -> Vec<(&'static str, usize)> {
         steps
@@ -101,17 +118,17 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
 
     {
         let ctx = StepCtx {
-            app: &app,
+            app,
             index: 0,
             id: steps[0],
         };
-        ctx.running(&tr("Checking Node.js & npm…"));
+        ctx.running("Checking Node.js & npm…");
         match resolve_node_bin() {
-            Ok(_) => ctx.done(&tr("Node.js is available")),
+            Ok(_) => ctx.done("Node.js is available"),
             Err(error) => {
                 return ctx.fail_err(
                     &error,
-                    &tr("Install Node.js 18+ from https://nodejs.org, then restart this app and retry"),
+                    "Install Node.js 18+ from https://nodejs.org, then restart this app and retry",
                     &remaining_after(0),
                 )
             }
@@ -120,26 +137,24 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
 
     {
         let ctx = StepCtx {
-            app: &app,
+            app,
             index: 1,
             id: steps[1],
         };
         let current = dsh_version();
         if dsh_version_is_compatible(current.as_deref()) {
             // 显示实际版本而非锁定版本（同 dsh_setup 的修复）
-            ctx.done(&trf(
-                "Compatible dsh is installed: {version}",
-                &[("version", current.clone().unwrap_or_default())],
+            ctx.done(&keyf(
+                "Compatible dsh is installed: {version}", &[("version", current.clone().unwrap_or_default())],
             ));
         } else {
-            ctx.running(&trf(
-                "Installing the pinned dsh ({version})…",
-                &[("version", SUPPORTED_DSH_VERSION.to_string())],
+            ctx.running(&keyf(
+                "Installing the pinned dsh ({version})…", &[("version", SUPPORTED_DSH_VERSION.to_string())],
             ));
             match install_supported_dsh() {
-                Ok(version) => ctx.done(&trf("Installed {version}", &[("version", version)])),
+                Ok(version) => ctx.done(&keyf("Installed {version}", &[("version", version)])),
                 Err(error) => {
-                    return ctx.fail_err(&error, &tr("Check your network and npm settings, then retry"), &remaining_after(1))
+                    return ctx.fail_err(&error, "Check your network and npm settings, then retry", &remaining_after(1))
                 }
             }
         }
@@ -148,12 +163,12 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
     if port_listening(WEB_PORT) {
         if dsh_web_pid().is_none() {
             let ctx = StepCtx {
-                app: &app,
+                app,
                 index: 2,
                 id: steps[2],
             };
-            let err = tr("Port 3899 is occupied by another process");
-            return ctx.fail_err(&err, &tr("Stop the process listening on 127.0.0.1:3899"), &remaining_after(2));
+            let err = "Port 3899 is occupied by another process".to_string();
+            return ctx.fail_err(&err, "Stop the process listening on 127.0.0.1:3899", &remaining_after(2));
         }
         // 已在跑：本地访问不依赖 trusted-host，直接用。若刚才装了新 dsh 则重启生效
         // 锚点须在重启动作前记录：重启会换 token，只有重启之后打印的
@@ -161,22 +176,22 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
         let log_offset = dsh_web_log_len();
         {
             let ctx = StepCtx {
-                app: &app,
+                app,
                 index: 2,
                 id: steps[2],
             };
-            ctx.running(&tr("Restarting dsh web…"));
+            ctx.running("Restarting dsh web…");
             if let Err(error) = restart_dsh_web(LOCAL_ONLY_LOGIN, None, &AuthConfig::default()) {
-                return ctx.fail_err(&error, &tr("Check the log at ~/.dsh/dsh-web.log"), &remaining_after(2));
+                return ctx.fail_err(&error, "Check the log at ~/.dsh/dsh-web.log", &remaining_after(2));
             }
-            ctx.done(&tr("dsh web is running on 127.0.0.1:3899"));
+            ctx.done("dsh web is running on 127.0.0.1:3899");
         }
         emit_step(
-            &app,
+            app,
             3,
             steps[3],
             "done",
-            Some(tr("Local access is ready")),
+            Some("Local access is ready".to_string()),
             None,
             None,
         );
@@ -185,11 +200,11 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
 
     let start_idx = 2;
     let ctx = StepCtx {
-        app: &app,
+        app,
         index: start_idx,
         id: steps[start_idx],
     };
-    ctx.running(&tr("Starting dsh web on 127.0.0.1:3899…"));
+    ctx.running("Starting dsh web on 127.0.0.1:3899…");
     let log_offset = dsh_web_log_len();
     let pid = match spawn_dsh_web(LOCAL_ONLY_LOGIN, None, &AuthConfig::default()) {
         Ok(pid) => pid,
@@ -204,13 +219,13 @@ pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
         let (problem, solution) = start_failure_diagnosis(&log);
         return ctx.fail_err(&problem, &solution, &remaining_after(start_idx));
     }
-    ctx.done(&tr("dsh web is running on 127.0.0.1:3899"));
+    ctx.done("dsh web is running on 127.0.0.1:3899");
 
     let ctx = StepCtx {
-        app: &app,
+        app,
         index: 3,
         id: steps[3],
     };
-    ctx.done(&tr("Local access is ready"));
+    ctx.done("Local access is ready");
     Ok(wait_local_access_url(log_offset))
 }

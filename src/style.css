@@ -335,6 +335,7 @@
    不影响市场/设置页同配方按钮 */
 .dsh-actions-row > button {
   height: 2.75rem;
+  min-width: 13rem;
   padding-left: 1.5rem;
   padding-right: 1.5rem;
   font-size: 1rem;

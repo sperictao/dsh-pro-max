@@ -16,7 +16,7 @@ use std::process::Command;
 
 
 use crate::config;
-use crate::i18n::{tr, trf};
+use crate::i18n::keyf;
 
 // ============ 开机自启（launchd / 启动文件夹 / systemd --user） ============
 
@@ -153,15 +153,14 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
     if enabled {
         let node = resolve_node_bin()?;
         let dsh_bin = resolve_dsh_bin()?;
-        let ts = tailscale_path().ok_or_else(|| tr("Tailscale is not installed"))?;
+        let ts = tailscale_path().ok_or_else(|| "Tailscale is not installed".to_string())?;
         let login = resolve_tailscale_login(&ts)?;
         let fqdn = resolve_fqdn().unwrap_or_default();
         let auth = resolve_auth_config()?;
         fs::create_dir_all(&agents_dir).map_err(|error| {
             log::error!("[dsh 自启(mac)] 创建 LaunchAgents 目录失败: {}", error);
-            trf(
-                "Failed to create directory: {error}",
-                &[("error", error.to_string())],
+            keyf(
+                "Failed to create directory: {error}", &[("error", error.to_string())],
             )
         })?;
         fs::write(
@@ -170,9 +169,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         )
         .map_err(|error| {
             log::error!("[dsh 自启(mac)] 写启动脚本失败: {}", error);
-            trf(
-                "Failed to write {path}: {error}",
-                &[
+            keyf(
+                "Failed to write {path}: {error}", &[
                     ("path", web_script.display().to_string()),
                     ("error", error.to_string()),
                 ],
@@ -215,9 +213,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         );
         fs::write(&web_plist, plist).map_err(|error| {
             log::error!("[dsh 自启(mac)] 写 plist 失败: {}", error);
-            trf(
-                "Failed to write {path}: {error}",
-                &[
+            keyf(
+                "Failed to write {path}: {error}", &[
                     ("path", web_plist.display().to_string()),
                     ("error", error.to_string()),
                 ],
@@ -230,9 +227,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
             .output()
             .map_err(|error| {
                 log::error!("[dsh 自启(mac)] 注册 launchd agent 失败: {}", error);
-                trf(
-                    "Cannot register launchd agent: {error}",
-                    &[("error", error.to_string())],
+                keyf(
+                    "Cannot register launchd agent: {error}", &[("error", error.to_string())],
                 )
             })?;
     } else {
@@ -260,16 +256,15 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
     let dsh = dsh_dir()?;
     fs::create_dir_all(&dsh).map_err(|error| {
         log::error!("[dsh 自启(win)] 创建 ~/.dsh 目录失败: {}", error);
-        trf(
-            "Failed to create directory: {error}",
-            &[("error", error.to_string())],
+        keyf(
+            "Failed to create directory: {error}", &[("error", error.to_string())],
         )
     })?;
     let web_cmd = dsh.join("start-web.cmd");
     let legacy_proxy_cmd = dsh.join("start-proxy.cmd");
     let startup = windows_startup_dir()
         .ok_or_else(|| {
-            let err = tr("Cannot locate the Windows Startup folder (APPDATA is missing)");
+            let err = "Cannot locate the Windows Startup folder (APPDATA is missing)".to_string();
             log::error!("[dsh 自启(win)] {}", err);
             err
         })?;
@@ -281,7 +276,7 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
     if enabled {
         let node = resolve_node_bin()?;
         let dsh_bin = resolve_dsh_bin()?;
-        let ts = tailscale_path().ok_or_else(|| tr("Tailscale is not installed"))?;
+        let ts = tailscale_path().ok_or_else(|| "Tailscale is not installed".to_string())?;
         let login = resolve_tailscale_login(&ts)?;
         let fqdn = resolve_fqdn().unwrap_or_default();
         let auth = resolve_auth_config()?;
@@ -319,9 +314,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         );
         fs::write(&web_cmd, web).map_err(|error| {
             log::error!("[dsh 自启(win)] 写 start-web.cmd 失败: {}", error);
-            trf(
-                "Failed to write {path}: {error}",
-                &[
+            keyf(
+                "Failed to write {path}: {error}", &[
                     ("path", web_cmd.display().to_string()),
                     ("error", error.to_string()),
                 ],
@@ -333,16 +327,14 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         );
         fs::create_dir_all(&startup).map_err(|error| {
             log::error!("[dsh 自启(win)] 创建启动文件夹失败: {}", error);
-            trf(
-                "Failed to create directory: {error}",
-                &[("error", error.to_string())],
+            keyf(
+                "Failed to create directory: {error}", &[("error", error.to_string())],
             )
         })?;
         fs::write(&vbs, vbs_body).map_err(|error| {
             log::error!("[dsh 自启(win)] 写自启 vbs 失败: {}", error);
-            trf(
-                "Failed to write {path}: {error}",
-                &[
+            keyf(
+                "Failed to write {path}: {error}", &[
                     ("path", vbs.display().to_string()),
                     ("error", error.to_string()),
                 ],
@@ -378,7 +370,7 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
     if enabled {
         let node = resolve_node_bin()?;
         let dsh_bin = resolve_dsh_bin()?;
-        let ts = tailscale_path().ok_or_else(|| tr("Tailscale is not installed"))?;
+        let ts = tailscale_path().ok_or_else(|| "Tailscale is not installed".to_string())?;
         let login = resolve_tailscale_login(&ts)?;
         let fqdn = resolve_fqdn().unwrap_or_default();
         let auth = resolve_auth_config()?;
@@ -388,9 +380,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         )
         .map_err(|error| {
             log::error!("[dsh 自启(linux)] 写启动脚本失败: {}", error);
-            trf(
-                "Failed to write {path}: {error}",
-                &[
+            keyf(
+                "Failed to write {path}: {error}", &[
                     ("path", web_script.display().to_string()),
                     ("error", error.to_string()),
                 ],
@@ -400,9 +391,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         if systemd_user_available() {
             fs::create_dir_all(&units_dir).map_err(|error| {
                 log::error!("[dsh 自启(linux)] 创建 systemd 目录失败: {}", error);
-                trf(
-                    "Failed to create directory: {error}",
-                    &[("error", error.to_string())],
+                keyf(
+                    "Failed to create directory: {error}", &[("error", error.to_string())],
                 )
             })?;
             let unit = format!(
@@ -411,9 +401,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
             );
             fs::write(&web_unit, unit).map_err(|error| {
                 log::error!("[dsh 自启(linux)] 写 systemd unit 失败: {}", error);
-                trf(
-                    "Failed to write {path}: {error}",
-                    &[
+                keyf(
+                    "Failed to write {path}: {error}", &[
                         ("path", web_unit.display().to_string()),
                         ("error", error.to_string()),
                     ],
@@ -427,15 +416,13 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
                 .output()
                 .map_err(|error| {
                     log::error!("[dsh 自启(linux)] 执行 systemctl enable 失败: {}", error);
-                    trf(
-                        "Cannot enable systemd unit: {error}",
-                        &[("error", error.to_string())],
+                    keyf(
+                        "Cannot enable systemd unit: {error}", &[("error", error.to_string())],
                     )
                 })?;
             if !output.status.success() {
-                let err = trf(
-                    "Cannot enable systemd unit: {error}",
-                    &[(
+                let err = keyf(
+                    "Cannot enable systemd unit: {error}", &[(
                         "error",
                         String::from_utf8_lossy(&output.stderr).trim().to_string(),
                     )],
@@ -447,9 +434,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         } else {
             fs::create_dir_all(&autostart_dir).map_err(|error| {
                 log::error!("[dsh 自启(linux)] 创建 autostart 目录失败: {}", error);
-                trf(
-                    "Failed to create directory: {error}",
-                    &[("error", error.to_string())],
+                keyf(
+                    "Failed to create directory: {error}", &[("error", error.to_string())],
                 )
             })?;
             fs::write(
@@ -461,9 +447,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
             )
             .map_err(|error| {
                 log::error!("[dsh 自启(linux)] 写 .desktop 失败: {}", error);
-                trf(
-                    "Failed to write {path}: {error}",
-                    &[
+                keyf(
+                    "Failed to write {path}: {error}", &[
                         ("path", web_desktop.display().to_string()),
                         ("error", error.to_string()),
                     ],

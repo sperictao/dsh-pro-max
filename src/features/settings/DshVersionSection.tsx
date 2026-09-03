@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { BTN, BTN_SM } from "@/shared/lib/ui";
+import { tErr } from "@/shared/i18n/error";
 
 export function DshVersionSection() {
   const { t } = useTranslation();
@@ -45,7 +46,7 @@ export function DshVersionSection() {
       toast(t("dsh updated to {{version}}", { version }), "success");
       await check();
     } catch (e) {
-      toast(t("Install failed: {{error}}", { error: String(e) }), "error");
+      toast(t("Install failed: {{error}}", { error: tErr(String(e)) }), "error");
     } finally {
       setInstalling(null);
     }
@@ -109,7 +110,7 @@ export function DshVersionSection() {
 
         {info?.error && (
           <div className="text-xs text-destructive">
-            {t("Check failed: {{error}}", { error: info.error })}
+            {t("Check failed: {{error}}", { error: tErr(info.error) })}
           </div>
         )}
       </div>

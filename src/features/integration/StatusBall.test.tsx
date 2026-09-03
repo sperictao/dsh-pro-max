@@ -24,6 +24,8 @@ const ready: DshStatus = {
   serveConfigured: true,
   autostartEnabled: false,
   error: null,
+  // StatusBall 只读 status 布尔与文案键，不看时间轴；空就绪时间轴即可
+  readyTimeline: [],
 };
 
 beforeEach(() => {

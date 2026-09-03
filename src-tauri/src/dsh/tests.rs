@@ -1047,7 +1047,7 @@
         let p = plugin_from_json(&item).expect("project");
         assert_eq!(p.full_name, "FuRongJun-1999/dsh-memory");
         assert_eq!(p.install_specifier.as_deref(), Some("@furongjun1999/dsh-memory"));
-        assert_eq!(p.stars, Some(80));
+        assert_eq!(p.stars, Some(80.0));
         assert_eq!(p.category.as_deref(), Some("memory"));
         assert!(!p.deprecated);
         assert_eq!(p.replacement, None);
@@ -1282,7 +1282,7 @@
         assert_eq!(ok.categories["ui"]["zh"], "UI 增强");
         let npm = ok.plugins.iter().find(|p| p.name == "pkg").unwrap();
         assert_eq!(npm.install_specifier.as_deref(), Some("pkg@1.0"));
-        assert_eq!(npm.stars, Some(12));
+        assert_eq!(npm.stars, Some(12.0));
         let git = ok.plugins.iter().find(|p| p.name == "old").unwrap();
         assert_eq!(git.install_specifier.as_deref(), Some("github:c/old"));
         assert_eq!(git.stars, None);
@@ -1527,4 +1527,260 @@
         std::fs::write(dir.join("plugin-abc123.tgz.sha256"), format!("{digest}\n")).unwrap();
         assert!(verify_bundled_tarball(&tgz, "plugin-abc123.tgz").is_ok());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ============ 编排决策核（seam 在 fs/进程边缘，本组全部纯内存）============
+
+    #[test]
+    fn resolve_local_access_url_returns_first_probe_hit_after_retries() {
+        // 编排语义：probe 反复调用直到命中；命中即返回，不再多等一轮
+        let mut attempts = 0;
+        let mut sleeps = 0;
+        let url = super::start::resolve_local_access_url(
+            || {
+                attempts += 1;
+                (attempts >= 3).then(|| "http://127.0.0.1:3899/?token=abc".to_string())
+            },
+            || sleeps += 1,
+        );
+        assert_eq!(url, "http://127.0.0.1:3899/?token=abc");
+        assert_eq!(attempts, 3);
+        assert_eq!(sleeps, 2, "命中后不应多睡一轮");
+    }
+
+    #[test]
+    fn resolve_local_access_url_falls_back_to_bare_url_after_budget_exhausted() {
+        // 重试预算 20 轮耗尽（日志新区域始终没有 token 行）→ 裸地址回退，
+        // 由 dsh 自己的 401 页面引导用户
+        let mut attempts = 0;
+        let mut sleeps = 0;
+        let url = super::start::resolve_local_access_url(
+            || {
+                attempts += 1;
+                None
+            },
+            || sleeps += 1,
+        );
+        assert_eq!(url, "http://127.0.0.1:3899");
+        assert_eq!(attempts, 20);
+        assert_eq!(sleeps, 20);
+    }
+
+    #[test]
+    fn diagnose_start_failure_branches_on_log_fingerprints() {
+        set_current("en");
+        // 无日志：占用端口的兜底文案
+        let (problem, solution) = super::setup::diagnose_start_failure_from_tail(None);
+        assert!(problem.contains("no log output"));
+        assert!(solution.contains("dsh-web.log"));
+        // EPERM 指纹 → Windows 开发者模式
+        let (_, solution) = super::setup::diagnose_start_failure_from_tail(Some(
+            "Error: EPERM: operation not permitted, symlink",
+        ));
+        assert!(solution.contains("Developer Mode"));
+        // credentials 格式指纹 → 手动还原指引
+        let (_, solution) = super::setup::diagnose_start_failure_from_tail(Some(
+            "Error: the value for \"version\" in /x/.dsh/.credentials.yaml must be a string",
+        ));
+        assert!(solution.contains("KEY: value"));
+        // 插件崩溃链优先于通用指纹
+        let (problem, solution) = super::setup::diagnose_start_failure_from_tail(Some(concat!(
+            "Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): ",
+            "failed to apply loader entry agent-teams (@nanmicoder/dsh-agent-teams): ctx.x is not a function\n",
+            "EPERM something", // 通用指纹在场也不抢插件点名
+        )));
+        assert!(problem.contains("@nanmicoder/dsh-agent-teams"));
+        assert!(solution.contains("Plugins page"));
+        // 普通日志：问题截前 8 行进时间轴
+        let long_tail = (1..=20).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let (problem, _) = super::setup::diagnose_start_failure_from_tail(Some(&long_tail));
+        assert!(problem.contains("line8"));
+        assert!(!problem.contains("line9"));
+        set_current("en");
+    }
+
+    #[test]
+    fn install_decision_elevates_blocked_builds_to_needs_approval() {
+        set_current("en");
+        // pnpm 拦截指纹在 raw 里 → NeedsApproval（包名 + yaml 路径），不是失败
+        let outcome = super::market::install_decision(
+            "node-pty",
+            Err(("Ignored build scripts: node-pty@1.1.0".to_string(), "display".to_string())),
+            None,
+            None,
+            Some("/p/pnpm-workspace.yaml".to_string()),
+        )
+        .expect("needs approval is not an error");
+        match outcome {
+            InstallOutcome::NeedsApproval { packages, workspace_yaml } => {
+                assert_eq!(packages, vec!["node-pty"]);
+                assert_eq!(workspace_yaml, "/p/pnpm-workspace.yaml");
+            }
+            InstallOutcome::Installed { .. } => panic!("expected needsApproval"),
+        }
+        // 普通失败 → Err（raw 留给台账，display 给用户）
+        let err = super::market::install_decision(
+            "pkg",
+            Err(("boom".to_string(), "Failed to install plugin: boom".to_string())),
+            None,
+            None,
+            Some("/p/x.yaml".to_string()),
+        )
+        .expect_err("plain failure");
+        assert_eq!(err.0, "boom");
+        assert_eq!(err.1, "Failed to install plugin: boom");
+        set_current("en");
+    }
+
+    #[test]
+    fn install_decision_success_computes_receipt_from_before_after() {
+        let after = vec![
+            InstalledPlugin { name: "dsh-new".into(), spec: "dsh-new@2.0".into(), managed: false },
+        ];
+        let outcome = super::market::install_decision(
+            "dsh-new@2.0",
+            Ok(()),
+            Some(vec![]),
+            Some(after),
+            None,
+        )
+        .expect("installed");
+        match outcome {
+            InstallOutcome::Installed { receipt } => {
+                let r = receipt.expect("receipt");
+                assert_eq!(r.name, "dsh-new");
+                assert_eq!(r.spec, "dsh-new@2.0");
+            }
+            InstallOutcome::NeedsApproval { .. } => panic!("expected installed"),
+        }
+        // after 缺失（重读 profile 失败）→ 安装仍成功、回执为空，不放大失败
+        let outcome = super::market::install_decision("dsh-new@2.0", Ok(()), Some(vec![]), None, None)
+            .expect("installed");
+        assert!(matches!(outcome, InstallOutcome::Installed { receipt: None }));
+    }
+
+    // 测试夹具：hooks 字段是无捕获 fn 指针，场景参数经线程局部静态传递
+    // （cargo test 线程间隔离，各用例互不串扰）
+    use std::cell::Cell;
+    thread_local! {
+        static PROBE_HTTPS_OK: Cell<bool> = const { Cell::new(false) };
+        static PROBE_WS_OK: Cell<bool> = const { Cell::new(false) };
+        static PROBE_RPC: Cell<u8> = const { Cell::new(0) }; // 0 Ready 1 Denied 2 Failed
+        static PROBE_PROXY: std::cell::RefCell<Option<super::MacosHttpsProxy>> = const { std::cell::RefCell::new(None) };
+        static PROBE_PROXIED_HTTPS_OK: Cell<bool> = const { Cell::new(false) };
+        static PROBE_PROXIED_WS_OK: Cell<bool> = const { Cell::new(false) };
+    }
+    fn fixture_https_ok(_: &str) -> bool { PROBE_HTTPS_OK.with(|c| c.get()) }
+    fn fixture_ws_ok(_: &str) -> bool { PROBE_WS_OK.with(|c| c.get()) }
+    fn fixture_rpc(_: &str, _: &str) -> RemoteRpcAccess {
+        match PROBE_RPC.with(|c| c.get()) {
+            1 => RemoteRpcAccess::Denied,
+            2 => RemoteRpcAccess::Failed,
+            _ => RemoteRpcAccess::Ready,
+        }
+    }
+    fn fixture_https_ok_via_proxy(_: &str, _: &super::MacosHttpsProxy) -> bool { PROBE_PROXIED_HTTPS_OK.with(|c| c.get()) }
+    fn fixture_ws_ok_via_proxy(_: &str, _: &super::MacosHttpsProxy) -> bool { PROBE_PROXIED_WS_OK.with(|c| c.get()) }
+    fn fixture_active_proxy() -> Option<super::MacosHttpsProxy> { PROBE_PROXY.with(|c| c.borrow().clone()) }
+
+    fn probe_hooks(
+        https_ok: bool,
+        ws_ok: bool,
+        rpc: RemoteRpcAccess,
+        proxy: Option<super::MacosHttpsProxy>,
+        proxied_https_ok: bool,
+        proxied_ws_ok: bool,
+    ) -> super::probe::RemoteProbeHooks {
+        PROBE_HTTPS_OK.with(|c| c.set(https_ok));
+        PROBE_WS_OK.with(|c| c.set(ws_ok));
+        PROBE_RPC.with(|c| c.set(match rpc {
+            RemoteRpcAccess::Ready => 0,
+            RemoteRpcAccess::Denied => 1,
+            RemoteRpcAccess::Failed => 2,
+        }));
+        PROBE_PROXY.with(|c| *c.borrow_mut() = proxy);
+        PROBE_PROXIED_HTTPS_OK.with(|c| c.set(proxied_https_ok));
+        PROBE_PROXIED_WS_OK.with(|c| c.set(proxied_ws_ok));
+        super::probe::RemoteProbeHooks {
+            https_ok: fixture_https_ok,
+            ws_ok: fixture_ws_ok,
+            rpc_access: fixture_rpc,
+            https_ok_via_proxy: fixture_https_ok_via_proxy,
+            ws_ok_via_proxy: fixture_ws_ok_via_proxy,
+            active_https_proxy: fixture_active_proxy,
+        }
+    }
+
+    fn probe_auth() -> AuthConfig {
+        AuthConfig {
+            extra_allowed_logins: Vec::new(),
+            use_capability: Some("example.com/cap/dsh".to_string()),
+            admin_capability: Some("example.com/cap/dsh-admin".to_string()),
+        }
+    }
+
+    #[test]
+    fn probe_orchestration_classifies_each_failure_ring() {
+        let url = "https://node.example.ts.net";
+        let auth = probe_auth();
+        // 直连 HTTPS 都不通：端点失败，不做任何 RPC/代理探测
+        let p = super::probe::probe_remote_url_with(url, &auth, &probe_hooks(false, false, RemoteRpcAccess::Ready, None, false, false));
+        assert_eq!(p.access, RemoteUrlAccess::EndpointFailure);
+        // 直连通、RPC 被拒：capability 归因
+        let p = super::probe::probe_remote_url_with(url, &auth, &probe_hooks(true, true, RemoteRpcAccess::Denied, None, false, false));
+        assert_eq!(p.access, RemoteUrlAccess::CapabilityDenied);
+        // 直连通、WS 挂：端点失败
+        let p = super::probe::probe_remote_url_with(url, &auth, &probe_hooks(true, false, RemoteRpcAccess::Ready, None, false, false));
+        assert_eq!(p.access, RemoteUrlAccess::EndpointFailure);
+        // 直连全通、无系统代理：就绪
+        let p = super::probe::probe_remote_url_with(url, &auth, &probe_hooks(true, true, RemoteRpcAccess::Ready, None, false, false));
+        assert_eq!(p.access, RemoteUrlAccess::Ready);
+        // 直连全通、系统代理生效且代理路径挂：代理拦截（本机浏览器体验受损）
+        let proxy = super::MacosHttpsProxy {
+            server: "127.0.0.1".to_string(),
+            port: 1082,
+            exceptions: Vec::new(),
+        };
+        let p = super::probe::probe_remote_url_with(url, &auth, &probe_hooks(true, true, RemoteRpcAccess::Ready, Some(proxy.clone()), false, false));
+        assert_eq!(p.access, RemoteUrlAccess::ProxyInterference);
+        // 代理路径也通：整体就绪
+        let p = super::probe::probe_remote_url_with(url, &auth, &probe_hooks(true, true, RemoteRpcAccess::Ready, Some(proxy), true, true));
+        assert_eq!(p.access, RemoteUrlAccess::Ready);
+    }
+
+    #[test]
+    fn probe_orchestration_skips_rpc_when_no_capability_configured() {
+        // 无 capability 配置时不做 RPC，直连结果即结论（RPC 模拟为 Denied 也不归因）
+        let url = "https://node.example.ts.net";
+        let no_caps = AuthConfig::default();
+        let p = super::probe::probe_remote_url_with(url, &no_caps, &probe_hooks(true, true, RemoteRpcAccess::Denied, None, false, false));
+        assert_eq!(p.access, RemoteUrlAccess::Ready, "无 capability 配置时 RPC 不参与归因");
+        assert_eq!(p.remote_use_access, None);
+        assert_eq!(p.remote_settings_access, None);
+    }
+
+    // ============ specifier 解析双实现的共享测试向量 ============
+    // 语义定义只有一份：specifier_cases.json。Rust/TS 两侧解析器由各自测试
+    // 驱动同一向量表，漂移在一侧测试立即失败（替代「改一侧必须同步另一侧」
+    // 的注释约定）
+
+    #[test]
+    fn specifier_parsers_match_shared_test_vectors() {
+        let raw = include_str!("specifier_cases.json");
+        let cases: serde_json::Value = serde_json::from_str(raw).expect("parse vectors");
+        let table = |key: &str| cases[key].as_array().expect("vector array");
+        for case in table("packageNameFromSpecifier") {
+            let input = case[0].as_str().unwrap();
+            let expect = case[1].as_str();
+            assert_eq!(
+                package_name_from_specifier(input).as_deref(),
+                expect,
+                "packageNameFromSpecifier({input:?})"
+            );
+        }
+        for case in table("specifierToCatalogName") {
+            let input = case[0].as_str().unwrap();
+            let expect = case[1].as_str().unwrap();
+            assert_eq!(specifier_to_catalog_name(input), expect, "specifierToCatalogName({input:?})");
+        }
     }

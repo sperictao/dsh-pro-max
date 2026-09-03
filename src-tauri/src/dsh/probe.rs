@@ -287,15 +287,44 @@ pub(crate) fn ws_endpoint_ok_via_proxy(url: &str, proxy: &MacosHttpsProxy) -> bo
 }
 
 pub(crate) fn probe_remote_url(url: &str, auth: &AuthConfig) -> RemoteUrlProbe {
-    let direct_https_ok = https_endpoint_ok(url);
-    let direct_ws_ok = ws_endpoint_ok(url);
+    probe_remote_url_with(url, auth, &SYSTEM_REMOTE_PROBES)
+}
+
+/// 探测编排的外部依赖（curl/node 子进程与 macOS 系统代理读取）收拢为一个
+/// adapter：真实实现在进程/系统边缘，测试注入假实现后「直连→RPC 鉴权→代理
+/// 复查」的完整编排链在纯内存里可测。字段是 fn 指针（无捕获），测试夹具的
+/// 场景参数经线程局部静态传递
+pub(crate) struct RemoteProbeHooks {
+    pub(crate) https_ok: fn(&str) -> bool,
+    pub(crate) ws_ok: fn(&str) -> bool,
+    pub(crate) rpc_access: fn(&str, &str) -> RemoteRpcAccess,
+    pub(crate) https_ok_via_proxy: fn(&str, &MacosHttpsProxy) -> bool,
+    pub(crate) ws_ok_via_proxy: fn(&str, &MacosHttpsProxy) -> bool,
+    pub(crate) active_https_proxy: fn() -> Option<MacosHttpsProxy>,
+}
+
+static SYSTEM_REMOTE_PROBES: RemoteProbeHooks = RemoteProbeHooks {
+    https_ok: https_endpoint_ok,
+    ws_ok: ws_endpoint_ok,
+    rpc_access: remote_rpc_access,
+    https_ok_via_proxy: https_endpoint_ok_via_proxy,
+    ws_ok_via_proxy: ws_endpoint_ok_via_proxy,
+    active_https_proxy: active_macos_https_proxy,
+};
+
+/// 远程 URL 探测编排：直连 HTTPS/WS → capability RPC 鉴权（use 先于 admin，
+/// use 已拒则不浪费 admin 探测）→ 直连全过时复查系统代理路径。任何一环失败
+/// 按 classify_remote_url_access 的优先级归因
+pub(crate) fn probe_remote_url_with(url: &str, auth: &AuthConfig, hooks: &RemoteProbeHooks) -> RemoteUrlProbe {
+    let direct_https_ok = (hooks.https_ok)(url);
+    let direct_ws_ok = (hooks.ws_ok)(url);
     let remote_use_access = (direct_https_ok && auth.use_capability.is_some())
-        .then(|| remote_rpc_access(url, "llm/listProviders"));
+        .then(|| (hooks.rpc_access)(url, "llm/listProviders"));
     let remote_use_ready = matches!(remote_use_access, None | Some(RemoteRpcAccess::Ready));
     let remote_settings_access = (direct_https_ok
         && remote_use_ready
         && auth.admin_capability.is_some())
-        .then(|| remote_rpc_access(url, "settings/describe"));
+        .then(|| (hooks.rpc_access)(url, "settings/describe"));
     let remote_rpc_access = if remote_use_access == Some(RemoteRpcAccess::Denied)
         || remote_settings_access == Some(RemoteRpcAccess::Denied)
     {
@@ -326,7 +355,7 @@ pub(crate) fn probe_remote_url(url: &str, auth: &AuthConfig) -> RemoteUrlProbe {
             remote_settings_access,
         };
     }
-    let Some(proxy) = active_macos_https_proxy() else {
+    let Some(proxy) = (hooks.active_https_proxy)() else {
         return RemoteUrlProbe {
             access: RemoteUrlAccess::Ready,
             direct_https_ok,
@@ -346,8 +375,8 @@ pub(crate) fn probe_remote_url(url: &str, auth: &AuthConfig) -> RemoteUrlProbe {
     };
     let uses_proxy = !proxy_bypasses_host(host, &proxy.exceptions);
     let (proxied_https_ok, proxied_ws_ok) = if uses_proxy && direct_https_ok && direct_ws_ok {
-        let https_ok = https_endpoint_ok_via_proxy(url, &proxy);
-        let ws_ok = https_ok && ws_endpoint_ok_via_proxy(url, &proxy);
+        let https_ok = (hooks.https_ok_via_proxy)(url, &proxy);
+        let ws_ok = https_ok && (hooks.ws_ok_via_proxy)(url, &proxy);
         (https_ok, ws_ok)
     } else {
         (false, false)

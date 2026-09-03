@@ -10,36 +10,28 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
+import { tErr } from "@/shared/i18n/error";
 import * as cmd from "@/shared/commands";
 import { BTN_DESTRUCTIVE, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
 import type { DshAccessMode, DshStepEvent } from "@/shared/types";
 import { StatusBall } from "./StatusBall";
 import {
-  localTimelineFromStatus,
   proxyBypassHostForRemoteUrl,
   restartDshWeb,
   startDshWeb,
   statusTextKey,
   stopDshWeb,
-  timelineFromStatus,
   verifiedRemoteUrl,
 } from "./dshActions";
 
 // 保持旧导出兼容（类型已上移到 shared/types）
 export type { DshAccessMode };
 
-// 步骤标题（key 即 i18n key；本地四步 node/install/start/ready 也在其中）
-const STEP_TITLES: Record<string, string> = {
-  node: "Check Node.js & npm",
-  install: "Install DeepSeek Harness (dsh)",
-  plugins: "Install authorization plugins",
-  tailscale: "Check Tailscale",
-  magicdns: "Enable MagicDNS",
-  start: "Start dsh Web",
-  serve: "Configure Tailscale serve",
-  verify: "Verify remote access",
-  ready: "Local access ready",
-};
+// 步骤标题的 i18n key：骨架/派生时间轴节点自带 titleKey（"step.<id>"，Rust
+// 契约）；事件流节点 titleKey 为 null，回退 "step.<id>" 派生（同一命名约定）
+function stepTitleKey(step: DshStepEvent): string {
+  return step.titleKey ?? `step.${step.id}`;
+}
 
 function StepMarker({ state }: { state: DshStepEvent["state"] }) {
   switch (state) {
@@ -165,15 +157,17 @@ export function DshCard() {
   // 「切了没反应」的困惑；明确禁用并给出解锁路径（先停止）
   const modeLocked = !!status?.dshRunning;
 
+  // 检测收尾的唯一实现：刷新状态；未跑流程时时间轴以 Rust 推导的
+  // 就绪视图为准（跑过流程则保留事件时间轴，问题/方案持续可见）
   const refresh = useCallback(async () => {
     try {
       const s = await cmd.dshDetect(isRemote);
       setStatus(s);
       if (!hasRunSetup) {
-        setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
+        setDshTimeline(s.readyTimeline);
       }
     } catch (e) {
-      toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
+      toast(t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
     }
   }, [hasRunSetup, isRemote, setDshTimeline, setStatus, t, toast]);
 
@@ -196,9 +190,9 @@ export function DshCard() {
     try {
       const s = await cmd.dshDetect(next === "remote");
       setStatus(s);
-      setDshTimeline(next === "remote" ? timelineFromStatus(s) : localTimelineFromStatus(s));
+      setDshTimeline(s.readyTimeline);
     } catch (e) {
-      toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
+      toast(t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
     } finally {
       setRecheckBusy(false);
     }
@@ -241,14 +235,14 @@ export function DshCard() {
       const url = verifiedRemoteUrl(s);
       if (url) {
         setHasRunSetup(false);
-        setDshTimeline(timelineFromStatus(s));
+        setDshTimeline(s.readyTimeline);
         toast(t("Remote access ready"), "success");
         await openUrl(url);
         return;
       }
       toast(t(statusTextKey(s)), "error");
     } catch (e) {
-      toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
+      toast(t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
     } finally {
       setRecheckBusy(false);
     }
@@ -261,7 +255,7 @@ export function DshCard() {
       const version = await cmd.dshUpdate();
       toast(t("dsh integration repaired for {{version}}", { version }), "success");
     } catch (e) {
-      toast(t("dsh integration repair failed: {{error}}", { error: String(e) }), "error");
+      toast(t("dsh integration repair failed: {{error}}", { error: tErr(String(e)) }), "error");
     } finally {
       setStartBusy(false);
       // 更新流程不走 dsh-step 事件流：回到状态驱动时间轴
@@ -269,9 +263,9 @@ export function DshCard() {
       try {
         const s = await cmd.dshDetect(isRemote);
         setStatus(s);
-        setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
+        setDshTimeline(s.readyTimeline);
       } catch (e) {
-        toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
+        toast(t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
       }
     }
   };
@@ -285,16 +279,16 @@ export function DshCard() {
       await cmd.dshRemovePlugins();
       toast(t("Authorization plugins removed"), "success");
     } catch (e) {
-      toast(t("Failed to remove authorization plugins: {{error}}", { error: String(e) }), "error");
+      toast(t("Failed to remove authorization plugins: {{error}}", { error: tErr(String(e)) }), "error");
     } finally {
       setStartBusy(false);
       setHasRunSetup(false);
       try {
         const s = await cmd.dshDetect(isRemote);
         setStatus(s);
-        setDshTimeline(isRemote ? timelineFromStatus(s) : localTimelineFromStatus(s));
+        setDshTimeline(s.readyTimeline);
       } catch (e) {
-        toast(t("dsh detection failed: {{error}}", { error: String(e) }), "error");
+        toast(t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
       }
     }
   };
@@ -432,7 +426,7 @@ export function DshCard() {
           <div className="flex flex-col gap-1.5 min-w-0">
             {status?.error && !busy && (
               <div className="text-xs text-destructive">
-                {t("dsh integration check failed: {{error}}", { error: status.error })}
+                {t("dsh integration check failed: {{error}}", { error: tErr(status.error) })}
               </div>
             )}
             {status?.dshVersionAboveSupported && !busy && (
@@ -498,7 +492,7 @@ export function DshCard() {
                   <StepMarker state={step.state} />
                 </div>
                 <div className="timeline-content">
-                  <div className="timeline-title">{t(STEP_TITLES[step.id] ?? step.id)}</div>
+                  <div className="timeline-title">{t(stepTitleKey(step))}</div>
                   {step.detail && <div className="timeline-detail">{step.detail}</div>}
                   {step.state === "failed" && (step.problem || step.solution) && (
                     <div className="timeline-issue">

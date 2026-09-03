@@ -1,0 +1,18 @@
+{
+  "packageNameFromSpecifier": [
+    ["pkg@1.0.0", "pkg"],
+    ["@scope/pkg@1.0", "@scope/pkg"],
+    ["@scope/pkg", "@scope/pkg"],
+    ["plain-name", "plain-name"],
+    ["npm:pkg@latest", null],
+    ["github:owner/repo#c0ffee", null],
+    ["file:/x/y.tgz", null]
+  ],
+  "specifierToCatalogName": [
+    ["github:toby-bridges/api-relay-audit", "api-relay-audit"],
+    ["git+https://github.com/omdsh-dev/dsh-at-file.git", "dsh-at-file.git"],
+    ["@scope/pkg@1.0", "pkg"],
+    ["dsh-context", "dsh-context"],
+    ["dsh-context@1.2.3", "dsh-context"]
+  ]
+}

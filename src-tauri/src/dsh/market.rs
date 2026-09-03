@@ -18,7 +18,7 @@
 
 use super::components::{resolve_dsh_bin, web_profile_package_path};
 use super::process::{run_capture_lines};
-use crate::i18n::{tr, trf};
+use crate::i18n::keyf;
 use crate::version::{is_newer, parse_version};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -36,17 +36,19 @@ const MANAGED_PLUGIN_PACKAGES: [&str; 2] = [
     "@dsh-external/dsh-auth-tailscale",
 ];
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct MarketPlugin {
     /// `owner/name`（owner 缺失时从 repo url 派生）：展示与排序键
     pub full_name: String,
     pub name: String,
     /// 多语言描述原样透传（如 {"en": "...", "zh": "..."}），前端按界面语言取
+    #[ts(type = "Record<string, string>")]
     pub description: Option<BTreeMap<String, String>>,
     pub url: String,
     /// null = 目录暂无数据（新收录或仓库 404），不静默当 0
-    pub stars: Option<u64>,
+    pub stars: Option<f64>,
     /// 分类 id（显示名经目录顶层的 categories 表本地化）
     pub category: Option<String>,
     /// 目录 `install` 命令串中解析出的安装标识；None = 无一键安装候选，
@@ -58,12 +60,14 @@ pub struct MarketPlugin {
     pub replacement: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct MarketCatalog {
     /// 目录生成日期（目录原生 `updated`，如 "2026-08-31"）
     pub updated: Option<String>,
     /// 分类 id → {语言 → 显示名}，目录原生表原样透传（前端按界面语言取）
+    #[ts(type = "Record<string, Record<string, string>>")]
     pub categories: BTreeMap<String, BTreeMap<String, String>>,
     pub total: usize,
     pub plugins: Vec<MarketPlugin>,
@@ -71,8 +75,9 @@ pub struct MarketCatalog {
     pub from_snapshot: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct InstalledPlugin {
     /// npm 包名（profile package.json dependencies 键）
     pub name: String,
@@ -84,8 +89,9 @@ pub struct InstalledPlugin {
 
 /// 安装回执：本次安装落进 profile 的 dependencies 键与 spec。
 /// github: 重装等无法唯一确定落点的场景返回 None（安装本身仍成功）
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct InstallReceipt {
     pub name: String,
     pub spec: String,
@@ -94,8 +100,9 @@ pub struct InstallReceipt {
 /// 安装结果：成功带回执；被 pnpm 拦截构建脚本时转审批请求（被拦包名 +
 /// 待写文件路径）。审批是用户决策点：安装脚本以用户身份执行任意代码，
 /// launcher 不静默放行
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(tag = "status", rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
 pub enum InstallOutcome {
     Installed { receipt: Option<InstallReceipt> },
     #[serde(rename_all = "camelCase")]
@@ -171,7 +178,7 @@ pub(crate) fn plugin_from_json(v: &serde_json::Value) -> Option<MarketPlugin> {
         name: name.to_string(),
         description,
         url,
-        stars: v.get("stars").and_then(serde_json::Value::as_u64),
+        stars: v.get("stars").and_then(serde_json::Value::as_f64),
         category,
         install_specifier,
         deprecated: v.get("deprecated").and_then(serde_json::Value::as_bool).unwrap_or(false),
@@ -189,9 +196,8 @@ pub(crate) fn plugin_from_json(v: &serde_json::Value) -> Option<MarketPlugin> {
 pub(crate) fn catalog_from_raw(raw: &str, from_snapshot: bool) -> Result<MarketCatalog, CatalogLoadError> {
     let body: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
         crate::logging::error("[market] 目录解析失败", &e.to_string());
-        CatalogLoadError::Transient(trf(
-            "Failed to parse plugin catalog: {error}",
-            &[("error", e.to_string())],
+        CatalogLoadError::Transient(keyf(
+            "Failed to parse plugin catalog: {error}", &[("error", e.to_string())],
         ))
     })?;
     let plugins: Vec<MarketPlugin> = body
@@ -201,8 +207,9 @@ pub(crate) fn catalog_from_raw(raw: &str, from_snapshot: bool) -> Result<MarketC
         .unwrap_or_default();
     if plugins.is_empty() {
         crate::logging::error("[market] 目录格式不符", "plugins 非空数组缺失或全部条目无法投影");
-        return Err(CatalogLoadError::UnsupportedSchema(tr(
+        return Err(CatalogLoadError::UnsupportedSchema(keyf(
             "Unrecognized plugin catalog format; update the app or fix the catalog mirror",
+            &[],
         )));
     }
     // 分类表原样透传；缺失/畸形按空表处理，前端回退展示分类 id（纯展示数据，
@@ -230,9 +237,8 @@ pub(crate) fn resolve_catalog_url(configured: &str) -> Result<String, String> {
         return Ok(MARKET_CATALOG_URL.to_string());
     }
     if !url.starts_with("https://") && !url.starts_with("http://") {
-        return Err(trf(
-            "Invalid plugin catalog URL: {url}; it must start with https:// or http://",
-            &[("url", url.to_string())],
+        return Err(keyf(
+            "Invalid plugin catalog URL: {url}; it must start with https:// or http://", &[("url", url.to_string())],
         ));
     }
     Ok(url.to_string())
@@ -246,34 +252,30 @@ pub(crate) fn fetch_catalog_raw(url: &str) -> Result<MarketCatalog, CatalogLoadE
         .build()
         .map_err(|e| {
             crate::logging::error("[market] HTTP client 初始化失败", &e.to_string());
-            CatalogLoadError::Transient(trf(
-                "Cannot initialize HTTP client: {error}",
-                &[("error", e.to_string())],
+            CatalogLoadError::Transient(keyf(
+                "Cannot initialize HTTP client: {error}", &[("error", e.to_string())],
             ))
         })?
         .get(url)
         .send()
         .map_err(|e| {
             crate::logging::error("[market] 目录拉取失败", &e.to_string());
-            CatalogLoadError::Transient(trf(
-                "Failed to fetch plugin catalog: {error}",
-                &[("error", e.to_string())],
+            CatalogLoadError::Transient(keyf(
+                "Failed to fetch plugin catalog: {error}", &[("error", e.to_string())],
             ))
         })?;
     if !resp.status().is_success() {
         let status = resp.status();
         crate::logging::error("[market] 目录拉取失败", &status.to_string());
-        return Err(CatalogLoadError::Transient(trf(
-            "Failed to fetch plugin catalog: HTTP {status}",
-            &[("status", status.as_u16().to_string())],
+        return Err(CatalogLoadError::Transient(keyf(
+            "Failed to fetch plugin catalog: HTTP {status}", &[("status", status.as_u16().to_string())],
         )));
     }
     // 原文仅作解析输入，不落盘（快照存投影后的目录，见 write_catalog_snapshot）
     let raw = resp.text().map_err(|e| {
         crate::logging::error("[market] 目录读取失败", &e.to_string());
-        CatalogLoadError::Transient(trf(
-            "Failed to fetch plugin catalog: {error}",
-            &[("error", e.to_string())],
+        CatalogLoadError::Transient(keyf(
+            "Failed to fetch plugin catalog: {error}", &[("error", e.to_string())],
         ))
     })?;
     catalog_from_raw(&raw, false)
@@ -308,16 +310,14 @@ fn write_catalog_snapshot(app: &tauri::AppHandle, catalog: &MarketCatalog) {
 pub(crate) fn load_catalog_snapshot_file(path: &std::path::Path) -> Result<MarketCatalog, String> {
     let raw = std::fs::read_to_string(path).map_err(|e| {
         crate::logging::warn("[market] 目录快照读取失败", &e.to_string());
-        trf(
-            "Failed to read catalog snapshot: {error}",
-            &[("error", e.to_string())],
+        keyf(
+            "Failed to read catalog snapshot: {error}", &[("error", e.to_string())],
         )
     })?;
     let mut catalog: MarketCatalog = serde_json::from_str(&raw).map_err(|e| {
         crate::logging::warn("[market] 目录快照解析失败", &e.to_string());
-        trf(
-            "Failed to parse catalog snapshot: {error}",
-            &[("error", e.to_string())],
+        keyf(
+            "Failed to parse catalog snapshot: {error}", &[("error", e.to_string())],
         )
     })?;
     catalog.from_snapshot = true;
@@ -371,8 +371,9 @@ pub(crate) fn installed_plugins() -> Result<Vec<InstalledPlugin>, String> {
 /// 插件更新检测的单包结果。检测范围 = npm 形态安装的非受管插件：协议形态
 /// （github:/file: 等）来源不是 registry、范围 spec 无具体版本可比，均如实
 /// 返回 None（不猜）；受管插件由 Launcher 的修复流程管理，不参与
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct PluginUpdateInfo {
     pub name: String,
     /// 落盘 spec 原文（file:/github: 等形态如实展示）
@@ -428,7 +429,7 @@ fn registry_latest(name: &str) -> Result<String, String> {
     }
     let raw = resp.text().map_err(|e| e.to_string())?;
     latest_from_registry_json(&raw)
-        .ok_or_else(|| trf("Cannot parse npm registry response for {name}", &[("name", name.to_string())]))
+        .ok_or_else(|| keyf("Cannot parse npm registry response for {name}", &[("name", name.to_string())]))
 }
 
 /// 更新检测执行体（market_check_updates 的阻塞部分）：逐包串行查 registry
@@ -467,7 +468,7 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
     if checked > 0 && failed == checked {
         let e = first_error.unwrap_or_default();
         crate::logging::error("[market] 插件更新检测失败", &e);
-        return Err(trf("Failed to check plugin updates: {error}", &[("error", e)]));
+        return Err(keyf("Failed to check plugin updates: {error}", &[("error", e)]));
     }
     Ok(infos)
 }
@@ -478,16 +479,16 @@ pub(crate) fn installed_list_from_profile(path: &std::path::PathBuf) -> Result<V
     }
     let raw = std::fs::read_to_string(path).map_err(|e| {
         crate::logging::warn("[market] 读取 profile package.json 失败", &e.to_string());
-        trf("Failed to read web profile: {error}", &[("error", e.to_string())])
+        keyf("Failed to read web profile: {error}", &[("error", e.to_string())])
     })?;
     let package: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
         crate::logging::warn("[market] 解析 profile package.json 失败", &e.to_string());
-        trf("Failed to parse web profile: {error}", &[("error", e.to_string())])
+        keyf("Failed to parse web profile: {error}", &[("error", e.to_string())])
     })?;
     let deps = package
         .get("dependencies")
         .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| tr("Web profile has no dependencies"))?;
+        .ok_or_else(|| "Web profile has no dependencies".to_string())?;
     Ok(deps
         .iter()
         .map(|(name, spec)| InstalledPlugin {
@@ -511,8 +512,9 @@ pub(crate) fn valid_identifier(s: &str) -> bool {
 }
 
 /// npm 形态 specifier 的包名部分；带协议前缀的形态（github:/file:/npm: 等）
-/// 返回 None（安装后的 dependencies 键名无法预知）。前端
-/// packageNameFromSpecifier 同一套语义，改一侧必须同步另一侧
+/// 返回 None（安装后的 dependencies 键名无法预知）。语义定义只有一份：
+/// specifier_cases.json 测试向量驱动本函数与前端 packageNameFromSpecifier
+/// 两侧实现，漂移在一侧测试立即失败
 pub(crate) fn package_name_from_specifier(specifier: &str) -> Option<String> {
     // npm 包名不含 ':'，带即协议形态
     if specifier.contains(':') {
@@ -526,8 +528,8 @@ pub(crate) fn package_name_from_specifier(specifier: &str) -> Option<String> {
 
 /// specifier → 目录条目的 name。目录条目与安装 specifier 同源于目录
 /// install 命令串的 ` add ` 后缀：prefix 形态取最后一段
-/// （github:owner/repo → repo），npm 形态即包名。前端
-/// specifierToCatalogName 同一套语义，改一侧必须同步另一侧
+/// （github:owner/repo → repo），npm 形态即包名。语义定义见
+/// specifier_cases.json（与前端 specifierToCatalogName 同一向量表）
 pub(crate) fn specifier_to_catalog_name(specifier: &str) -> String {
     let last = specifier.rsplit('/').next().unwrap_or(specifier);
     package_name_from_specifier(last).unwrap_or_else(|| last.to_string())
@@ -558,9 +560,8 @@ pub(crate) fn policy_allows(entries: &[String], identifier: &str) -> bool {
 pub(crate) fn policy_entries_from_raw(raw: &str) -> Result<Option<Vec<String>>, String> {
     let policy: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
         crate::logging::warn("[market] 解析插件策略失败", &e.to_string());
-        trf(
-            "Failed to parse plugin policy: {error}",
-            &[("error", e.to_string())],
+        keyf(
+            "Failed to parse plugin policy: {error}", &[("error", e.to_string())],
         )
     })?;
     let Some(allowed) = policy.get("allowed") else {
@@ -568,7 +569,7 @@ pub(crate) fn policy_entries_from_raw(raw: &str) -> Result<Option<Vec<String>>, 
     };
     let arr = allowed
         .as_array()
-        .ok_or_else(|| tr("Plugin policy field \"allowed\" must be an array"))?;
+        .ok_or_else(|| "Plugin policy field \"allowed\" must be an array".to_string())?;
     Ok(Some(
         arr.iter().filter_map(|v| v.as_str()).map(str::to_string).collect(),
     ))
@@ -586,9 +587,8 @@ fn load_policy_entries() -> Result<Option<Vec<String>>, String> {
     }
     let raw = std::fs::read_to_string(&path).map_err(|e| {
         crate::logging::warn("[market] 读取插件策略失败", &e.to_string());
-        trf(
-            "Failed to read plugin policy: {error}",
-            &[("error", e.to_string())],
+        keyf(
+            "Failed to read plugin policy: {error}", &[("error", e.to_string())],
         )
     })?;
     policy_entries_from_raw(&raw)
@@ -605,9 +605,8 @@ fn enforce_install_policy(identifier: &str) -> Result<(), String> {
     let path = plugin_policy_path()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    Err(trf(
-        "Plugin install blocked by policy: {identifier} is not in the allowlist ({path})",
-        &[("identifier", identifier.to_string()), ("path", path)],
+    Err(keyf(
+        "Plugin install blocked by policy: {identifier} is not in the allowlist ({path})", &[("identifier", identifier.to_string()), ("path", path)],
     ))
 }
 
@@ -617,7 +616,7 @@ fn enforce_install_policy(identifier: &str) -> Result<(), String> {
 /// 本函数保留给解析失败与普通错误的文案加工
 pub(crate) fn install_failure_message(action: &str, error: &str) -> String {
     if action != "add" {
-        return trf("Failed to remove plugin: {error}", &[("error", error.to_string())]);
+        return keyf("Failed to remove plugin: {error}", &[("error", error.to_string())]);
     }
     if error.contains("allowBuilds") || error.contains("Ignored build scripts") {
         let path = web_profile_package_path()
@@ -625,18 +624,18 @@ pub(crate) fn install_failure_message(action: &str, error: &str) -> String {
             .and_then(|p| p.parent().map(|d| d.join("pnpm-workspace.yaml")))
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "~/.dsh/profiles/web/pnpm-workspace.yaml".to_string());
-        return trf(
-            "Plugin build scripts were blocked by pnpm. Add the package name printed in the log under \"allowBuilds\" in {path}, then retry. Detail: {error}",
-            &[("path", path), ("error", error.to_string())],
+        return keyf(
+            "Plugin build scripts were blocked by pnpm. Add the package name printed in the log under \"allowBuilds\" in {path}, then retry. Detail: {error}", &[("path", path), ("error", error.to_string())],
         );
     }
-    trf("Failed to install plugin: {error}", &[("error", error.to_string())])
+    keyf("Failed to install plugin: {error}", &[("error", error.to_string())])
 }
 
 /// 安装输出行事件（`market-install-log`）：specifier 锚定前端卡片（安装全局
 /// 单飞，带上是防御错位），line 为 dsh/pnpm 子进程的展示行
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct MarketInstallLogEvent {
     pub specifier: String,
     pub line: String,
@@ -652,7 +651,7 @@ fn run_plugin_cmd(
 ) -> Result<(), (String, String)> {
     if !valid_identifier(arg) {
         let raw = format!("invalid plugin identifier: {arg}");
-        return Err((raw, tr("Invalid plugin identifier")));
+        return Err((raw, "Invalid plugin identifier".to_string()));
     }
     if action == "add" {
         if let Err(display) = enforce_install_policy(arg) {
@@ -710,7 +709,7 @@ fn workspace_yaml_path() -> Result<std::path::PathBuf, String> {
     web_profile_package_path()?
         .parent()
         .map(|d| d.join("pnpm-workspace.yaml"))
-        .ok_or_else(|| tr("Web profile has no parent directory"))
+        .ok_or_else(|| "Web profile has no parent directory".to_string())
 }
 
 /// 合并放行构建脚本到 profile 的 pnpm-workspace.yaml（上游 dsh 对 pnpm 10+
@@ -718,21 +717,19 @@ fn workspace_yaml_path() -> Result<std::path::PathBuf, String> {
 /// `onlyBuiltDependencies: [pkg]`（pnpm 10 认）双键同写；用户已有键与显式
 /// false 不覆盖、只插入缺失项，幂等。pnpm 9 不拦脚本，不会走到这里
 pub(crate) fn merge_allow_builds(path: &std::path::Path, packages: &[String]) -> Result<(), String> {
-    let yaml_invalid = || tr("Invalid pnpm workspace config");
+    let yaml_invalid = || "Invalid pnpm workspace config".to_string();
     let mut root: serde_yaml::Value = if path.exists() {
         let raw = std::fs::read_to_string(path).map_err(|e| {
             crate::logging::warn("[market] 读取 pnpm-workspace.yaml 失败", &e.to_string());
-            trf(
-                "Failed to read {path}: {error}",
-                &[("path", path.display().to_string()), ("error", e.to_string())],
+            keyf(
+                "Failed to read {path}: {error}", &[("path", path.display().to_string()), ("error", e.to_string())],
             )
         })?;
         serde_yaml::from_str(&raw).map_err(|e| {
             crate::logging::warn("[market] 解析 pnpm-workspace.yaml 失败", &e.to_string());
             // 损坏时拒绝覆盖：宁可让用户手改，不可静默丢配置
-            trf(
-                "Failed to parse {path}: {error}",
-                &[("path", path.display().to_string()), ("error", e.to_string())],
+            keyf(
+                "Failed to parse {path}: {error}", &[("path", path.display().to_string()), ("error", e.to_string())],
             )
         })?
     } else {
@@ -770,9 +767,8 @@ pub(crate) fn merge_allow_builds(path: &std::path::Path, packages: &[String]) ->
     let out = serde_yaml::to_string(&root).map_err(|e| e.to_string())?;
     std::fs::write(path, out).map_err(|e| {
         crate::logging::warn("[market] 写入 pnpm-workspace.yaml 失败", &e.to_string());
-        trf(
-            "Failed to write {path}: {error}",
-            &[("path", path.display().to_string()), ("error", e.to_string())],
+        keyf(
+            "Failed to write {path}: {error}", &[("path", path.display().to_string()), ("error", e.to_string())],
         )
     })
 }
@@ -884,17 +880,9 @@ pub(crate) fn protocol_installed_match<'a>(
 
 // ============ IPC ============
 
-/// 同步 command 在 Tauri 主线程执行：目录下载解析、pnpm 子进程这类长操作
-/// 会冻结 WebView。统一丢进阻塞线程池，命令本身保持 async
-async fn ipc_blocking<T: Send + 'static>(task: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(task)
-        .await
-        .map_err(|e| format!("market task failed: {e}"))?
-}
-
 #[tauri::command]
 pub async fn market_fetch(app: tauri::AppHandle) -> Result<MarketCatalog, String> {
-    ipc_blocking(move || fetch_catalog(&app)).await
+    super::ipc_blocking(move || fetch_catalog(&app)).await
 }
 
 #[tauri::command]
@@ -911,29 +899,59 @@ pub fn market_snapshot(app: tauri::AppHandle) -> Option<MarketCatalog> {
         .and_then(|p| load_catalog_snapshot_file(&p).ok())
 }
 
-/// 安装一键候选的执行体（market_install 的阻塞部分）
-fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcome, String> {
-    let before = installed_plugins()
-        .ok()
-        .map(|l| l.iter().map(|p| p.name.clone()).collect::<Vec<_>>());
-    match run_plugin_cmd("add", specifier, emit_install_line(app, specifier)) {
+/// 安装结果的判定核（不碰进程/审计/AppHandle）：run_plugin_cmd 的成败即
+/// InstallOutcome 的形态——成功带 before/after 列表算回执；失败按 pnpm 拦截
+/// 指纹转审批请求或按加工后文案报错。返回错误形态 (raw, display) 由调用方
+/// 记账（raw 进审计台账，display 给用户）
+pub(crate) fn install_decision(
+    specifier: &str,
+    run: Result<(), (String, String)>,
+    before: Option<Vec<String>>,
+    after: Option<Vec<InstalledPlugin>>,
+    workspace_yaml: Option<String>,
+) -> Result<InstallOutcome, (String, String)> {
+    match run {
         Ok(()) => {
-            append_audit(app, "add", specifier, None);
-            let receipt = installed_plugins()
-                .ok()
-                .and_then(|list| install_receipt(specifier, before, &list, Some(&specifier_to_catalog_name(specifier))));
+            let receipt = after.and_then(|list| {
+                install_receipt(specifier, before, &list, Some(&specifier_to_catalog_name(specifier)))
+            });
             Ok(InstallOutcome::Installed { receipt })
         }
         Err((raw, display)) => {
             let packages = blocked_build_packages(&raw);
             if !packages.is_empty() {
-                // 拦截不算安装失败：转审批请求，台账记请求本身（复述字段含被拦包名）
-                append_audit(app, "needs-approval", specifier, Some(&raw));
-                return Ok(InstallOutcome::NeedsApproval {
-                    packages,
-                    workspace_yaml: workspace_yaml_path()?.display().to_string(),
-                });
+                // 拦截不算安装失败：转审批请求（被拦包名 + 待写 yaml 路径）
+                let workspace_yaml = workspace_yaml
+                    .ok_or_else(|| (raw.clone(), "Web profile has no parent directory".to_string()))?;
+                return Ok(InstallOutcome::NeedsApproval { packages, workspace_yaml });
             }
+            Err((raw, display))
+        }
+    }
+}
+
+/// 安装一键候选的执行体（market_install 的阻塞部分）：进程执行与审计台账
+/// 在本壳，判定决策在 install_decision（审批分流附带回执/拦截原始事实，
+/// 台账记原始 stderr，不随判定层的加工漂移）
+fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcome, String> {
+    let before = installed_plugins()
+        .ok()
+        .map(|l| l.iter().map(|p| p.name.clone()).collect::<Vec<_>>());
+    let run = run_plugin_cmd("add", specifier, emit_install_line(app, specifier));
+    let raw_failure = run.as_ref().err().map(|(raw, _)| raw.clone());
+    let after = installed_plugins().ok();
+    let workspace_yaml = workspace_yaml_path().ok().map(|p| p.display().to_string());
+    match install_decision(specifier, run, before, after, workspace_yaml) {
+        Ok(outcome @ InstallOutcome::Installed { .. }) => {
+            append_audit(app, "add", specifier, None);
+            Ok(outcome)
+        }
+        Ok(outcome @ InstallOutcome::NeedsApproval { .. }) => {
+            // 台账记请求本身：拦截的原始 stderr 是可复述事实
+            append_audit(app, "needs-approval", specifier, raw_failure.as_deref());
+            Ok(outcome)
+        }
+        Err((raw, display)) => {
             append_audit(app, "add", specifier, Some(&raw));
             Err(display)
         }
@@ -959,7 +977,7 @@ fn emit_install_line(app: &tauri::AppHandle, specifier: &str) -> impl Fn(&str) +
 /// 审批后再经 market_approve_builds 放行。写入审计台账
 #[tauri::command]
 pub async fn market_install(app: tauri::AppHandle, specifier: String) -> Result<InstallOutcome, String> {
-    ipc_blocking(move || install_once(&app, &specifier)).await
+    super::ipc_blocking(move || install_once(&app, &specifier)).await
 }
 
 /// 用户审批放行构建脚本后的执行体（market_approve_builds 的阻塞部分）
@@ -998,9 +1016,9 @@ pub async fn market_approve_builds(
         || packages.is_empty()
         || packages.iter().any(|p| !valid_identifier(p))
     {
-        return Err(tr("Invalid plugin identifier"));
+        return Err("Invalid plugin identifier".to_string());
     }
-    ipc_blocking(move || approve_builds_once(&app, &specifier, packages)).await
+    super::ipc_blocking(move || approve_builds_once(&app, &specifier, packages)).await
 }
 
 /// 移除插件的执行体（market_remove 的阻塞部分）
@@ -1019,7 +1037,7 @@ fn remove_once(app: &tauri::AppHandle, name: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn market_remove(app: tauri::AppHandle, name: String) -> Result<(), String> {
-    ipc_blocking(move || remove_once(&app, &name)).await
+    super::ipc_blocking(move || remove_once(&app, &name)).await
 }
 
 /// 更新检测：npm 形态已装插件比对 registry latest（进入市场页自动跑，
@@ -1027,5 +1045,5 @@ pub async fn market_remove(app: tauri::AppHandle, name: String) -> Result<(), St
 /// 与安装同一 dsh 闸门、审计与审批路径
 #[tauri::command]
 pub async fn market_check_updates() -> Result<Vec<PluginUpdateInfo>, String> {
-    ipc_blocking(check_updates_once).await
+    super::ipc_blocking(check_updates_once).await
 }

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 
 use crate::config;
-use crate::i18n::{tr, trf};
+use crate::i18n::keyf;
 
 // ============ 远程授权配置 ============
 
@@ -74,9 +74,8 @@ pub(crate) fn validate_cap_domain(domain: &str) -> Result<String, String> {
     if valid {
         Ok(trimmed.to_string())
     } else {
-        Err(trf(
-            "Invalid capability domain: {domain}. Use a domain you control (e.g. example.com)",
-            &[("domain", domain.to_string())],
+        Err(keyf(
+            "Invalid capability domain: {domain}. Use a domain you control (e.g. example.com)", &[("domain", domain.to_string())],
         ))
     }
 }
@@ -94,7 +93,7 @@ pub(crate) fn parse_extra_logins(raw: &str) -> Result<Vec<String>, String> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "@._+-".contains(c))
         {
-            return Err(tr("Tailscale login name contains unsupported characters"));
+            return Err("Tailscale login name contains unsupported characters".to_string());
         }
         if !seen.iter().any(|existing| existing == login) {
             seen.push(login.to_string());
@@ -123,9 +122,8 @@ pub(crate) fn resolve_auth_config() -> Result<AuthConfig, String> {
 
 pub(crate) fn tailscale_login_from_status_json(raw: &str) -> Result<String, String> {
     let status: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
-        let err = trf(
-            "Cannot parse Tailscale status: {error}",
-            &[("error", e.to_string())],
+        let err = keyf(
+            "Cannot parse Tailscale status: {error}", &[("error", e.to_string())],
         );
         log::error!("[dsh tailscale] 解析 status 失败: {}", err);
         err
@@ -136,7 +134,7 @@ pub(crate) fn tailscale_login_from_status_json(raw: &str) -> Result<String, Stri
             value.trim().to_string()
         }
         _ => {
-            let err = tr("Tailscale status does not contain the current user ID");
+            let err = "Tailscale status does not contain the current user ID".to_string();
             log::error!("[dsh tailscale] {}", err);
             return Err(err);
         }
@@ -162,7 +160,7 @@ pub(crate) fn tailscale_login_from_status_json(raw: &str) -> Result<String, Stri
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            let err = tr("Tailscale status does not contain the current login name");
+            let err = "Tailscale status does not contain the current login name".to_string();
             log::error!("[dsh tailscale] {}", err);
             err
         })?;
@@ -170,7 +168,7 @@ pub(crate) fn tailscale_login_from_status_json(raw: &str) -> Result<String, Stri
         .chars()
         .all(|character| character.is_ascii_alphanumeric() || "@._+-".contains(character))
     {
-        let err = tr("Tailscale login name contains unsupported characters");
+        let err = "Tailscale login name contains unsupported characters".to_string();
         log::error!("[dsh tailscale] {}", err);
         return Err(err);
     }
@@ -181,9 +179,8 @@ pub(crate) fn resolve_tailscale_login(ts: &str) -> Result<String, String> {
     match run_capture(ts, &["status", "--json"]) {
         Ok((out, _, true)) => tailscale_login_from_status_json(&out),
         Ok((_, err, false)) => {
-            let e = trf(
-                "Cannot read the current Tailscale identity: {error}",
-                &[(
+            let e = keyf(
+                "Cannot read the current Tailscale identity: {error}", &[(
                     "error",
                     if err.is_empty() {
                         "tailscale status --json failed".to_string()

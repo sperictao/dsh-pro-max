@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { TOGGLE } from "@/shared/lib/ui";
+import { tErr } from "@/shared/i18n/error";
 
 export function DshAutostartSection() {
   const { t } = useTranslation();
@@ -34,7 +35,7 @@ export function DshAutostartSection() {
       setAutostart(next);
       toast(next ? t("Auto-start enabled") : t("Auto-start disabled"), "success");
     } catch (e) {
-      toast(t("Failed to change auto-start: {{error}}", { error: String(e) }), "error");
+      toast(t("Failed to change auto-start: {{error}}", { error: tErr(String(e)) }), "error");
     } finally {
       setAutostartBusy(false);
     }

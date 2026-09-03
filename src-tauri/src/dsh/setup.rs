@@ -15,7 +15,7 @@ use std::time::Duration;
 use tauri::{Emitter};
 
 
-use crate::i18n::{tr, trf};
+use crate::i18n::keyf;
 
 // ============ 一键启动（时间轴事件流） ============
 
@@ -37,6 +37,7 @@ pub(crate) fn emit_step(
             detail,
             problem,
             solution,
+            title_key: None, // 事件流节点的标题已由骨架就位，不重复携带
         },
     );
 }
@@ -83,14 +84,14 @@ pub(crate) fn spawn_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) 
     if web_profile_has_auth_plugins() {
         ensure_web_profile_compat_patch().map_err(|error| {
             log::error!("[dsh 启动] 修复 web profile patch 失败: {}", error);
-            (error, tr("Check the log at ~/.dsh/dsh-web.log"))
+            (error, "Check the log at ~/.dsh/dsh-web.log".to_string())
         })?;
     }
     let dsh_bin = match resolve_dsh_bin() {
         Ok(b) => b,
         Err(e) => {
             log::error!("[dsh 启动] 定位 dsh CLI 失败: {}", e);
-            return Err((e, tr("Install dsh first, then retry")));
+            return Err((e, "Install dsh first, then retry".to_string()));
         }
     };
     let mut args: Vec<String> = vec![
@@ -118,7 +119,7 @@ pub(crate) fn spawn_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) 
         log::error!("[dsh 启动] 拉起 dsh web 进程失败: {}", e);
         (
             e,
-            tr("Port 3899 may be occupied; stop the process using it and retry"),
+            "Port 3899 may be occupied; stop the process using it and retry".to_string(),
         )
     })
 }
@@ -178,55 +179,61 @@ pub(crate) fn plugin_failure_from_log_tail(tail: &str) -> Option<(String, String
         .map(|(name, error)| (name.to_string(), error.to_string()))
 }
 
-/// 启动失败诊断：把 dsh-web.log 尾部的真实错误带进时间轴（进程崩溃时这里就是
-/// 堆栈），并按常见崩溃原因给出针对性方案。只读日志，不修改任何状态
-pub(crate) fn start_failure_diagnosis(log: &Path) -> (String, String) {
-    let tail = read_log_tail(log, 40);
-    // 插件加载失败优先点名具体插件与根因报错（致命标记门控在提取函数内）
-    if let Some((plugin, error)) = tail.as_deref().and_then(plugin_failure_from_log_tail) {
+/// 从日志尾部内容诊断启动失败（决策核，不碰文件系统）：插件加载失败优先点名
+/// 具体插件与根因报错（致命标记门控在提取函数内）；其余按日志里的常见崩溃
+/// 指纹（EPERM/symlink、credentials 格式）给针对性方案
+pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> (String, String) {
+    if let Some((plugin, error)) = tail.and_then(plugin_failure_from_log_tail) {
         return (
-            trf(
-                "dsh web failed to start; plugin {plugin} failed to load:\n{error}",
-                &[("plugin", plugin.clone()), ("error", error)],
+            keyf(
+                "dsh web failed to start; plugin {plugin} failed to load:\n{error}", &[("plugin", plugin.clone()), ("error", error)],
             ),
-            trf(
-                "Remove or update the plugin {plugin} on the Plugins page, then retry; launcher-managed authorization plugins are restored by Repair dsh stack",
-                &[("plugin", plugin)],
+            keyf(
+                "Remove or update the plugin {plugin} on the Plugins page, then retry; launcher-managed authorization plugins are restored by Repair dsh stack", &[("plugin", plugin)],
             ),
         );
     }
-    let problem = match &tail {
+    let problem = match tail {
         Some(t) => {
             // 问题区只取前 8 行，避免长堆栈淹没时间轴
             let short: Vec<&str> = t.lines().take(8).collect();
-            trf("dsh web failed to start; log says:\n{log}", &[("log", short.join("\n"))])
+            keyf("dsh web failed to start; log says:\n{log}", &[("log", short.join("\n"))])
         }
-        None => tr("dsh web failed to start (no log output; port 3899 may be occupied)"),
+        None => "dsh web failed to start (no log output; port 3899 may be occupied)".to_string(),
     };
-    let solution = match &tail {
+    let solution = match tail {
         // Windows 首启最典型崩溃：healProfilesModuleFallback 建符号链接被拒
         Some(t) if t.contains("EPERM") || t.contains("symlink") => {
-            tr("dsh could not create symlinks; on Windows enable Developer Mode (Settings → Privacy & security → For developers), then retry")
+            "dsh could not create symlinks; on Windows enable Developer Mode (Settings → Privacy & security → For developers), then retry".to_string()
         }
         // 装过跨线 dsh（如 0.1.3-alpha.1）的机器：它把 credentials 重写成了
         // 新格式，锁定线的 CLI 读不了；引导用户手动还原为扁平 KEY: value
         Some(t) if t.contains(".credentials.yaml") && t.contains("must be a string") => {
-            tr("A newer dsh rewrote ~/.dsh/.credentials.yaml into an incompatible format; open it and keep only the KEY: value lines (drop the version:/refs: wrapper), then retry")
+            "A newer dsh rewrote ~/.dsh/.credentials.yaml into an incompatible format; open it and keep only the KEY: value lines (drop the version:/refs: wrapper), then retry".to_string()
         }
-        _ => tr("Check the log at ~/.dsh/dsh-web.log; port 3899 may be occupied or the dsh CLI may need a newer Node.js"),
+        _ => "Check the log at ~/.dsh/dsh-web.log; port 3899 may be occupied or the dsh CLI may need a newer Node.js".to_string(),
     };
     (problem, solution)
+}
+
+/// 启动失败诊断：把 dsh-web.log 尾部的真实错误带进时间轴（进程崩溃时这里就是
+/// 堆栈），并按常见崩溃原因给出针对性方案。只读日志，不修改任何状态
+pub(crate) fn start_failure_diagnosis(log: &Path) -> (String, String) {
+    diagnose_start_failure_from_tail(read_log_tail(log, 40).as_deref())
 }
 
 /// dsh-web.log 尾部（前端在失败节点「查看日志」里内嵌展示）。只读不改状态；
 /// 文件缺失/为空返回空串，由前端显示占位文案。尾部 200 行足以覆盖一次
 /// 崩溃输出，又不会把超长日志整份塞进 webview
 #[tauri::command]
-pub async fn dsh_web_log() -> String {
-    let log = dsh_dir()
-        .map(|d| d.join("dsh-web.log"))
-        .unwrap_or_else(|_| PathBuf::from("dsh-web.log"));
-    read_log_tail(&log, 200).unwrap_or_default()
+pub async fn dsh_web_log() -> Result<String, String> {
+    super::ipc_blocking(|| {
+        let log = dsh_dir()
+            .map(|d| d.join("dsh-web.log"))
+            .unwrap_or_else(|_| PathBuf::from("dsh-web.log"));
+        Ok(read_log_tail(&log, 200).unwrap_or_default())
+    })
+    .await
 }
 
 /// tailscale serve 命令（按配置转发 use/admin App Capability 到 dsh），供
@@ -251,26 +258,24 @@ pub(crate) fn serve_command(auth: &AuthConfig) -> Vec<String> {
 pub(crate) fn serve_failure_solution(err: &str) -> String {
     let e = err.to_lowercase();
     if e.contains("accept-app-caps") || e.contains("unknown flag") || e.contains("app cap") {
-        tr("Tailscale 1.92+ is required to forward App Capabilities; update Tailscale, then retry")
+        "Tailscale 1.92+ is required to forward App Capabilities; update Tailscale, then retry".to_string()
     } else if e.contains("tls cert") || e.contains("does not support") || e.contains("certificate") {
-        tr("MagicDNS or HTTPS Certificates may not be enabled; open https://login.tailscale.com/admin/dns and enable MagicDNS and HTTPS Certificates, then retry")
+        "MagicDNS or HTTPS Certificates may not be enabled; open https://login.tailscale.com/admin/dns and enable MagicDNS and HTTPS Certificates, then retry".to_string()
     } else {
-        tr("Open the authorization link in the error output to enable Serve for this tailnet (https://login.tailscale.com/f/serve), then retry")
+        "Open the authorization link in the error output to enable Serve for this tailnet (https://login.tailscale.com/f/serve), then retry".to_string()
     }
 }
 
 #[tauri::command]
 pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
-    let steps: [&'static str; 8] = [
-        "node",
-        "install",
-        "plugins",
-        "tailscale",
-        "magicdns",
-        "start",
-        "serve",
-        "verify",
-    ];
+    // 全程阻塞 I/O（npm/pnpm 安装、tailscale 子进程、curl 探测、60s 启动等待）：
+    // 走统一 adapter，事件经 move 进去的 AppHandle 照常 emit
+    super::ipc_blocking(move || dsh_setup_once(&app)).await
+}
+
+fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
+    // 步骤序列的唯一事实来源是 mod.rs 的 SETUP_STEPS（dsh_step_schema 同源）
+    let steps = super::SETUP_STEPS;
     let remaining_after = |cur: usize| -> Vec<(&'static str, usize)> {
         steps
             .iter()
@@ -283,13 +288,13 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
     // 授权配置解析（域名/登录名校验）放在最前面，配置非法时立刻在首步失败，
     // 而不是等装好 dsh/Tailscale 之后才报。解析结果贯穿 start / serve 两步。
     let auth = {
-        let ctx = StepCtx { app: &app, index: 0, id: steps[0] };
+        let ctx = StepCtx { app, index: 0, id: steps[0] };
         match resolve_auth_config() {
             Ok(auth) => auth,
             Err(error) => {
                 return ctx.fail(
                     &error,
-                    &tr("Fix the remote authorization settings in Settings → DeepSeek Harness, then retry"),
+                    "Fix the remote authorization settings in Settings → DeepSeek Harness, then retry",
                     &remaining_after(0),
                 )
             }
@@ -298,16 +303,16 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
 
     {
         let ctx = StepCtx {
-            app: &app,
+            app,
             index: 0,
             id: steps[0],
         };
-        ctx.running(&tr("Checking Node.js & npm…"));
+        ctx.running("Checking Node.js & npm…");
         let node = match resolve_node_bin() {
             Ok(node) => node,
             Err(error) => return ctx.fail(
                 &error,
-                &tr("Install Node.js 18+ from https://nodejs.org, then restart this app and retry"),
+                "Install Node.js 18+ from https://nodejs.org, then restart this app and retry",
                 &remaining_after(0),
             ),
         };
@@ -325,7 +330,7 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
 
     {
         let ctx = StepCtx {
-            app: &app,
+            app,
             index: 1,
             id: steps[1],
         };
@@ -333,23 +338,20 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
         if dsh_version_is_compatible(current.as_deref()) {
             // 显示实际版本而非锁定版本：同线未来 rc/稳定版也可能兼容，
             // 显示 SUPPORTED_DSH_VERSION 会让用户误以为被装回了旧版
-            ctx.done(&trf(
-                "Compatible dsh is installed: {version}",
-                &[("version", current.clone().unwrap_or_default())],
+            ctx.done(&keyf(
+                "Compatible dsh is installed: {version}", &[("version", current.clone().unwrap_or_default())],
             ));
         } else {
-            ctx.running(&trf(
-                "Installing the pinned dsh ({version})…",
-                &[("version", SUPPORTED_DSH_VERSION.to_string())],
+            ctx.running(&keyf(
+                "Installing the pinned dsh ({version})…", &[("version", SUPPORTED_DSH_VERSION.to_string())],
             ));
             match install_supported_dsh() {
-                Ok(version) => ctx.done(&trf("Installed {version}", &[("version", version)])),
+                Ok(version) => ctx.done(&keyf("Installed {version}", &[("version", version)])),
                 Err(error) => {
                     return ctx.fail(
                         &error,
-                        &trf(
-                            "Check your network and npm settings, then run npm install -g {package}@{version} and retry",
-                            &[
+                        &keyf(
+                            "Check your network and npm settings, then run npm install -g {package}@{version} and retry", &[
                                 ("package", DSH_PACKAGE.to_string()),
                                 ("version", SUPPORTED_DSH_VERSION.to_string()),
                             ],
@@ -363,49 +365,49 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
 
     {
         let ctx = StepCtx {
-            app: &app,
+            app,
             index: 2,
             id: steps[2],
         };
-        let already_installed = bundled_plugin_specs(&app)
+        let already_installed = bundled_plugin_specs(app)
             .map(|specs| auth_plugins_installed(&specs))
             .unwrap_or(false);
         if already_installed {
-            ctx.done(&tr("Authorization plugins are installed"));
+            ctx.done("Authorization plugins are installed");
         } else {
-            ctx.running(&tr("Installing bundled dsh authorization plugins…"));
-            if let Err(error) = install_auth_plugins(&app) {
+            ctx.running("Installing bundled dsh authorization plugins…");
+            if let Err(error) = install_auth_plugins(app) {
                 return ctx.fail(
                     &error,
-                    &tr("Reinstall this Launcher if its bundled dsh plugins are missing, then retry"),
+                    "Reinstall this Launcher if its bundled dsh plugins are missing, then retry",
                     &remaining_after(2),
                 );
             }
-            ctx.done(&tr("Authorization plugins installed"));
+            ctx.done("Authorization plugins installed");
         }
     }
 
     let tailscale = {
         let ctx = StepCtx {
-            app: &app,
+            app,
             index: 3,
             id: steps[3],
         };
-        ctx.running(&tr("Checking Tailscale identity…"));
+        ctx.running("Checking Tailscale identity…");
         let ts = match tailscale_path() {
             Some(ts) => ts,
             None => {
                 return ctx.fail(
-                    &tr("Tailscale is not installed"),
-                    &tr("Install Tailscale and sign in, then run tailscale up and retry"),
+                    "Tailscale is not installed",
+                    "Install Tailscale and sign in, then run tailscale up and retry",
                     &remaining_after(3),
                 )
             }
         };
         if !tailscale_online(&ts) {
             return ctx.fail(
-                &tr("Tailscale is not connected"),
-                &tr("Run tailscale up and sign in with the account allowed to access dsh"),
+                "Tailscale is not connected",
+                "Run tailscale up and sign in with the account allowed to access dsh",
                 &remaining_after(3),
             );
         }
@@ -414,61 +416,60 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
             Err(error) => {
                 return ctx.fail(
                     &error,
-                    &tr("Update Tailscale, sign in again, and verify tailscale status --json"),
+                    "Update Tailscale, sign in again, and verify tailscale status --json",
                     &remaining_after(3),
                 )
             }
         };
-        ctx.done(&trf(
-            "Online · authorized identity: {login}",
-            &[("login", login.clone())],
+        ctx.done(&keyf(
+            "Online · authorized identity: {login}", &[("login", login.clone())],
         ));
         (ts, login)
     };
 
     {
         let ctx = StepCtx {
-            app: &app,
+            app,
             index: 4,
             id: steps[4],
         };
-        ctx.running(&tr("Checking MagicDNS…"));
+        ctx.running("Checking MagicDNS…");
         let (enabled, _) = magic_dns_info(&tailscale.0);
         if !enabled {
             return ctx.fail(
-                &tr("MagicDNS is not enabled"),
-                &tr("Open https://login.tailscale.com/admin/dns and enable MagicDNS and HTTPS Certificates, then retry"),
+                "MagicDNS is not enabled",
+                "Open https://login.tailscale.com/admin/dns and enable MagicDNS and HTTPS Certificates, then retry",
                 &remaining_after(4),
             );
         }
-        ctx.done(&tr("MagicDNS enabled"));
+        ctx.done("MagicDNS enabled");
     }
 
     {
         let ctx = StepCtx {
-            app: &app,
+            app,
             index: 5,
             id: steps[5],
         };
         let fqdn = resolve_fqdn();
         if port_listening(WEB_PORT) && dsh_web_pid().is_none() {
             return ctx.fail(
-                &tr("Port 3899 is occupied by another process"),
-                &tr("Stop the process listening on 127.0.0.1:3899, then retry"),
+                "Port 3899 is occupied by another process",
+                "Stop the process listening on 127.0.0.1:3899, then retry",
                 &remaining_after(5),
             );
         }
         if port_listening(WEB_PORT) {
-            ctx.running(&tr("Restarting dsh web with authorization plugins…"));
+            ctx.running("Restarting dsh web with authorization plugins…");
             if let Err(error) = restart_dsh_web(&tailscale.1, fqdn.as_deref(), &auth) {
                 return ctx.fail(
                     &error,
-                    &tr("Check the log at ~/.dsh/dsh-web.log"),
+                    "Check the log at ~/.dsh/dsh-web.log",
                     &remaining_after(5),
                 );
             }
         } else {
-            ctx.running(&tr("Starting dsh web on 127.0.0.1:3899…"));
+            ctx.running("Starting dsh web on 127.0.0.1:3899…");
             let pid = match spawn_dsh_web(&tailscale.1, fqdn.as_deref(), &auth) {
                 Ok(pid) => pid,
                 Err((problem, solution)) => {
@@ -483,16 +484,16 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
                 return ctx.fail(&problem, &solution, &remaining_after(5));
             }
         }
-        ctx.done(&tr("dsh web is running on 127.0.0.1:3899"));
+        ctx.done("dsh web is running on 127.0.0.1:3899");
     }
 
     {
         let ctx = StepCtx {
-            app: &app,
+            app,
             index: 6,
             id: steps[6],
         };
-        ctx.running(&tr("Configuring Tailscale Serve directly to dsh…"));
+        ctx.running("Configuring Tailscale Serve directly to dsh…");
         let serve_args = serve_command(&auth);
         let serve_refs: Vec<&str> = serve_args.iter().map(|s| s.as_str()).collect();
         let result = run_capture(&tailscale.0, &serve_refs);
@@ -500,8 +501,8 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
             Ok((_, _, true)) if serve_configured(&tailscale.0) => {
                 let (_, url) = resolve_host_and_url();
                 match url {
-                    Some(url) => ctx.done(&trf("HTTPS serve ready: {url}", &[("url", url)])),
-                    None => ctx.done(&tr("HTTPS serve ready")),
+                    Some(url) => ctx.done(&keyf("HTTPS serve ready: {url}", &[("url", url)])),
+                    None => ctx.done("HTTPS serve ready"),
                 }
             }
             Ok((_, err, _)) => {
@@ -511,9 +512,8 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
                     err
                 };
                 return ctx.fail(
-                    &trf(
-                        "Serve is not enabled or failed: {error}",
-                        &[("error", error.clone())],
+                    &keyf(
+                        "Serve is not enabled or failed: {error}", &[("error", error.clone())],
                     ),
                     &serve_failure_solution(&error),
                     &remaining_after(6),
@@ -522,7 +522,7 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
             Err(error) => {
                 return ctx.fail(
                     &error,
-                    &tr("Run tailscale up first to sign in, then retry"),
+                    "Run tailscale up first to sign in, then retry",
                     &remaining_after(6),
                 )
             }
@@ -531,7 +531,7 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
 
     {
         let ctx = StepCtx {
-            app: &app,
+            app,
             index: 7,
             id: steps[7],
         };
@@ -539,12 +539,11 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
         let url_text = url
             .clone()
             .unwrap_or_else(|| "https://<hostname>.ts.net".to_string());
-        ctx.running(&trf(
-            "Verifying remote access ({url})…",
-            &[("url", url_text.clone())],
+        ctx.running(&keyf(
+            "Verifying remote access ({url})…", &[("url", url_text.clone())],
         ));
         let web_ok = http_ok(http_get(WEB_PORT, "127.0.0.1", "/").as_deref());
-        let plugins_ok = bundled_plugin_specs(&app)
+        let plugins_ok = bundled_plugin_specs(app)
             .map(|specs| auth_plugins_installed(&specs))
             .unwrap_or(false);
         let serve_ok = serve_configured(&tailscale.0);
@@ -586,86 +585,77 @@ pub async fn dsh_setup(app: tauri::AppHandle) -> Result<(), String> {
                 .and_then(proxy_bypass_host)
                 .unwrap_or("<hostname>.ts.net");
             return ctx.fail(
-                &trf(
-                    "The local proxy is intercepting the Tailscale address: {url}",
-                    &[("url", url_text)],
+                &keyf(
+                    "The local proxy is intercepting the Tailscale address: {url}", &[("url", url_text)],
                 ),
-                &trf(
-                    "Add {host} to this machine's proxy bypass / skip-proxy list, then retry",
-                    &[("host", host.to_string())],
+                &keyf(
+                    "Add {host} to this machine's proxy bypass / skip-proxy list, then retry", &[("host", host.to_string())],
                 ),
                 &remaining_after(7),
             );
         }
 
         if remote_stack_ok && remote_url_access == Some(RemoteUrlAccess::Ready) {
-            ctx.done(&trf("Remote access is ready: {url}", &[("url", url_text)]));
+            ctx.done(&keyf("Remote access is ready: {url}", &[("url", url_text)]));
         } else {
             let mut checks = Vec::new();
             if !web_ok {
-                checks.push(tr("dsh web is not responding on 127.0.0.1:3899"));
+                checks.push("dsh web is not responding on 127.0.0.1:3899".to_string());
             }
             if !plugins_ok {
-                checks.push(tr("The dsh authorization plugin profile is incomplete"));
+                checks.push("The dsh authorization plugin profile is incomplete".to_string());
             }
             if !serve_ok {
-                checks.push(tr("Tailscale Serve is not targeting 127.0.0.1:3899"));
+                checks.push("Tailscale Serve is not targeting 127.0.0.1:3899".to_string());
             }
             if !https_ok {
-                checks.push(trf(
-                    "HTTPS endpoint is not responding: {url}",
-                    &[("url", url_text.clone())],
+                checks.push(keyf(
+                    "HTTPS endpoint is not responding: {url}", &[("url", url_text.clone())],
                 ));
             }
             if !ws_ok {
-                checks.push(trf(
-                    "WebSocket handshake failed: {url}/api/remote.mux",
-                    &[("url", url_text.clone())],
+                checks.push(keyf(
+                    "WebSocket handshake failed: {url}/api/remote.mux", &[("url", url_text.clone())],
                 ));
             }
             match remote_use_access {
-                Some(RemoteRpcAccess::Denied) => checks.push(trf(
-                    "Remote use capability was denied; grant {capability} to this identity for the dsh node in tailnet grants, then run one-click setup again",
-                    &[(
+                Some(RemoteRpcAccess::Denied) => checks.push(keyf(
+                    "Remote use capability was denied; grant {capability} to this identity for the dsh node in tailnet grants, then run one-click setup again", &[(
                         "capability",
                         auth.use_capability
                             .clone()
                             .unwrap_or_else(|| "<domain>/cap/dsh".to_string()),
                     )],
                 )),
-                Some(RemoteRpcAccess::Failed) => checks.push(trf(
-                    "Remote provider API is not responding: {url}/api/llm/listProviders",
-                    &[("url", url_text.clone())],
+                Some(RemoteRpcAccess::Failed) => checks.push(keyf(
+                    "Remote provider API is not responding: {url}/api/llm/listProviders", &[("url", url_text.clone())],
                 )),
                 _ => {}
             }
             match remote_settings_access {
-                Some(RemoteRpcAccess::Denied) => checks.push(trf(
-                    "Remote admin capability was denied; grant {capability} to this identity for the dsh node in tailnet grants, then run one-click setup again",
-                    &[(
+                Some(RemoteRpcAccess::Denied) => checks.push(keyf(
+                    "Remote admin capability was denied; grant {capability} to this identity for the dsh node in tailnet grants, then run one-click setup again", &[(
                         "capability",
                         auth.admin_capability
                             .clone()
                             .unwrap_or_else(|| "<domain>/cap/dsh-admin".to_string()),
                     )],
                 )),
-                Some(RemoteRpcAccess::Failed) => checks.push(trf(
-                    "Remote settings API is not responding: {url}/api/settings/describe",
-                    &[("url", url_text.clone())],
+                Some(RemoteRpcAccess::Failed) => checks.push(keyf(
+                    "Remote settings API is not responding: {url}/api/settings/describe", &[("url", url_text.clone())],
                 )),
                 _ => {}
             }
             if !local_privileged_ok {
-                checks.push(tr("Local privileged API access failed on 127.0.0.1:3899"));
+                checks.push("Local privileged API access failed on 127.0.0.1:3899".to_string());
             }
             if remote_url_access == Some(RemoteUrlAccess::ProxyInterference) {
-                checks.push(trf(
-                    "The local proxy is intercepting the Tailscale address: {url}",
-                    &[("url", url_text.clone())],
+                checks.push(keyf(
+                    "The local proxy is intercepting the Tailscale address: {url}", &[("url", url_text.clone())],
                 ));
             }
             return ctx.fail(
-                &tr("Verification failed; some components are not ready"),
+                "Verification failed; some components are not ready",
                 &format_verification_checks(&checks),
                 &remaining_after(7),
             );
@@ -695,7 +685,7 @@ pub(crate) fn restart_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig
         std::thread::sleep(Duration::from_millis(300));
     }
     if port_listening(WEB_PORT) {
-        let err = tr("dsh web did not release port 3899");
+        let err = "dsh web did not release port 3899".to_string();
         log::error!("[dsh 重启] {}", err);
         return Err(err);
     }

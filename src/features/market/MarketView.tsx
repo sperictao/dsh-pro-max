@@ -446,7 +446,7 @@ function localizedDescription(
   d: NonNullable<MarketPlugin["description"]>,
   locale: "en" | "zh",
 ): string {
-  return d[locale] ?? d.en ?? Object.values(d)[0];
+  return d[locale] ?? d.en ?? Object.values(d)[0] ?? "";
 }
 
 /// 筛选按钮组单元：选中实底主色、未选描边——结构对比在 42 主题族下稳健

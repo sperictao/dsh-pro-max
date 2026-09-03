@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
 use tokio::time::sleep;
 
-use crate::i18n::{tr, trf};
+use crate::i18n::keyf;
 
 const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(20);
 const UPDATE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60 * 15);
@@ -21,8 +21,9 @@ pub struct PendingUpdateState {
     pending: Mutex<Option<Update>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct UpdateInfo {
     pub current_version: String,
     pub available_version: Option<String>,
@@ -31,15 +32,17 @@ pub struct UpdateInfo {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct UpdaterConfigHealth {
     pub configured: bool,
     pub message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct UpdaterHelpPaths {
     pub docs_path: String,
     pub template_path: String,
@@ -64,10 +67,10 @@ fn lock_pending(state: &PendingUpdateState) -> MutexGuard<'_, Option<Update>> {
 pub fn map_updater_error(err: UpdaterError) -> String {
     match err {
         UpdaterError::EmptyEndpoints => {
-            tr("Update source not configured; set updater endpoints and pubkey in tauri.conf.json")
+            "Update source not configured; set updater endpoints and pubkey in tauri.conf.json".to_string()
         }
         UpdaterError::InsecureTransportProtocol => {
-            tr("Update URL must use https")
+            "Update URL must use https".to_string()
         }
         _ => err.to_string(),
     }
@@ -125,11 +128,11 @@ async fn fetch_remote_update(
         .updater_builder()
         .timeout(UPDATE_CHECK_TIMEOUT)
         .build()
-        .map_err(|e| trf("Update source not configured or unavailable: {error}", &[("error", map_updater_error(e))]))?;
+        .map_err(|e| keyf("Update source not configured or unavailable: {error}", &[("error", map_updater_error(e))]))?;
     let maybe = updater
         .check()
         .await
-        .map_err(|e| trf("Failed to check for updates: {error}", &[("error", map_updater_error(e))]))?
+        .map_err(|e| keyf("Failed to check for updates: {error}", &[("error", map_updater_error(e))]))?
         .map(|mut u| {
             u.timeout = Some(UPDATE_DOWNLOAD_TIMEOUT);
             u
@@ -183,13 +186,12 @@ async fn download_with_retry(app: &AppHandle, update: &Update) -> Result<Vec<u8>
         }
     }
     let note = if attempts_used > 1 {
-        tr(" (retried automatically)")
+        " (retried automatically)".to_string()
     } else {
         String::new()
     };
-    Err(trf(
-        "Download failed{note}: {error}",
-        &[
+    Err(keyf(
+        "Download failed{note}: {error}", &[
             ("note", note),
             ("error", last_err.unwrap_or_default()),
         ],
@@ -230,7 +232,7 @@ fn resolve_help_paths() -> Result<(PathBuf, PathBuf), String> {
             }
         }
     }
-    Err(tr("Updater guide files not found; please run this feature from the source repository"))
+    Err("Updater guide files not found; please run this feature from the source repository".to_string())
 }
 
 #[tauri::command]
@@ -247,11 +249,11 @@ pub fn get_updater_config_health(app: AppHandle) -> UpdaterConfigHealth {
     match app.updater() {
         Ok(_) => UpdaterConfigHealth {
             configured: true,
-            message: tr("Updater configuration is ready"),
+            message: "Updater configuration is ready".to_string(),
         },
         Err(e) => UpdaterConfigHealth {
             configured: false,
-            message: trf("Update source not configured or unavailable: {error}", &[("error", map_updater_error(e))]),
+            message: keyf("Update source not configured or unavailable: {error}", &[("error", map_updater_error(e))]),
         },
     }
 }
@@ -267,7 +269,7 @@ pub async fn check_update(
             available_version: Some(u.version.clone()),
             has_update: true,
             release_notes: u.body.clone(),
-            message: Some(tr("Update available")),
+            message: Some("Update available".to_string()),
         }),
         Ok(None) => Ok(UpdateInfo {
             current_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -309,7 +311,7 @@ pub async fn install_update(
         Some(u) => (u, true),
         None => match fetch_remote_update(&app, state.inner()).await? {
             Some(u) => (u, false),
-            None => return Ok(tr("Already up to date; nothing to install")),
+            None => return Ok("Already up to date; nothing to install".to_string()),
         },
     };
 
@@ -343,7 +345,7 @@ pub async fn install_update(
     let version = update.version.clone();
     update
         .install(bytes)
-        .map_err(|e| trf("Failed to install update: {error}", &[("error", map_updater_error(e))]))?;
+        .map_err(|e| keyf("Failed to install update: {error}", &[("error", map_updater_error(e))]))?;
     *lock_pending(state.inner()) = None;
 
     // 安装完成，自动重启

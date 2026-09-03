@@ -1,6 +1,6 @@
 [package]
 name = "dsh-pro-max"
-version = "0.6.6"
+version = "0.7.0"
 description = "Desktop launcher for DeepSeek Harness with one-click Tailscale remote access"
 authors = ["dsh-pro-max"]
 edition = "2021"
@@ -21,7 +21,7 @@ tauri-plugin-autostart = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml = "0.9"
 # 插件市场目录拉取（约 27MB 静态 JSON）：rustls 免系统 openssl 依赖，gzip 压缩传输
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json", "gzip"] }
@@ -34,6 +34,8 @@ time = { version = "0.3", features = ["formatting"] }
 sha2 = "0.10"
 # dsh web 启动等待：unix 侧 kill(pid,0) 探活（进程已死则提前带日志报错，不干等超时）
 libc = "0.2"
+paste = "1.0.15"
+ts-rs = { version = "10.1.0", features = ["serde-compat", "no-serde-warnings", "serde-json-impl"] }
 
 # dsh web Windows 侧按命令行模式匹配停进程
 [target.'cfg(windows)'.dependencies]

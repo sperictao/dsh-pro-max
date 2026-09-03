@@ -8,6 +8,7 @@ import * as cmd from "@/shared/commands";
 import { fmtTs } from "@/shared/lib/format";
 import { openRepo } from "@/shared/lib/links";
 import { BTN } from "@/shared/lib/ui";
+import { tErr } from "@/shared/i18n/error";
 
 export function AboutSection() {
   const { t } = useTranslation();
@@ -27,7 +28,7 @@ export function AboutSection() {
       const paths = await cmd.getUpdaterHelpPaths();
       await openUrl(target === "docs" ? paths.docsPath : paths.templatePath);
     } catch (e) {
-      toast(t("Failed to open help: {{error}}", { error: String(e) }), "error");
+      toast(t("Failed to open help: {{error}}", { error: tErr(String(e)) }), "error");
     }
   };
 
@@ -41,9 +42,9 @@ export function AboutSection() {
         : { cls: "failed", text: t("Error") };
   const healthProblem = updaterHealthError !== null || (updaterHealth !== null && !updaterHealth.configured);
   const healthDetail = updaterHealthError
-    ? t("Check failed: {{error}}", { error: updaterHealthError })
+    ? t("Check failed: {{error}}", { error: tErr(updaterHealthError) })
     : updaterHealth && !updaterHealth.configured
-      ? updaterHealth.message
+      ? tErr(updaterHealth.message)
       : null;
 
   const updateBtnText =
@@ -124,7 +125,7 @@ export function AboutSection() {
               <span className="font-medium text-primary">v{updateInfo.availableVersion}</span>
             </span>
           ) : updateCheckError ? (
-            <span className="text-destructive">{t("Check failed: {{error}}", { error: updateCheckError })}</span>
+            <span className="text-destructive">{t("Check failed: {{error}}", { error: tErr(updateCheckError) })}</span>
           ) : updateLastCheckAt !== null ? (
             <span>{t("Already up to date")}</span>
           ) : (

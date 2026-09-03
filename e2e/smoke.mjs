@@ -72,6 +72,11 @@ const MOCK = {
     serveConfigured: false,
     autostartEnabled: false,
     error: null,
+    // 就绪时间轴由 Rust detect 推导（前端不再重推导步骤编排）；
+    // 检测全灰时本地 4 步全 pending
+    readyTimeline: ["node", "install", "start", "ready"].map((id, index) => ({
+      index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}`,
+    })),
   },
   marketCatalog: {
     generatedAt: "2026-08-30T13:32:12.579Z",
@@ -152,6 +157,12 @@ async function main() {
           message: null,
         }),
         dsh_detect: () => dshStatus,
+        dsh_step_schema: ({ remote } = {}) =>
+          (remote
+            ? ["node","install","plugins","tailscale","magicdns","start","serve","verify"]
+            : ["node","install","start","ready"]).map((id, index) => ({
+            index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}`,
+          })),
         market_fetch: () => marketCatalog,
         market_snapshot: () => null,
         market_installed: () => marketInstalled,

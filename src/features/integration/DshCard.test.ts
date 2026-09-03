@@ -5,20 +5,26 @@ import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import { useAppStore } from "@/shared/store";
-import type { DshStatus } from "@/shared/types";
+import type { DshStatus, DshStepEvent } from "@/shared/types";
 import { DshCard } from "./DshCard";
 import {
   localStatusTextKey,
-  localTimelineFromStatus,
   proxyBypassHostForRemoteUrl,
   startDshWeb,
   restartDshWeb,
   statusTextKey,
-  timelineFromStatus,
   verifiedRemoteUrl,
 } from "./dshActions";
 
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
+
+const stepDone = (index: number, id: string): DshStepEvent => ({
+  index, id, state: "done", detail: null, problem: null, solution: null, titleKey: `step.${id}`,
+});
+const remoteReadyTimeline: DshStepEvent[] =
+  ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"].map((id, i) => stepDone(i, id));
+const localReadyTimeline: DshStepEvent[] =
+  ["node", "install", "start", "ready"].map((id, i) => stepDone(i, id));
 
 const ready: DshStatus = {
   nodeAvailable: true,
@@ -39,6 +45,9 @@ const ready: DshStatus = {
   serveConfigured: true,
   autostartEnabled: false,
   error: null,
+  // 就绪时间轴由 Rust detect 推导（前端不再重推导步骤编排）；
+  // 测试夹具给一份与 ready 状态一致的远程 8 步全 done 形态
+  readyTimeline: remoteReadyTimeline,
 };
 
 const storedValues = new Map<string, string>();
@@ -76,23 +85,15 @@ beforeEach(() => {
     dshAutostart: null,
     dshAutostartBusy: false,
   });
+  // beginDshFlow 的骨架来源（Rust 契约命令）；测试环境无 Tauri invoke，统一打桩
+  vi.spyOn(cmd, "dshStepSchema").mockImplementation(async (remote: boolean) =>
+    (remote ? ["node","install","plugins","tailscale","magicdns","start","serve","verify"]
+            : ["node","install","start","ready"])
+      .map((id, index) => ({ index, id, state: "pending" as const, detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
+  );
 });
 
 describe("dsh auth plugin readiness", () => {
-  it("includes plugin installation and no loopback proxy step", () => {
-    expect(timelineFromStatus(ready).map((step) => step.id)).toEqual([
-      "node",
-      "install",
-      "plugins",
-      "tailscale",
-      "magicdns",
-      "start",
-      "serve",
-      "verify",
-    ]);
-    expect(timelineFromStatus(ready).every((step) => step.state === "done")).toBe(true);
-  });
-
   it("reports missing auth plugins only once dsh web is running", () => {
     // 插件只服务于远程访问链路：dsh 尚未运行时优先报告未运行
     expect(statusTextKey({ ...ready, pluginsInstalled: false, dshRunning: false }))
@@ -110,13 +111,11 @@ describe("dsh auth plugin readiness", () => {
   it("does not report ready while this Mac's proxy blocks the remote URL", () => {
     const blocked = { ...ready, remoteUrlAccess: "proxy_interference" as const };
     expect(statusTextKey(blocked)).toBe("Local proxy bypass required");
-    expect(timelineFromStatus(blocked).at(-1)?.state).toBe("pending");
   });
 
   it("reports a denied remote capability separately from endpoint failure", () => {
     const denied = { ...ready, remoteUrlAccess: "capability_denied" as const };
     expect(statusTextKey(denied)).toBe("Remote capability grant denied");
-    expect(timelineFromStatus(denied).at(-1)?.state).toBe("pending");
     expect(verifiedRemoteUrl(denied)).toBeNull();
   });
 
@@ -137,17 +136,14 @@ describe("dsh auth plugin readiness", () => {
 });
 
 describe("local one-click timeline", () => {
-  it("uses 4 local-only steps and marks all done when dsh web is running", () => {
-    const steps = localTimelineFromStatus(ready);
-    expect(steps.map((s) => s.id)).toEqual(["node", "install", "start", "ready"]);
-    expect(steps.map((s) => s.index)).toEqual([0, 1, 2, 3]);
-    expect(steps.every((s) => s.state === "done")).toBe(true);
-  });
-
-  it("marks start/ready pending when dsh web is not running", () => {
-    const steps = localTimelineFromStatus({ ...ready, dshRunning: false });
-    expect(steps[2].state).toBe("pending");
-    expect(steps[3].state).toBe("pending");
+  it("renders the ready timeline provided by dsh_detect", () => {
+    // 就绪时间轴由 Rust 派生（前端不再持有步骤列表）：本地 4 步全 done 的夹具
+    expect(localReadyTimeline.map((s) => s.id)).toEqual(["node", "install", "start", "ready"]);
+    expect(localReadyTimeline.every((s) => s.state === "done")).toBe(true);
+    // 远程就绪时间轴 8 步（同一契约，模式不同序列）
+    expect(remoteReadyTimeline.map((s) => s.id)).toEqual(
+      ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"],
+    );
   });
 });
 
@@ -289,6 +285,7 @@ describe("start failure log disclosure", () => {
     detail: null,
     problem: "dsh web failed to start; log says:\nError: boom",
     solution: "Check the log at ~/.dsh/dsh-web.log",
+    titleKey: null,
   };
 
   function renderFailedStart() {
@@ -351,11 +348,12 @@ describe("start failure log disclosure", () => {
 
 describe("tray echo keeps the timeline on the event stream", () => {
   it("a fresh start resets the timeline skeleton to all-pending before events land", async () => {
-    // 正常触发：上一轮的 ✓ 不能残留，时间轴先整体翻回 pending 再随事件点亮
+    // 正常触发：上一轮的 ✓ 不能残留，时间轴先整体翻回 pending 再随事件点亮。
+    // 收尾后时间轴被 detect 的就绪视图覆盖（夹具 ready.readyTimeline 是远程 8 步全 done）
     useAppStore.setState({
       dshHasRunSetup: false,
       dshTimeline: [
-        { index: 0, id: "node", state: "done", detail: "old", problem: null, solution: null },
+        { index: 0, id: "node", state: "done", detail: "old", problem: null, solution: null, titleKey: null },
       ],
     });
     vi.spyOn(cmd, "dshStartWeb").mockResolvedValue("http://127.0.0.1:3899");
@@ -365,7 +363,7 @@ describe("tray echo keeps the timeline on the event stream", () => {
     await startDshWeb();
 
     const tl = useAppStore.getState().dshTimeline;
-    expect(tl.map((s) => s.id)).toEqual(["node", "install", "start", "ready"]);
+    expect(tl).toEqual(ready.readyTimeline);
     // 成功收尾后被就绪视图覆盖；此处只断言骨架确实被重置过（非残留的 done）
     expect(tl.some((s) => s.detail === "old")).toBe(false);
   });
@@ -408,6 +406,7 @@ describe("tray echo keeps the timeline on the event stream", () => {
       detail: "Checking Node.js & npm…",
       problem: null,
       solution: null,
+      titleKey: null,
     });
 
     expect(useAppStore.getState().dshHasRunSetup).toBe(true);
@@ -424,6 +423,7 @@ describe("tray echo keeps the timeline on the event stream", () => {
       detail: "Node.js is available",
       problem: null,
       solution: null,
+      titleKey: null,
     });
 
     expect(useAppStore.getState().dshHasRunSetup).toBe(false);
@@ -439,7 +439,8 @@ describe("cross-page state preservation", () => {
       detail: "detail",
       problem: "problem",
       solution: "solution",
-    };
+    titleKey: null,
+  };
     useAppStore.setState({
       dshStartBusy: true,
       dshHasRunSetup: true,

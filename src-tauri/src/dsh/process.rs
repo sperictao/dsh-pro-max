@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 use crate::config;
-use crate::i18n::trf;
+use crate::i18n::keyf;
 
 // ============ 跨平台 CLI 辅助 ============
 
@@ -164,7 +164,7 @@ pub(crate) fn run_capture_lines(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| {
-            trf("Cannot execute {program}: {error}", &[
+            keyf("Cannot execute {program}: {error}", &[
                 ("program", program.to_string()),
                 ("error", e.to_string()),
             ])
@@ -262,7 +262,7 @@ pub(crate) fn spawn_detached(program: &str, args: &[&str], envs: &[(&str, &str)]
     fs::create_dir_all(dir)
         .map_err(|e| {
             log::error!("[dsh 启动] 创建日志目录失败: {}", e);
-            trf("Failed to create directory: {error}", &[("error", e.to_string())])
+            keyf("Failed to create directory: {error}", &[("error", e.to_string())])
         })?;
     let file = fs::OpenOptions::new()
         .create(true)
@@ -270,7 +270,7 @@ pub(crate) fn spawn_detached(program: &str, args: &[&str], envs: &[(&str, &str)]
         .open(log)
         .map_err(|e| {
             log::error!("[dsh 启动] 打开日志文件失败: {}", e);
-            trf("Cannot open log file: {error}", &[("error", e.to_string())])
+            keyf("Cannot open log file: {error}", &[("error", e.to_string())])
         })?;
     let mut cmd = cli_command(program, args);
     cmd.env("PATH", probe_path())
@@ -286,7 +286,7 @@ pub(crate) fn spawn_detached(program: &str, args: &[&str], envs: &[(&str, &str)]
         .spawn()
         .map_err(|e| {
             log::error!("[dsh 启动] 启动子进程失败: {}", e);
-            trf("Cannot start process: {error}", &[("error", e.to_string())])
+            keyf("Cannot start process: {error}", &[("error", e.to_string())])
         })?;
     Ok(child.id())
 }

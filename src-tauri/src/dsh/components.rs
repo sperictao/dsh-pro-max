@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use tauri::{Manager};
 
 use crate::config;
-use crate::i18n::{tr, trf};
+use crate::i18n::keyf;
 
 // ============ 组件定位 ============
 
@@ -49,17 +49,15 @@ pub(crate) fn verify_bundled_tarball(path: &Path, filename: &str) -> Result<(), 
     let checksum_file = path.with_file_name(format!("{filename}.sha256"));
     let expected = fs::read_to_string(&checksum_file).map_err(|_| {
         log::error!("[dsh 插件] 内置插件校验和文件缺失: {}", checksum_file.display());
-        trf(
-            "Bundled dsh plugin checksum is missing: {plugin}; rebuild the app resources with pnpm run build:dsh-plugins",
-            &[("plugin", filename.to_string())],
+        keyf(
+            "Bundled dsh plugin checksum is missing: {plugin}; rebuild the app resources with pnpm run build:dsh-plugins", &[("plugin", filename.to_string())],
         )
     })?;
     let actual = sha256_hex(path)?;
     if actual != expected.trim() {
         log::error!("[dsh 插件] 内置插件校验和不符: {filename} 期望 {} 实得 {actual}", expected.trim());
-        return Err(trf(
-            "Bundled dsh plugin failed checksum verification: {plugin}",
-            &[("plugin", filename.to_string())],
+        return Err(keyf(
+            "Bundled dsh plugin failed checksum verification: {plugin}", &[("plugin", filename.to_string())],
         ));
     }
     Ok(())
@@ -83,9 +81,8 @@ pub(crate) fn bundled_plugin_tarball(app: &tauri::AppHandle, filename: &str) -> 
         .find(|path| path.is_file())
         .ok_or_else(|| {
             log::error!("[dsh 插件] 内置插件 tarball 缺失: {}", filename);
-            trf(
-                "Bundled dsh plugin is missing: {plugin}",
-                &[("plugin", filename.to_string())],
+            keyf(
+                "Bundled dsh plugin is missing: {plugin}", &[("plugin", filename.to_string())],
             )
         })?;
     verify_bundled_tarball(&path, filename)?;
@@ -218,17 +215,15 @@ pub(crate) fn run_plugin_add(dsh: &str, specs: &DshPluginSpecs) -> Result<(), St
     ) {
         Ok((_, _, true)) if auth_plugins_installed(specs) => Ok(()),
         Ok((_, err, true)) => {
-            let e = trf(
-                "dsh plugin install completed but the web profile is incomplete: {error}",
-                &[("error", err)],
+            let e = keyf(
+                "dsh plugin install completed but the web profile is incomplete: {error}", &[("error", err)],
             );
             log::error!("[dsh 插件] profile 不完整: {}", e);
             Err(e)
         }
         Ok((_, err, false)) => {
-            let e = trf(
-                "Failed to install dsh auth plugins: {error}",
-                &[(
+            let e = keyf(
+                "Failed to install dsh auth plugins: {error}", &[(
                     "error",
                     if err.is_empty() {
                         "dsh plugin add failed".to_string()
@@ -250,7 +245,7 @@ pub(crate) fn run_plugin_add(dsh: &str, specs: &DshPluginSpecs) -> Result<(), St
 /// 定位 node 可执行（绝对路径，供自启脚本嵌入）
 pub(crate) fn resolve_node_bin() -> Result<String, String> {
     which("node").ok_or_else(|| {
-        let err = tr("Node.js is not available; please install Node.js 18+ and restart this app");
+        let err = "Node.js is not available; please install Node.js 18+ and restart this app".to_string();
         log::error!("[dsh] 定位 node 失败: {}", err);
         err
     })
@@ -326,7 +321,7 @@ pub(crate) fn install_supported_dsh() -> Result<String, String> {
                 err
             };
             log::error!("[dsh 安装] npm install -g 失败: {}", error);
-            return Err(trf("Install failed: {error}", &[("error", error)]));
+            return Err(keyf("Install failed: {error}", &[("error", error)]));
         }
         Err(error) => {
             log::error!("[dsh 安装] 执行 npm install 失败: {}", error);
@@ -334,7 +329,7 @@ pub(crate) fn install_supported_dsh() -> Result<String, String> {
         }
     }
     let version = dsh_version().ok_or_else(|| {
-        let err = tr("dsh installed but cannot be located in PATH");
+        let err = "dsh installed but cannot be located in PATH".to_string();
         log::error!("[dsh 安装] 安装后无法在 PATH 定位 dsh");
         err
     })?;
@@ -342,9 +337,8 @@ pub(crate) fn install_supported_dsh() -> Result<String, String> {
     // 它的下限读 profile 里已装插件的 peer，跟线升级时插件尚未重装，
     // 旧下限会拒绝刚装上的新线版本（setup 的 install 步骤先于 plugin add）
     if version != SUPPORTED_DSH_VERSION {
-        let err = trf(
-            "Installed dsh version {actual}, but this Launcher requires {expected}",
-            &[
+        let err = keyf(
+            "Installed dsh version {actual}, but this Launcher requires {expected}", &[
                 ("actual", version.clone()),
                 ("expected", SUPPORTED_DSH_VERSION.to_string()),
             ],
@@ -385,7 +379,7 @@ pub(crate) fn resolve_dsh_bin() -> Result<PathBuf, String> {
         }
     }
     Err({
-        let err = tr("Cannot locate the dsh CLI; install it with npm install -g @deepseek-ai/dsh");
+        let err = "Cannot locate the dsh CLI; install it with npm install -g @deepseek-ai/dsh".to_string();
         log::error!("[dsh] 定位 dsh CLI 失败: {}", err);
         err
     })

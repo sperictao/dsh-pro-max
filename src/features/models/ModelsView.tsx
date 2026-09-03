@@ -7,6 +7,7 @@ import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { BTN, BTN_DANGER_SM, BTN_PRIMARY, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelConfig, ProviderConfig } from "@/shared/types";
+import { tErr } from "@/shared/i18n/error";
 
 // dsh pi-ai 适配器支持的 wire 协议（PROTOCOLS 表，most-reached first）
 const API_OPTIONS = ["openai-completions", "openai-responses", "anthropic-messages"];
@@ -38,7 +39,7 @@ export function ModelsView() {
         const cfg = await loadModelConfig();
         if (!disposed) setConfig(cfg);
       } catch (e) {
-        if (!disposed) toast(String(e), "error");
+        if (!disposed) toast(tErr(String(e)), "error");
       } finally {
         if (!disposed) setLoading(false);
       }
@@ -70,7 +71,7 @@ export function ModelsView() {
       await cmd.modelConfigSave(config);
       toast(t("Model configuration saved"), "success");
     } catch (e) {
-      toast(String(e), "error");
+      toast(tErr(String(e)), "error");
     } finally {
       setSaving(false);
     }

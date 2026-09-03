@@ -6,6 +6,7 @@ import { log } from "./logger";
 import type {
   DshLatestInfo,
   DshStatus,
+  DshStepEvent,
   InstalledPlugin,
   InstallOutcome,
   InstallReceipt,
@@ -39,6 +40,10 @@ export const getLogDir = () => invokeTyped<string>("get_log_dir");
 // ============ dsh ============
 export const dshDetect = (verifyRemoteUrl = false) =>
   invokeTyped<DshStatus>("dsh_detect", { verifyRemoteUrl });
+// 步骤骨架（全 pending + 标题 key）：新流程开始时的重置形态，步骤序列与
+// 标题都来自 Rust 契约，前端不持有步骤列表副本
+export const dshStepSchema = (remote: boolean) =>
+  invokeTyped<DshStepEvent[]>("dsh_step_schema", { remote });
 export const dshSetup = () => invokeTyped<void>("dsh_setup");
 export const dshStartWeb = () => invokeTyped<string>("dsh_start_web");
 // dsh-web.log 尾部：启动失败节点「查看日志」内嵌展示用（缺失/为空返回空串）

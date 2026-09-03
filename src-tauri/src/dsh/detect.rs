@@ -22,7 +22,14 @@ pub async fn dsh_detect(
     app: tauri::AppHandle,
     verify_remote_url: Option<bool>,
 ) -> Result<DshStatus, String> {
-    let verify_remote_url = verify_remote_url.unwrap_or(false);
+    // 全链路是子进程/HTTP 阻塞 I/O（verify 时 probe 多轮 curl），走统一 adapter
+    super::ipc_blocking(move || dsh_detect_once(&app, verify_remote_url.unwrap_or(false))).await
+}
+
+fn dsh_detect_once(
+    app: &tauri::AppHandle,
+    verify_remote_url: bool,
+) -> Result<DshStatus, String> {
     let (hostname, url) = resolve_host_and_url();
     let ts = tailscale_path();
     let (magic, _) = match &ts {
@@ -39,7 +46,7 @@ pub async fn dsh_detect(
             (Some(actual), Some(min)) => actual > min,
             _ => false,
         };
-    let (plugins_installed, plugin_error) = match bundled_plugin_specs(&app) {
+    let (plugins_installed, plugin_error) = match bundled_plugin_specs(app) {
         Ok(specs) => (auth_plugins_installed(&specs), None),
         Err(error) => {
             log::warn!("[dsh 检测] 定位内置插件失败: {}", error);
@@ -66,7 +73,7 @@ pub async fn dsh_detect(
     } else {
         None
     };
-    Ok(DshStatus {
+    let status = DshStatus {
         node_available: which("node").is_some(),
         dsh_installed: version.is_some(),
         dsh_version: version,
@@ -85,5 +92,8 @@ pub async fn dsh_detect(
         serve_configured,
         autostart_enabled: autostart_enabled(),
         error: plugin_error,
-    })
+        ready_timeline: Vec::new(), // 先占位，构造完整后统一推导（避免部分初始化借用问题）
+    };
+    let ready_timeline = super::ready_timeline(verify_remote_url, &status);
+    Ok(DshStatus { ready_timeline, ..status })
 }

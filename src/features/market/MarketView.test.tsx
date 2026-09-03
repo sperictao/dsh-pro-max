@@ -5,6 +5,13 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import { useAppStore } from "@/shared/store";
 import type { InstalledPlugin, InstallOutcome, MarketCatalog } from "@/shared/types";
+import vectorsJson from "../../../src-tauri/src/dsh/specifier_cases.json";
+
+interface SpecifierVectors {
+  packageNameFromSpecifier: [string, string | null][];
+  specifierToCatalogName: [string, string][];
+}
+const vectors = vectorsJson as SpecifierVectors;
 import { MarketView, packageNameFromSpecifier, protocolInstalledMatch, specifierToCatalogName } from "./MarketView";
 
 const catalog: MarketCatalog = {
@@ -91,25 +98,18 @@ beforeEach(() => {
   vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([]);
 });
 
-describe("packageNameFromSpecifier", () => {
-  it("extracts the npm package name from install specifiers", () => {
-    expect(packageNameFromSpecifier("dsh-better-sidebar@latest")).toBe("dsh-better-sidebar");
-    expect(packageNameFromSpecifier("@scope/pkg@1.0.0")).toBe("@scope/pkg");
-    expect(packageNameFromSpecifier("plain-name")).toBe("plain-name");
-    // 任何带协议前缀的形态（github:/npm:/file: 等）安装后的 dependencies 键
-    // 无法预知，不参与已装匹配；与 Rust 侧同一套语义
-    expect(packageNameFromSpecifier("github:owner/repo#c0ffee")).toBeNull();
-    expect(packageNameFromSpecifier("npm:pkg@latest")).toBeNull();
-    expect(packageNameFromSpecifier("file:/x/y.tgz")).toBeNull();
+// 语义定义只有一份：specifier_cases.json（Rust 侧同名解析器由同一向量表驱动，
+// 两侧漂移在一侧测试立即失败）。本组只断言 TS 实现与向量表一致
+describe("specifier parsers match the shared test vectors", () => {
+  it("packageNameFromSpecifier matches every vector", () => {
+    for (const [input, expectName] of vectors.packageNameFromSpecifier) {
+      expect(packageNameFromSpecifier(input)).toBe(expectName);
+    }
   });
-});
-
-describe("specifierToCatalogName", () => {
-  it("derives the catalog entry name from the install specifier", () => {
-    expect(specifierToCatalogName("github:toby-bridges/api-relay-audit")).toBe("api-relay-audit");
-    expect(specifierToCatalogName("git+https://github.com/omdsh-dev/dsh-at-file.git")).toBe("dsh-at-file.git");
-    expect(specifierToCatalogName("dsh-context@1.2.3")).toBe("dsh-context");
-    expect(specifierToCatalogName("@scope/pkg@1.0")).toBe("pkg");
+  it("specifierToCatalogName matches every vector", () => {
+    for (const [input, expectName] of vectors.specifierToCatalogName) {
+      expect(specifierToCatalogName(input)).toBe(expectName);
+    }
   });
 });
 
