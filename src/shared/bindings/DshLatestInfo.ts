@@ -14,6 +14,14 @@ tags: Array<DshDistTag>,
  */
 installedVersion: string | null, 
 /**
+ * 本机已装版本与内置插件栈兼容（同线且 ≥ 锁定版；未装/解析失败为 false）
+ */
+installedCompatible: boolean, 
+/**
+ * 本机已装版本高于验证栈（同线更新、插件未验证）
+ */
+installedAboveSupported: boolean, 
+/**
  * Launcher 验证过的最低兼容版本（插件栈锁定）
  */
 supportedVersion: string, 

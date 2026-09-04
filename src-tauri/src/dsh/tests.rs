@@ -520,27 +520,48 @@
     }
 
     #[test]
-    fn parse_dist_tags_filters_non_semver_and_keeps_order() {
-        use super::update::parse_dist_tags;
-        let tags = parse_dist_tags(r#"{"latest":"0.1.0-rc.7","next":"0.1.0-rc.8","junk":"not-a-version"}"#).unwrap();
+    fn parse_dist_tag_query_tolerates_both_shapes_and_filters_non_semver() {
+        use super::update::parse_dist_tag_query;
+        // 组合字段形态（view dist-tags time --json）：tags 提取 + time 表；
+        // 本机 Windows 实测组合查询同样走数组包对象形态，time 表带 created 等非版本键
+        let combined = parse_dist_tag_query(
+            r#"[{"dist-tags":{"latest":"0.1.2-rc.1","alpha":"0.1.2-alpha.5"},"time":{"created":"2026-08-10T19:41:11.384Z","0.1.2-rc.1":"2026-09-03T06:21:52.107Z","0.1.2-alpha.5":"2026-09-02T08:38:34.797Z"}}]"#,
+        )
+        .unwrap();
+        let mut combined_tags = combined.tags;
+        combined_tags.sort();
         assert_eq!(
-            tags,
+            combined_tags,
+            vec![
+                ("alpha".to_string(), "0.1.2-alpha.5".to_string()),
+                ("latest".to_string(), "0.1.2-rc.1".to_string()),
+            ]
+        );
+        assert_eq!(
+            combined.times.get("0.1.2-rc.1").map(String::as_str),
+            Some("2026-09-03T06:21:52.107Z")
+        );
+        // 单字段形态（view dist-tags --json）：无时间表，tags 保持解析顺序
+        let legacy = parse_dist_tag_query(r#"{"latest":"0.1.0-rc.7","next":"0.1.0-rc.8","junk":"not-a-version"}"#).unwrap();
+        assert_eq!(
+            legacy.tags,
             vec![
                 ("latest".to_string(), "0.1.0-rc.7".to_string()),
                 ("next".to_string(), "0.1.0-rc.8".to_string()),
             ]
         );
+        assert!(legacy.times.is_empty());
         // 非 JSON / 空对象
-        assert!(parse_dist_tags("not json").is_err());
-        assert_eq!(parse_dist_tags("{}").unwrap(), Vec::<(String, String)>::new());
+        assert!(parse_dist_tag_query("not json").is_err());
+        assert_eq!(parse_dist_tag_query("{}").unwrap().tags, Vec::<(String, String)>::new());
         // Windows 回归：cmd /c 包装的 npm 输出带 UTF-8 BOM / 首尾换行
         assert_eq!(
-            parse_dist_tags("\u{feff}\r\n{\"latest\":\"0.1.0-rc.7\"}\r\n").unwrap(),
+            parse_dist_tag_query("\u{feff}\r\n{\"latest\":\"0.1.0-rc.7\"}\r\n").unwrap().tags,
             vec![("latest".to_string(), "0.1.0-rc.7".to_string())]
         );
         // Windows 回归（v0.3.1 实机）：部分 npm/shim 的 --json 输出是数组包对象。
         // 数组形态的对象 key 顺序经 serde Map 重排，按无序集合断言
-        let mut arr_tags = parse_dist_tags("[\n  {\n    \"next\": \"0.1.0-rc.8\",\n    \"latest\": \"0.1.0-rc.7\"\n  }\n]").unwrap();
+        let mut arr_tags = parse_dist_tag_query("[\n  {\n    \"next\": \"0.1.0-rc.8\",\n    \"latest\": \"0.1.0-rc.7\"\n  }\n]").unwrap().tags;
         arr_tags.sort();
         assert_eq!(
             arr_tags,
@@ -550,8 +571,66 @@
             ]
         );
         // 数组多元素 / 数组包非对象 → 解析失败
-        assert!(parse_dist_tags("[{},{}]").is_err());
-        assert!(parse_dist_tags("[\"x\"]").is_err());
+        assert!(parse_dist_tag_query("[{},{}]").is_err());
+        assert!(parse_dist_tag_query("[\"x\"]").is_err());
+    }
+
+    #[test]
+    fn sort_tag_pairs_by_publish_time_newest_first_timeless_last() {
+        use super::update::sort_tag_pairs_by_publish_time;
+        use std::collections::HashMap;
+        let times: HashMap<String, String> = [
+            ("0.1.0-rc.7".to_string(), "2026-08-17T11:50:59.194Z".to_string()),
+            ("0.1.2-rc.1".to_string(), "2026-09-03T06:21:52.107Z".to_string()),
+            ("0.1.2-alpha.5".to_string(), "2026-09-02T08:38:34.797Z".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let mut tags = vec![
+            ("latest".to_string(), "0.1.0-rc.7".to_string()),
+            ("next".to_string(), "0.1.2-rc.1".to_string()),
+            ("alpha".to_string(), "0.1.2-alpha.5".to_string()),
+        ];
+        sort_tag_pairs_by_publish_time(&mut tags, &times);
+        assert_eq!(
+            tags,
+            vec![
+                ("next".to_string(), "0.1.2-rc.1".to_string()),
+                ("alpha".to_string(), "0.1.2-alpha.5".to_string()),
+                ("latest".to_string(), "0.1.0-rc.7".to_string()),
+            ]
+        );
+        // 缺时间（registry 未给 / 解析失败）的版本垫底，相互间保持解析顺序
+        let sparse_times: HashMap<String, String> = [
+            ("0.1.2-rc.1".to_string(), "2026-09-03T06:21:52.107Z".to_string()),
+            ("broken".to_string(), "not-a-time".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let mut sparse = vec![
+            ("a".to_string(), "0.1.0-rc.7".to_string()),
+            ("b".to_string(), "0.1.2-rc.1".to_string()),
+            ("c".to_string(), "0.1.1-rc.1".to_string()),
+            ("d".to_string(), "broken".to_string()),
+        ];
+        sort_tag_pairs_by_publish_time(&mut sparse, &sparse_times);
+        assert_eq!(
+            sparse.iter().map(|(tag, _)| tag.as_str()).collect::<Vec<_>>(),
+            vec!["b", "a", "c", "d"]
+        );
+        // 同秒时间戳毫秒位缺省 vs 带毫秒：字典序会错序，真解析后 0.5s 的在上
+        let sub_second: HashMap<String, String> = [
+            ("0.1.2-alpha.5".to_string(), "2026-09-03T06:21:52.500Z".to_string()),
+            ("0.1.2-rc.1".to_string(), "2026-09-03T06:21:52Z".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let mut ties = vec![
+            ("fast".to_string(), "0.1.2-rc.1".to_string()),
+            ("slow".to_string(), "0.1.2-alpha.5".to_string()),
+        ];
+        sort_tag_pairs_by_publish_time(&mut ties, &sub_second);
+        assert_eq!(ties[0].0, "slow");
     }
 
     #[test]

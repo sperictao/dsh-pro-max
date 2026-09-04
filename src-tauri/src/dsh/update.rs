@@ -7,6 +7,8 @@ use super::components::{dsh_dir, dsh_version, dsh_version_is_compatible, install
 use super::process::{port_listening, run_capture};
 use super::setup::{restart_dsh_web};
 use crate::version::parse_version;
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path};
 
@@ -297,13 +299,18 @@ pub struct DshLatestInfo {
     pub tags: Vec<DshDistTag>,
     /// 本机安装版本（未安装为 None）
     pub installed_version: Option<String>,
+    /// 本机已装版本与内置插件栈兼容（同线且 ≥ 锁定版；未装/解析失败为 false）
+    pub installed_compatible: bool,
+    /// 本机已装版本高于验证栈（同线更新、插件未验证）
+    pub installed_above_supported: bool,
     /// Launcher 验证过的最低兼容版本（插件栈锁定）
     pub supported_version: String,
     /// 查询失败原因（网络不通 / npm 不可用 / 输出无法解析）
     pub error: Option<String>,
 }
 
-/// 查询 npm registry 上 dsh 的所有 dist-tag（latest/next 各自指向的版本）。
+/// 查询 npm registry 上 dsh 的所有 dist-tag（latest/next 各自指向的版本），
+/// 按版本发布时间新→旧排序（缺时间的按解析顺序垫底）。
 /// run_capture 无超时机制，npm view 走网络可能挂住，故放独立线程 + 超时回收；
 /// 线程泄漏只发生在 npm 挂死路径（下次查询新建线程，进程退出即清）
 #[tauri::command]
@@ -315,11 +322,11 @@ fn dsh_check_latest_once() -> Result<DshLatestInfo, String> {
     let installed = dsh_version();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result = run_capture(&npm_bin(), &["view", "@deepseek-ai/dsh", "dist-tags", "--json"]);
+        let result = run_capture(&npm_bin(), &["view", "@deepseek-ai/dsh", "dist-tags", "time", "--json"]);
         let _ = tx.send(result);
     });
     let queried = match rx.recv_timeout(Duration::from_secs(15)) {
-        Ok(Ok((out, _, true))) => parse_dist_tags(&out),
+        Ok(Ok((out, _, true))) => parse_dist_tag_query(&out),
         Ok(Ok((_, err, false))) => Err(keyf(
             "npm query failed: {error}", &[(
                 "error",
@@ -333,16 +340,24 @@ fn dsh_check_latest_once() -> Result<DshLatestInfo, String> {
         Ok(Err(error)) => Err(error),
         Err(_) => Err("npm query timed out (15s); check your network or npm registry mirror".to_string()),
     };
-    let (tags, error) = match queried {
-        Ok(t) => (t, None),
+    let (mut tag_pairs, publish_times, error) = match queried {
+        Ok(q) => (q.tags, q.times, None),
         Err(e) => {
             log::warn!("[dsh 检测] 查询 npm dist-tags 失败: {}", e);
-            (Vec::new(), Some(e))
+            (Vec::new(), HashMap::new(), Some(e))
         }
     };
+    sort_tag_pairs_by_publish_time(&mut tag_pairs, &publish_times);
     let supported = parse_version(SUPPORTED_DSH_VERSION);
     let installed_parsed = installed.as_deref().and_then(parse_version);
-    let tags = tags
+    // 已装版本的兼容事实与 tags 行同源：兼容判定唯一走 dsh_version_is_compatible，
+    // 前端只消费布尔值不做 semver 解析
+    let installed_compatible = dsh_version_is_compatible(installed.as_deref());
+    let installed_above_supported = match (&installed_parsed, &supported) {
+        (Some(v), Some(min)) => v > min,
+        _ => false,
+    };
+    let tags = tag_pairs
         .into_iter()
         .map(|(tag, version)| {
             let parsed = parse_version(&version);
@@ -361,50 +376,94 @@ fn dsh_check_latest_once() -> Result<DshLatestInfo, String> {
     Ok(DshLatestInfo {
         tags,
         installed_version: installed,
+        installed_compatible,
+        installed_above_supported,
         supported_version: SUPPORTED_DSH_VERSION.to_string(),
         error,
     })
 }
 
-/// 解析 npm view dist-tags --json 输出 → [(tag, version)]。
+/// npm view（dist-tags + time 组合字段）输出的解析产物
+pub(crate) struct DistTagQuery {
+    /// [(tag, version)]，保持解析顺序（发布时间排序是调用方职责）
+    pub tags: Vec<(String, String)>,
+    /// 版本 → 发布时间（RFC3339 原文）。单字段形态（只查 dist-tags）无时间信息
+    pub times: HashMap<String, String>,
+}
+
+/// 解析 npm view 输出 → tags（解析顺序）+ 版本发布时间表。
 /// 容忍三种形态（按出现顺序）：
-///   1. 对象：{"latest":"x","next":"y"}（macOS/Linux 的 npm）
-///   2. 单元素数组：[{"next":"x","latest":"y"}]（部分 Windows npm/shim 的
-///      --json 输出——实机回归 v0.3.1：「无法解析 npm dist-tags 输出」）
-///   3. 上述两种带 UTF-8 BOM / 首尾空白（Windows cmd /c 包装）
+///   1. 组合字段对象：{"dist-tags":{...},"time":{...}}（view dist-tags time --json）
+///   2. 对象：{"latest":"x","next":"y"}（view dist-tags --json，macOS/Linux 的 npm）
+///   3. 单元素数组：[{...}]（部分 Windows npm/shim 的 --json 输出——实机回归
+///      v0.3.1；组合字段查询实测同样走此形态），
+///     及上述形态带 UTF-8 BOM / 首尾空白（Windows cmd /c 包装）
 ///
-/// 过滤掉非 semver 值（防御 registry 返回杂质）；保持 JSON 源顺序
-pub(crate) fn parse_dist_tags(out: &str) -> Result<Vec<(String, String)>, String> {
-    let cleaned = out.trim_start_matches('\u{feff}').trim();
-    let value: serde_json::Value = serde_json::from_str(cleaned).map_err(|_| {
+/// tag 值过滤非 semver（防御 registry 返回杂质）；time 表的 created/modified
+/// 等非版本键无需清理——只按 tag 指向的版本查表，永不命中
+pub(crate) fn parse_dist_tag_query(out: &str) -> Result<DistTagQuery, String> {
+    let cannot_parse = || {
         keyf(
             "Cannot parse npm dist-tags output: {output}", &[("output", out.chars().take(200).collect())],
         )
-    })?;
+    };
+    let cleaned = out.trim_start_matches('\u{feff}').trim();
+    let value: serde_json::Value = serde_json::from_str(cleaned).map_err(|_| cannot_parse())?;
     // 统一为对象：数组形态取第一个对象元素
     let obj = match value {
         serde_json::Value::Object(m) => m,
         serde_json::Value::Array(mut a) if a.len() == 1 => match a.remove(0) {
             serde_json::Value::Object(m) => m,
-            _ => {
-                return Err(keyf(
-                    "Cannot parse npm dist-tags output: {output}", &[("output", out.chars().take(200).collect())],
-                ))
-            }
+            _ => return Err(cannot_parse()),
         },
-        _ => {
-            return Err(keyf(
-                "Cannot parse npm dist-tags output: {output}", &[("output", out.chars().take(200).collect())],
-            ))
-        }
+        _ => return Err(cannot_parse()),
     };
-    Ok(obj
+    // 组合字段形态判定：dist-tags 键为对象即组合形态；否则整个对象就是
+    // tag→version（单字段形态，无时间表）
+    let (tag_value, time_value) = match obj.get("dist-tags") {
+        Some(tags @ serde_json::Value::Object(_)) => (tags.clone(), obj.get("time").cloned()),
+        _ => (serde_json::Value::Object(obj), None),
+    };
+    let serde_json::Value::Object(tag_map) = tag_value else {
+        return Err(cannot_parse());
+    };
+    let times = match time_value {
+        Some(serde_json::Value::Object(m)) => m
+            .into_iter()
+            .filter_map(|(version, t)| t.as_str().map(|t| (version, t.to_string())))
+            .collect(),
+        _ => HashMap::new(),
+    };
+    let tags = tag_map
         .into_iter()
         .filter_map(|(tag, v)| {
             let version = v.as_str()?.to_string();
             parse_version(&version).map(|_| (tag, version))
         })
-        .collect())
+        .collect();
+    Ok(DistTagQuery { tags, times })
+}
+
+/// RFC3339 → OffsetDateTime。npm time 恒为 UTC ISO8601 但毫秒位可缺省，
+/// 字典序比较会在同秒时间戳上错序，必须真解析；解析不了按缺时间处理
+fn parse_npm_time(s: &str) -> Option<time::OffsetDateTime> {
+    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
+}
+
+/// tag 行按版本发布时间新→旧排序（设置页列表最新的在最上）：双方都有时间
+/// 按时间降序；缺时间（registry 未给或解析失败）的一侧垫底；同缺/同刻保持
+/// 解析顺序（sort_by 稳定，serde Map 语义与旧实现一致）
+pub(crate) fn sort_tag_pairs_by_publish_time(tags: &mut [(String, String)], times: &HashMap<String, String>) {
+    tags.sort_by(|a, b| {
+        let ta = times.get(&a.1).and_then(|s| parse_npm_time(s));
+        let tb = times.get(&b.1).and_then(|s| parse_npm_time(s));
+        match (ta, tb) {
+            (Some(x), Some(y)) => y.cmp(&x),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        }
+    });
 }
 
 /// 安装指定版本的 dsh（设置页版本卡的「安装」按钮）：参数化的安装管道，
