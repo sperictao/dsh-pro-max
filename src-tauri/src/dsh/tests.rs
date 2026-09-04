@@ -6,7 +6,7 @@
     use crate::version::parse_version;
     use super::{RemoteRpcAccess, RemoteUrlAccess, SUPPORTED_DSH_VERSION};
     use super::probe::{classify_remote_rpc_response, classify_remote_url_access, curl_direct_args, curl_remote_rpc_args, parse_macos_https_proxy, proxy_bypass_host, proxy_bypasses_host, REMOTE_WS_PATH};
-    use super::process::{dsh_web_cmd_pattern, ere_to_ps_wildcards, run_capture, run_capture_lines, stream_chunk_lines, which, win_cmd_line, win_quote};
+    use super::process::{credentials_lock_is_stale, dsh_web_cmd_pattern, ere_to_ps_wildcards, run_capture, run_capture_lines, stream_chunk_lines, which, win_cmd_line, win_quote};
     use super::setup::{format_verification_checks, plugin_failure_from_log_tail, read_log_tail, serve_command, serve_failure_solution, start_failure_diagnosis};
     use super::update::{WEB_PROFILE_COMPAT_ID_LINE, insert_web_profile_compat_entry, remove_web_profile_compat_entry, rewrite_web_profile_patch_at};
     use crate::i18n::set_current;
@@ -1722,6 +1722,33 @@
         let (problem, _) = super::setup::diagnose_start_failure_from_tail(Some(&long_tail));
         assert!(problem.contains("line8"));
         assert!(!problem.contains("line9"));
+        set_current("en");
+    }
+
+    #[test]
+    fn credentials_lock_staleness_follows_holder_liveness() {
+        // 持锁 PID 已死 → 孤儿，可清理；活着 → 真实并发持有，不得动
+        assert!(credentials_lock_is_stale("19648\n", |_| false));
+        assert!(!credentials_lock_is_stale("19648\n", |_| true));
+        // 内容解析不出 PID：没有活进程会持一把没写自己 PID 的锁，按孤儿处理
+        assert!(credentials_lock_is_stale("garbage", |_| true));
+        assert!(credentials_lock_is_stale("", |_| true));
+    }
+
+    #[test]
+    fn lock_timeout_diagnosis_points_at_the_lock_file_not_the_builtin_plugin() {
+        // 回归（本机实测事故，v0.5.x）：孤儿 credentials 写锁让 boot 崩在内置
+        // connection 插件的锁等待上。按插件链归因会指引用户去 Plugins 页移除一个
+        // 不可移除的内置插件——锁超时指纹必须优先，解法指向锁文件本身
+        set_current("en");
+        let (problem, solution) = super::setup::diagnose_start_failure_from_tail(Some(concat!(
+            "Error: dsh: plugin tree failed to load: failed to apply loader entry connection (@deepseek-ai/dsh-client-connection): ",
+            "atomic-write: timed out waiting for the writer lock at C:\\Users\\x\\.dsh\\.credentials.yaml.lock\n",
+            "Error: atomic-write: timed out waiting for the writer lock at C:\\Users\\x\\.dsh\\.credentials.yaml.lock\n",
+        )));
+        assert!(problem.contains(".credentials.yaml.lock"));
+        assert!(solution.contains(".credentials.yaml.lock"));
+        assert!(!solution.contains("Plugins page"));
         set_current("en");
     }
 

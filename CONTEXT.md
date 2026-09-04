@@ -17,6 +17,7 @@
 ### 语义边界
 
 - dsh 进程由本应用 spawn 但**不受管**：不经 ProcessManager，不随应用退出而停止；停止只有显式 Stop（按命令行模式匹配杀进程）。日志在 `~/.dsh/dsh-web.log`。
+- dsh 的 credentials 写锁（`~/.dsh/.credentials.yaml.lock`，内容为持锁 PID）在持锁进程被强杀后成永久孤儿，dsh 自身不回收（其设计声明孤儿回收是 operator 动作）；Launcher 充当该 operator：启动前与强杀停止后按「持锁 PID 已死」判定清理，活锁（真实并发持有）不动。启动失败诊断对该锁超时指纹优先于插件链归因。
 - 自启动（dsh web 开机自起）事实来源是 OS 注册项（launchd / 启动文件夹 / autostart desktop），本应用不在配置里存布尔值。
 - 本应用不写 tailnet 侧任何配置：MagicDNS / HTTPS Certificates / Access Controls 都要求用户在 Tailscale 管理页自行配置，应用只检测并在失败步骤给出指引。
 - 任何异机远程访问都要求 tailnet policy 从访问身份到 dsh 节点放行 `tcp:443`；App Capability 只传递应用权限，不会自动放行网络连接。配置 capability 时，同一 grant 必须同时包含 `"ip": ["tcp:443"]` 与同名 `app` 项。

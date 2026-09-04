@@ -4,7 +4,7 @@ use super::WEB_PORT;
 // AUTOSTART_PREFIX 仅 macOS launchd 分支使用（常量本身 cfg(macos)）
 #[cfg(target_os = "macos")]
 use super::AUTOSTART_PREFIX;
-use super::components::{tailscale_path};
+use super::components::{dsh_dir, tailscale_path};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -314,6 +314,44 @@ pub(crate) fn process_alive(pid: u32) -> bool {
     }
 }
 
+/// credentials 写锁文件是否孤儿（决策核，不碰文件系统）：dsh 的 atomic-write
+/// 用 wx 创建的 `<file>.lock`（内容为持锁进程 PID）串行化 credentials 写者，
+/// 持锁进程被强杀/崩溃时 finally 清理不会执行，锁即永久孤儿——dsh 自己不回收
+/// （其设计声明孤儿回收是 operator 动作），此后每次 dsh 启动都在锁等待上超时
+/// 崩溃。持锁 PID 已死 → 孤儿；活着 → 真实并发持有，不得动；内容解析不出
+/// PID → 没有活进程会持一把没写自己 PID 的锁，按孤儿处理
+pub(crate) fn credentials_lock_is_stale(contents: &str, alive: impl Fn(u32) -> bool) -> bool {
+    match contents.trim().parse::<u32>() {
+        Ok(pid) => !alive(pid),
+        Err(_) => true,
+    }
+}
+
+/// 清理 credentials 写锁的孤儿文件（dsh 声明孤儿回收是 operator 动作，Launcher
+/// 就是这个 operator——本应用的 dsh_stop 按命令行强杀进程，自己就是孤儿来源
+/// 之一）。grace 给刚被杀的持锁者留出退出时间：停止路径传几秒，启动路径传 0
+/// （任何活持有者都是真实并发，不等待、不动锁）。清理失败只记日志：随后启动
+/// 失败的诊断会指明锁文件与手动解法
+pub(crate) fn clear_stale_credentials_lock(grace: Duration) {
+    let Ok(dir) = dsh_dir() else { return };
+    let lock = dir.join(".credentials.yaml.lock");
+    let deadline = std::time::Instant::now() + grace;
+    loop {
+        let Ok(contents) = fs::read_to_string(&lock) else { return };
+        if credentials_lock_is_stale(&contents, process_alive) {
+            match fs::remove_file(&lock) {
+                Ok(()) => log::info!("[dsh] 清理孤儿 credentials 写锁: {}", lock.display()),
+                Err(e) => log::warn!("[dsh] 清理孤儿 credentials 写锁失败: {}", e),
+            }
+            return;
+        }
+        if std::time::Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
 /// 等待 dsh web 就绪：轮询端口绑定；子进程已退出则提前返回失败（配合日志诊断快速报错）。
 /// 首启可能较慢（首次初始化 / 杀软扫描新装的 dsh 包），进程活着就继续等到超时
 pub(crate) fn wait_web_start(pid: Option<u32>, timeout: Duration) -> bool {
@@ -460,6 +498,9 @@ pub fn dsh_stop() -> Result<(), String> {
     kill_by_pattern(dsh_web_cmd_pattern());
     // 迁移清理：旧 Launcher 可能留下运行中的 loopback 反代。
     kill_by_pattern("loopback-proxy.js");
+    // 强杀可能把 credentials 写锁孤儿化（持锁进程死在 finally 清理之前）；
+    // 给刚被杀的持锁者留退出时间，再按 PID 存活判定清理
+    clear_stale_credentials_lock(Duration::from_secs(3));
     // 一并关闭 HTTPS Serve，避免远程 URL 指向已停止的 dsh。
     if let Some(ts) = tailscale_path() {
         let _ = run_capture(&ts, &["serve", "--https=443", "off"]);

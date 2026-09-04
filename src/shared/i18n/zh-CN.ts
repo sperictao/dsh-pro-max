@@ -375,6 +375,8 @@ export const zhCN: Record<I18nKey, string> = {
   "dsh web failed to start; plugin {{plugin}} failed to load:\n{{error}}": "dsh Web 启动失败，插件 {{plugin}} 加载失败：\n{{error}}",
   "Remove or update the plugin {{plugin}} on the Plugins page, then retry; launcher-managed authorization plugins are restored by Repair dsh stack": "在插件页移除或更新插件 {{plugin}} 后重试；启动器管理的授权插件用「修复 dsh 兼容栈」恢复",
   "dsh web failed to start (no log output; port 3899 may be occupied)": "dsh Web 启动失败（无日志输出；端口 3899 可能被占用）",
+  "dsh web failed to start: the credentials writer lock ~/.dsh/.credentials.yaml.lock is held by another dsh process or was left behind by a killed one": "dsh Web 启动失败：credentials 写锁 ~/.dsh/.credentials.yaml.lock 正被另一个 dsh 进程持有，或是由被杀掉的进程遗留",
+  "If no other dsh command is running, delete ~/.dsh/.credentials.yaml.lock, then retry": "若没有其他 dsh 命令在运行，请删除 ~/.dsh/.credentials.yaml.lock 后重试",
   "dsh could not create symlinks; on Windows enable Developer Mode (Settings → Privacy & security → For developers), then retry": "dsh 无法创建符号链接；Windows 请开启开发者模式（设置 → 隐私和安全性 → 开发者选项）后重试",
   "A newer dsh rewrote ~/.dsh/.credentials.yaml into an incompatible format; open it and keep only the KEY: value lines (drop the version:/refs: wrapper), then retry": "更新版本的 dsh 曾把 ~/.dsh/.credentials.yaml 重写为不兼容格式；请打开该文件，只保留 KEY: value 各行（去掉 version:/refs: 包装层）后重试",
   "Check the log at ~/.dsh/dsh-web.log; port 3899 may be occupied or the dsh CLI may need a newer Node.js": "请查看 ~/.dsh/dsh-web.log；端口 3899 可能被占用，或 dsh CLI 需要更新的 Node.js",

@@ -6,7 +6,7 @@ use super::auth::{AuthConfig, http_get, http_ok, resolve_auth_config, resolve_fq
 use super::autostart::{autostart_enabled, autostart_impl};
 use super::components::{auth_plugins_installed, bundled_plugin_specs, dsh_dir, dsh_version, dsh_version_is_compatible, install_auth_plugins, install_supported_dsh, magic_dns_info, npm_bin, resolve_dsh_bin, resolve_host_and_url, resolve_node_bin, tailscale_path, web_profile_has_auth_plugins};
 use super::probe::{probe_remote_url, proxy_bypass_host};
-use super::process::{cli_command, dsh_web_cmd_pattern, dsh_web_pid, kill_by_pattern, port_listening, run_capture, spawn_detached, stop_supervised_services, wait_web_start};
+use super::process::{clear_stale_credentials_lock, cli_command, dsh_web_cmd_pattern, dsh_web_pid, kill_by_pattern, port_listening, run_capture, spawn_detached, stop_supervised_services, wait_web_start};
 use super::update::{ensure_web_profile_compat_patch};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -81,6 +81,9 @@ impl StepCtx<'_> {
 /// 失败返回 (problem, solution) 供时间轴与更新流程分别展示针对性排障提示。
 /// dsh_setup 与 dsh_update 共用
 pub(crate) fn spawn_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) -> Result<u32, (String, String)> {
+    // 孤儿 credentials 写锁会让 boot 在锁等待上超时崩溃（持锁进程被强杀后
+    // dsh 永不回收）；持锁 PID 已死才清，活锁是真实并发不碰
+    clear_stale_credentials_lock(Duration::ZERO);
     if web_profile_has_auth_plugins() {
         ensure_web_profile_compat_patch().map_err(|error| {
             log::error!("[dsh 启动] 修复 web profile patch 失败: {}", error);
@@ -183,6 +186,18 @@ pub(crate) fn plugin_failure_from_log_tail(tail: &str) -> Option<(String, String
 /// 具体插件与根因报错（致命标记门控在提取函数内）；其余按日志里的常见崩溃
 /// 指纹（EPERM/symlink、credentials 格式）给针对性方案
 pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> (String, String) {
+    // 锁超时指纹优先于插件链归因：孤儿 credentials 写锁让 boot 崩在内置
+    // connection 插件的锁等待上，按插件链点名会指引用户去 Plugins 页移除一个
+    // 不可移除的内置插件；真实解法是删掉孤儿锁（Launcher 启动路径已自动清理
+    // 持锁 PID 已死的锁，走到这里说明持锁者活着或清理失败）
+    if let Some(t) = tail {
+        if t.contains("timed out waiting for the writer lock") && t.contains(".credentials.yaml.lock") {
+            return (
+                "dsh web failed to start: the credentials writer lock ~/.dsh/.credentials.yaml.lock is held by another dsh process or was left behind by a killed one".to_string(),
+                "If no other dsh command is running, delete ~/.dsh/.credentials.yaml.lock, then retry".to_string(),
+            );
+        }
+    }
     if let Some((plugin, error)) = tail.and_then(plugin_failure_from_log_tail) {
         return (
             keyf(
