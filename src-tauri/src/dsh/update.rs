@@ -397,7 +397,7 @@ pub(crate) struct DistTagQuery {
 ///   2. 对象：{"latest":"x","next":"y"}（view dist-tags --json，macOS/Linux 的 npm）
 ///   3. 单元素数组：[{...}]（部分 Windows npm/shim 的 --json 输出——实机回归
 ///      v0.3.1；组合字段查询实测同样走此形态），
-///     及上述形态带 UTF-8 BOM / 首尾空白（Windows cmd /c 包装）
+///      及上述形态带 UTF-8 BOM / 首尾空白（Windows cmd /c 包装）
 ///
 /// tag 值过滤非 semver（防御 registry 返回杂质）；time 表的 created/modified
 /// 等非版本键无需清理——只按 tag 指向的版本查表，永不命中
