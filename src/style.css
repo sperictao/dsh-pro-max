@@ -290,32 +290,39 @@
   width: 100%;
   height: 100%;
   filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.2));
+  /* 图标是球体子节点，随球体 transform 刚性同缩放（同拍同相位同幅度）；
+     刻意不设独立动画，避免与球体呼吸出现幅度差 */
 }
 .status-indicator-symbol svg {
   display: block;
   width: 88px;
   height: 88px;
 }
-/* 光晕双层：近距高亮晕（清晰描边感）+ 远距柔光（保留悬浮深度） */
+/* 光晕双层：近距高亮晕（清晰描边感）+ 远距柔光（保留悬浮深度）；
+   --icon-tint 为呼吸谷点的图标染色（状态色向白 30% 混合），峰点回到纯白 */
 .status-indicator-icon.running {
+  --icon-tint: #c2eecd;
   background: radial-gradient(circle at 35% 30%, #78f59c 0%, #34c759 58%, #168d34 100%);
   box-shadow:
     0 0 36px rgba(52, 199, 89, 0.55),
     0 14px 44px rgba(52, 199, 89, 0.32);
 }
 .status-indicator-icon.stopped {
+  --icon-tint: #dddee0;
   background: radial-gradient(circle at 35% 30%, #c9c9cf 0%, #8e8e93 60%, #636366 100%);
   box-shadow:
     0 0 36px rgba(99, 99, 102, 0.45),
     0 14px 44px rgba(99, 99, 102, 0.26);
 }
 .status-indicator-icon.starting {
+  --icon-tint: #fff0b3;
   background: radial-gradient(circle at 35% 30%, #ffe88a 0%, #ffcc00 58%, #ff9500 100%);
   box-shadow:
     0 0 36px rgba(255, 149, 0, 0.55),
     0 14px 44px rgba(255, 149, 0, 0.32);
 }
 .status-indicator-icon.failed {
+  --icon-tint: #ffc4c1;
   background: radial-gradient(circle at 35% 30%, #ff8d86 0%, #ff3b30 58%, #c82920 100%);
   box-shadow:
     0 0 36px rgba(255, 59, 48, 0.55),
@@ -350,9 +357,11 @@
   font-size: 1rem;
 }
 
+/* 呼吸同时驱动缩放与图标色：谷点图标染 --icon-tint（各状态色的浅色调），
+   峰点恒纯白最亮；图标 stroke=currentColor 直接受 color 驱动，无第二条动画 */
 @keyframes service-status-pulse {
-  0%, 100% { transform: scale(0.95); }
-  50% { transform: scale(1.05); }
+  0%, 100% { transform: scale(0.95); color: var(--icon-tint, #fff); }
+  50% { transform: scale(1.05); color: #fff; }
 }
 
 @media (prefers-reduced-motion: reduce) {
