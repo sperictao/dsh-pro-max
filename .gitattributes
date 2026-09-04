@@ -1,0 +1,5 @@
+# ts-rs 生成物固定 LF：cargo test 每次全量重生成这些文件（写 LF），
+# autocrlf=true 检出为 CRLF 会造成每次跑测试后 17+ 个文件的虚假脏 diff。
+# eol=lf 让检出与生成一致，噪音消失。只限定生成物目录，不影响仓库其余
+# 文件的行尾策略。
+src/shared/bindings/** text eol=lf
