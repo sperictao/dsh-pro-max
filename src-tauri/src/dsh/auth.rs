@@ -273,6 +273,15 @@ pub(crate) fn http_ok(line: Option<&str>) -> bool {
     }
 }
 
+/// 状态行是否为合法的三位状态码（不问语义）。本地模式的就绪判定用：
+/// 无授权插件时裸 `/` 未带 token 的 401/404 是健康应答（浏览器经 token
+/// URL 换 cookie 后才是 200），不能沿用 http_ok 的 2xx/3xx 门槛
+pub(crate) fn any_http_status(line: Option<&str>) -> bool {
+    line.and_then(|l| l.split_whitespace().nth(1))
+        .map(|code| code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit()))
+        .unwrap_or(false)
+}
+
 /// 构造 JSON-RPC POST 请求（本地验证用）。Host 为 loopback、不带 Origin，
 /// 专门验证「本机仍可访问特权 API」这条不变式。
 pub(crate) fn rpc_body(method: &str) -> String {

@@ -12,7 +12,7 @@
 - **访问模式（Access Mode）** — 本地（仅 127.0.0.1）或远程（叠加 Tailscale Serve HTTPS）。持久化在 localStorage `dsh-access-mode`，默认本地。
 - **Capability 域名（Capability Domain）** — 远程授权的应用能力域名（用户自有域名），拼成 `{domain}/cap/dsh-admin`（管理）与 `{domain}/cap/dsh`（使用）经环境变量注入 dsh 进程，并作为 `tailscale serve --accept-app-caps` 的值；空则不注入，远程特权接口恒 403。
 - **允许登录名（Allowed Logins）** — 允许远程访问的 Tailscale 登录名集合；本机当前用户始终自动包含，额外登录名在配置中以逗号分隔。
-- **步骤时间线（Step Timeline）** — 安装/设置流程经 `dsh-step` 事件推送到前端的 8 步进度（node → install → plugins → tailscale → magicdns → start → serve → verify），每步含状态与失败时的原因/下一步；verify 同时验证服务直连与本机浏览器代理路径，避免远端可用但本机同一 URL 被代理截获时误报就绪。
+- **步骤时间线（Step Timeline）** — 安装/设置流程经 `dsh-step` 事件推送到前端的进度（每步含状态与失败时的原因/下一步）：远程 8 步（node → install → plugins → tailscale → magicdns → start → serve → verify，verify 同时验证服务直连与本机浏览器代理路径，避免远端可用但本机同一 URL 被代理截获时误报就绪）；本地 4 步（node → install → start → ready），ready 以「loopback HTTP 应答 → 应答后稳定观察 → 进程存活」收口——dsh 先绑端口、插件树加载与激活在其后（激活崩溃发生在服务已应答之后，端口绑定甚至首次应答都不等于可用），任一环节失败都会以失败节点带上 dsh-web.log 里的具体报错。
 
 ### 语义边界
 

@@ -498,7 +498,7 @@ export function DshCard() {
                     <div className="timeline-issue">
                       {step.problem && <div className="timeline-problem">{step.problem}</div>}
                       {step.solution && <div className="timeline-solution">{step.solution}</div>}
-                      {step.id === "start" && <StartLogDisclosure />}
+                      {(step.id === "start" || step.id === "ready") && <StartLogDisclosure />}
                     </div>
                   )}
                 </div>

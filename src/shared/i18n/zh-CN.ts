@@ -396,6 +396,8 @@ export const zhCN: Record<I18nKey, string> = {
   "dsh web is running on 127.0.0.1:3899": "dsh Web 已运行在 127.0.0.1:3899",
   "Restarting dsh web…": "正在重启 dsh Web…",
   "Local access is ready": "本地访问已就绪",
+  "Verifying local access…": "正在验证本地访问…",
+  "dsh web started but is not responding on 127.0.0.1:3899": "dsh Web 已启动但在 127.0.0.1:3899 上无应答",
   "Tailscale is not installed": "未检测到 Tailscale",
   "Tailscale is not connected": "Tailscale 未连接",
   "Checking MagicDNS…": "正在检测 MagicDNS…",

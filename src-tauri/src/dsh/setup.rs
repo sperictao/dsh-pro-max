@@ -691,8 +691,9 @@ pub(crate) fn format_verification_checks(checks: &[String]) -> String {
     checks.join("\n")
 }
 
-/// 重启 dsh web，确保新 profile 和授权环境生效。
-pub(crate) fn restart_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) -> Result<(), String> {
+/// 重启 dsh web，确保新 profile 和授权环境生效。成功返回新进程 PID
+/// （供启动后的就绪验证探活）。
+pub(crate) fn restart_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) -> Result<u32, String> {
     stop_supervised_services();
     kill_by_pattern(dsh_web_cmd_pattern());
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -716,5 +717,5 @@ pub(crate) fn restart_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig
         log::error!("[dsh 重启] 等待 dsh web 就绪超时: {}", problem);
         return Err(problem);
     }
-    Ok(())
+    Ok(pid)
 }

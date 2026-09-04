@@ -392,6 +392,8 @@ export const en = {
   "dsh web is running on 127.0.0.1:3899": "dsh web is running on 127.0.0.1:3899",
   "Restarting dsh web…": "Restarting dsh web…",
   "Local access is ready": "Local access is ready",
+  "Verifying local access…": "Verifying local access…",
+  "dsh web started but is not responding on 127.0.0.1:3899": "dsh web started but is not responding on 127.0.0.1:3899",
   "Tailscale is not installed": "Tailscale is not installed",
   "Tailscale is not connected": "Tailscale is not connected",
   "Checking MagicDNS…": "Checking MagicDNS…",

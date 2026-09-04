@@ -1,6 +1,6 @@
 //! dsh 域单元测试（原 dsh.rs tests 模块整体平移，导入清单未改）。
 
-    use super::auth::{AuthConfig, parse_extra_logins, rpc_request, serve_status_targets_web, tailscale_login_from_status_json, validate_cap_domain};
+    use super::auth::{any_http_status, AuthConfig, parse_extra_logins, rpc_request, serve_status_targets_web, tailscale_login_from_status_json, validate_cap_domain};
     use super::autostart::{port_guard_js, render_desktop_entry, render_start_web, sh_quote};
     use super::components::{dsh_version_is_compatible, normalize_version, plugin_profile_is_current, version_within_supported_line};
     use crate::version::parse_version;
@@ -1805,6 +1805,66 @@
         // 内容解析不出 PID：没有活进程会持一把没写自己 PID 的锁，按孤儿处理
         assert!(credentials_lock_is_stale("garbage", |_| true));
         assert!(credentials_lock_is_stale("", |_| true));
+    }
+
+    #[test]
+    fn any_http_status_accepts_auth_gate_responses() {
+        // 本地模式裸 / 无 token：401/404 是健康应答（token URL 换 cookie 后才是 200）
+        assert!(any_http_status(Some("HTTP/1.1 401 Unauthorized")));
+        assert!(any_http_status(Some("HTTP/1.1 404 Not Found")));
+        assert!(any_http_status(Some("HTTP/1.1 200 OK")));
+        assert!(!any_http_status(Some("garbage without status")));
+        assert!(!any_http_status(Some("HTTP/1.1 12 OK")));
+        assert!(!any_http_status(None));
+    }
+
+    #[test]
+    fn poll_local_ready_settles_the_port_bound_then_crash_race() {
+        use super::start::{poll_local_ready, LocalReady};
+        // 回归（本机实测事故）：dsh 先绑端口、插件树加载在后，boot 崩溃发生在
+        // 端口绑定之后数秒——只轮询端口的启动等待会误报成功（浏览器打开即死页，
+        // 界面却全绿无报错）。就绪必须以 HTTP 应答收口，进程死亡判 Dead
+        assert!(matches!(poll_local_ready(|| true, || true, || {}, 3, 0), LocalReady::Responding));
+        // HTTP 从未应答、进程死亡 → Dead（即使端口曾绑定、启动等待已放行）
+        assert!(matches!(poll_local_ready(|| false, || false, || {}, 3, 0), LocalReady::Dead));
+        // 进程活着但始终不应答 → Unresponsive
+        assert!(matches!(poll_local_ready(|| false, || true, || {}, 3, 0), LocalReady::Unresponsive));
+        // 慢启动不是死：先不应答、后开始应答 → Responding
+        let mut calls = 0;
+        assert!(matches!(
+            poll_local_ready(|| { calls += 1; calls >= 2 }, || true, || {}, 5, 0),
+            LocalReady::Responding
+        ));
+        // 首轮就死亡也要立即判 Dead（不等满预算）
+        assert!(matches!(poll_local_ready(|| false, || false, || {}, 20, 0), LocalReady::Dead));
+    }
+
+    #[test]
+    fn poll_local_ready_soaks_the_serve_then_activation_crash_race() {
+        use super::start::{poll_local_ready, LocalReady};
+        // 回归二（本机 dsh-tui/agent-teams 事故，日志实证）：服务先应答并打印
+        // token，插件树激活在其后才崩——首次应答即放行会漏掉这类秒死。
+        // 应答后必须有稳定观察期，期内死亡/停止应答都判 Dead
+        let mut http_calls = 0;
+        let mut alive_calls = 0;
+        assert!(matches!(
+            poll_local_ready(
+                || { http_calls += 1; http_calls <= 1 }, // 首轮应答，soak 各轮停止应答
+                || { alive_calls += 1; alive_calls <= 1 }, // 首轮存活，soak 内死亡
+                || {},
+                3,
+                4,
+            ),
+            LocalReady::Dead
+        ));
+        // 应答后进程死亡（HTTP 仍会瞬时成功一次）→ Dead
+        let mut alive_alive = true;
+        assert!(matches!(
+            poll_local_ready(|| true, || { std::mem::take(&mut alive_alive) }, || {}, 2, 3),
+            LocalReady::Dead
+        ));
+        // 应答后全程稳定 → Responding
+        assert!(matches!(poll_local_ready(|| true, || true, || {}, 2, 4), LocalReady::Responding));
     }
 
     #[test]
