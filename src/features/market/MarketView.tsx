@@ -837,8 +837,8 @@ function BuildApprovalDialog() {
           {t("If you cancel, no scripts run — the packages stay downloaded and you can approve them later.")}
         </p>
         <div className="mt-4 flex justify-end gap-2">
-          <button className={BTN_SM} disabled={busy} onClick={dismiss} id="build-approval-cancel" autoFocus>
-            {t("Cancel")}
+          <button className={BTN_OUTLINE} disabled={busy} onClick={dismiss} id="build-approval-cancel" autoFocus>
+            {t("Keep scripts blocked")}
           </button>
           <button className={BTN_PRIMARY} disabled={busy} onClick={() => void approve()} id="build-approval-approve">
             {busy ? t("Working…") : t("Approve & install")}
@@ -916,8 +916,8 @@ function ReleaseAgeConfirmDialog() {
           )}
         </p>
         <div className="mt-4 flex justify-end gap-2">
-          <button className={BTN_SM} disabled={busy} onClick={dismiss} id="release-age-cancel" autoFocus>
-            {t("Cancel")}
+          <button className={BTN_OUTLINE} disabled={busy} onClick={dismiss} id="release-age-cancel" autoFocus>
+            {t("Keep current version")}
           </button>
           <button className={BTN_PRIMARY} disabled={busy} onClick={() => void confirm()} id="release-age-confirm">
             {busy ? t("Working…") : t("Update anyway")}

@@ -390,7 +390,7 @@ describe("MarketView", () => {
 
     await user.click(screen.getByRole("button", { name: "Installed" }));
     await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
-    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    await user.click(await screen.findByRole("button", { name: "Keep current version" }));
     expect(installSpy).not.toHaveBeenCalled();
     expect(useAppStore.getState().marketReleaseAgeConfirm).toBeNull();
     expect(useAppStore.getState().toasts.map((t) => t.type)).toContainEqual("info");
@@ -418,7 +418,7 @@ describe("MarketView", () => {
     await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
     await screen.findByRole("dialog");
     // 焦点默认落在取消（安全默认）；Esc 等价取消：不安装、挂起清空
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Keep current version" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(installSpy).not.toHaveBeenCalled();
     expect(useAppStore.getState().marketReleaseAgeConfirm).toBeNull();
@@ -657,7 +657,7 @@ describe("MarketView", () => {
     const user = userEvent.setup();
     render(createElement(MarketView));
 
-    await user.click(screen.getByText("Cancel"));
+    await user.click(screen.getByText("Keep scripts blocked"));
     expect(useAppStore.getState().marketPendingApproval).toBeNull();
     expect(useAppStore.getState().toasts.map((t) => t.type)).toContain("info");
     expect(cmd.marketApproveBuilds).not.toHaveBeenCalled();
@@ -677,7 +677,7 @@ describe("MarketView", () => {
 
     await screen.findByRole("dialog");
     // 放行 = 允许任意代码执行，焦点默认落在取消（安全默认）；Esc 等价取消
-    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Keep scripts blocked" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(useAppStore.getState().marketPendingApproval).toBeNull();
     expect(cmd.marketApproveBuilds).not.toHaveBeenCalled();
