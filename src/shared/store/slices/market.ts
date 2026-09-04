@@ -16,6 +16,16 @@ import { readStored, type Slice } from "./shared";
 // 值为目录条目 fullName（目录内唯一）列表，顺序即收藏顺序
 const MARKET_FAVORITES_KEY = "market-favorites";
 
+/// 更新/重装的安装标识拼装：latest 在 pnpm minimumReleaseAge 保护窗口内时
+/// 钉版本（窗口内 @latest 会被静默拦回旧版、退出码仍为 0 造成假成功，
+/// 钉版本是 pnpm 认的知情通道），否则 @latest。store 发起与卡片锚定
+/// installError 共用此规则，两侧不得漂移
+export function updateSpecifierFor(name: string, info: PluginUpdateInfo | null | undefined): string {
+  return info?.updateAvailable && info.latestInReleaseAgeWindow && info.latestVersion
+    ? `${name}@${info.latestVersion}`
+    : `${name}@latest`;
+}
+
 function readStoredFavorites(): string[] {
   try {
     const parsed: unknown = JSON.parse(readStored(MARKET_FAVORITES_KEY) ?? "[]");
@@ -39,6 +49,15 @@ export interface MarketSlice {
   marketRemoving: string | null;
   // pnpm 拦截构建脚本 → 挂起等用户审批；确认后才经 market_approve_builds 放行重装
   marketPendingApproval: { specifier: string; label: string; packages: string[]; workspaceYaml: string } | null;
+  // latest 落在 pnpm minimumReleaseAge 保护窗口 → 挂起等用户知情确认；
+  // 确认后钉版本重装（见 updateSpecifierFor）。载荷携带版本过渡与发布时间，
+  // 确认框据此展示"从哪升到哪、发布多久了"
+  marketReleaseAgeConfirm: {
+    name: string;
+    latestVersion: string;
+    installedVersion: string | null;
+    publishTime: string | null;
+  } | null;
   // 更新检测结果（name → info）；null = 尚未检测
   marketUpdates: Record<string, PluginUpdateInfo> | null;
   marketUpdatesBusy: boolean;
@@ -55,7 +74,9 @@ export interface MarketSlice {
   dismissMarketInstallError: () => void;
   removeMarketPlugin: (name: string) => Promise<void>;
   refreshMarketUpdates: () => Promise<void>;
-  updateMarketPlugin: (name: string, opts?: { silent?: boolean }) => Promise<boolean>;
+  updateMarketPlugin: (name: string, opts?: { silent?: boolean; releaseAgePin?: string }) => Promise<boolean>;
+  confirmMarketReleaseAge: () => Promise<void>;
+  dismissMarketReleaseAge: () => void;
   updateAllMarketPlugins: () => Promise<void>;
   toggleMarketFavorite: (fullName: string) => void;
 }
@@ -70,6 +91,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   marketInstallError: null,
   marketRemoving: null,
   marketPendingApproval: null,
+  marketReleaseAgeConfirm: null,
   marketUpdates: null,
   marketUpdatesBusy: false,
   marketUpdating: null,
@@ -220,13 +242,29 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   },
 
   // 更新单个插件 = 以 name@latest 重装：与安装同一 dsh 闸门、审计与审批路径，
-  // 落盘 spec 形态也与市场安装一致（过程明细同通道进卡片）。silent 供批量
-  // 更新跳过逐条成功/失败 toast；撞上 pnpm 构建脚本拦截时挂起审批对话框并
-  // 提示（批量由调用方中止后续）。更新失败维持 toast，明细不驻留
+  // 落盘 spec 形态也与市场安装一致（过程明细同通道进卡片）。例外：latest 落在
+  // pnpm minimumReleaseAge 保护窗口内时，@latest 会被静默解析回旧版（退出码
+  // 仍为 0 的假成功）——挂起弹供应链确认框（marketReleaseAgeConfirm），用户
+  // 知情确认后经 releaseAgePin 钉版本重装（pnpm 认的知情通道，自动写
+  // minimumReleaseAgeExclude）。silent 供批量更新跳过逐条成功/失败 toast；
+  // 撞上 pnpm 构建脚本拦截时挂起审批对话框并提示（批量由调用方中止后续）。
+  // 更新失败维持 toast，明细不驻留
   updateMarketPlugin: async (name, opts) => {
     const silent = opts?.silent ?? false;
     if (get().marketUpdating) return false;
-    const specifier = `${name}@latest`;
+    const info = get().marketUpdates?.[name];
+    if (!opts?.releaseAgePin && info?.updateAvailable && info.latestInReleaseAgeWindow && info.latestVersion) {
+      set({
+        marketReleaseAgeConfirm: {
+          name,
+          latestVersion: info.latestVersion,
+          installedVersion: info.installedVersion,
+          publishTime: info.latestPublishTime,
+        },
+      });
+      return false;
+    }
+    const specifier = opts?.releaseAgePin ? `${name}@${opts.releaseAgePin}` : `${name}@latest`;
     set({ marketUpdating: name, marketInstallLog: { specifier, lines: [] } });
     try {
       const outcome = await cmd.marketInstall(specifier);
@@ -267,8 +305,28 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
     }
   },
 
+  // 用户确认承担供应链窗口风险：清挂起，以挂起时捕获的版本钉版本重装
+  confirmMarketReleaseAge: async () => {
+    const pending = get().marketReleaseAgeConfirm;
+    if (!pending || get().marketUpdating) return;
+    set({ marketReleaseAgeConfirm: null });
+    await get().updateMarketPlugin(pending.name, { releaseAgePin: pending.latestVersion });
+  },
+
+  // 用户放弃窗口内更新：正常路径（@latest）等版本过了保护期自然可用，
+  // 如实告知去向，不留半成品
+  dismissMarketReleaseAge: () => {
+    if (!get().marketReleaseAgeConfirm) return;
+    set({ marketReleaseAgeConfirm: null });
+    get().toast(
+      i18n.t("Update canceled. You can update normally once the version matures past the pnpm protection window."),
+      "info",
+    );
+  },
+
   // 一键全部更新：顺序执行（共享同一 profile 目录，pnpm 并发安装会争锁）。
-  // 逐个静默更新，结束汇总一条；中途撞上审批挂起则停下，剩余项待放行后重试
+  // 逐个静默更新，结束汇总一条；中途撞上审批挂起或供应链窗口确认则停下，
+  // 剩余项待用户处置后重试
   updateAllMarketPlugins: async () => {
     const targets = Object.values(get().marketUpdates ?? {})
       .filter((u) => u.updateAvailable && !u.managed)
@@ -278,7 +336,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
     let failed = 0;
     for (const name of targets) {
       const done = await get().updateMarketPlugin(name, { silent: true });
-      if (!done && get().marketPendingApproval) break;
+      if (!done && (get().marketPendingApproval || get().marketReleaseAgeConfirm)) break;
       if (done) ok += 1;
       else failed += 1;
     }

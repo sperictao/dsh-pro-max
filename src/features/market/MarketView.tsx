@@ -4,6 +4,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
+import { updateSpecifierFor } from "@/shared/store/slices/market";
 import { BTN, BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, INPUT } from "@/shared/lib/ui";
 import type { InstalledPlugin, MarketCatalog, MarketPlugin, PluginUpdateInfo } from "@/shared/types";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
@@ -98,6 +99,7 @@ export function MarketView() {
       </nav>
       {tab === "discover" ? <DiscoverPane /> : tab === "favorites" ? <FavoritesPane /> : <InstalledPane />}
       <BuildApprovalDialog />
+      <ReleaseAgeConfirmDialog />
     </main>
   );
 }
@@ -501,8 +503,10 @@ function MarketCard({
   favorited: boolean;
   onToggleFavorite: () => void;
   onInstall?: () => void;
-  /** 更新/重装共用：以 name@latest 重跑安装，同一命令通道；已装页必传，
-      发现/收藏页不传（永不渲染对应分支） */
+  /** 更新/重装共用：正常以 name@latest 重跑安装，latest 在 pnpm
+      minimumReleaseAge 窗口内时先弹供应链确认框、确认后钉版本（见
+      updateSpecifierFor）；同一命令通道。已装页必传，发现/收藏页不传
+      （永不渲染对应分支） */
   onUpdate?: () => void;
   onRemove?: () => void;
 }) {
@@ -515,8 +519,9 @@ function MarketCard({
   const current = info?.installedVersion ?? null;
   const latest = info?.latestVersion ?? null;
   // 卡片的安装身份：未装卡片是目录安装标识；已装卡片是更新重装标识
-  // （更新 = 以 name@latest 重装，与安装同一命令通道）
-  const ownSpecifier = installed ? `${installed.name}@latest` : (plugin?.installSpecifier ?? null);
+  // （与 updateMarketPlugin 共用 updateSpecifierFor——specifier 是
+  // installError/installLog 锚回本卡的键，两处必须一致）
+  const ownSpecifier = installed ? updateSpecifierFor(installed.name, info) : (plugin?.installSpecifier ?? null);
 
   // 状态推导（自上而下首个命中）：受管 > 移除中 > 更新中 > 安装失败 > 已装
   // （比对更新）> 安装中 > 仅手动 > 确认中 > 可装。失败优先于已装/未装：
@@ -789,7 +794,10 @@ function InstallLogView({ log, failed }: { log: { specifier: string; lines: stri
 }
 
 /// 构建脚本审批对话框：pnpm 10+ 默认拦截第三方安装脚本，放行即允许其以
-/// 当前用户身份执行任意代码——这是用户决策点，launcher 不静默代劳
+/// 当前用户身份执行任意代码——这是用户决策点，launcher 不静默代劳。焦点
+/// 默认取消（安全默认），Esc 等价取消；放行重试期间（busy，失败保留挂起
+/// 可重试）禁撤。取消的去向（依赖已下载、脚本未跑、可后补放行）在框内
+/// 预告知，具体命令与路径由取消后的 toast 给出
 function BuildApprovalDialog() {
   const { t } = useTranslation();
   const pending = useAppStore((s) => s.marketPendingApproval);
@@ -800,8 +808,16 @@ function BuildApprovalDialog() {
   const busy = installing === pending.specifier;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6" role="dialog" aria-modal="true" id="build-approval-dialog">
-      <div className="w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-lg">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      role="dialog"
+      aria-modal="true"
+      id="build-approval-dialog"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) dismiss();
+      }}
+    >
+      <div className="w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-lg" aria-busy={busy}>
         <h3 className="text-sm font-semibold">{t("Allow build scripts?")}</h3>
         <p className="mt-2 text-xs opacity-70">
           {t("{{plugin}} needs to run install scripts from these dependencies:", { plugin: pending.label })}
@@ -817,12 +833,94 @@ function BuildApprovalDialog() {
             { path: pending.workspaceYaml },
           )}
         </p>
+        <p className="mt-2 text-xs opacity-50">
+          {t("If you cancel, no scripts run — the packages stay downloaded and you can approve them later.")}
+        </p>
         <div className="mt-4 flex justify-end gap-2">
-          <button className={BTN_SM} disabled={busy} onClick={dismiss} id="build-approval-cancel">
+          <button className={BTN_SM} disabled={busy} onClick={dismiss} id="build-approval-cancel" autoFocus>
             {t("Cancel")}
           </button>
           <button className={BTN_PRIMARY} disabled={busy} onClick={() => void approve()} id="build-approval-approve">
             {busy ? t("Working…") : t("Approve & install")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/// 发布时间 → 本地化时长标签（"5 小时前"），供应链确认框展示发布新鲜度用。
+/// 时间缺失/不可解析/时钟偏移为负/不足 1 小时返回 null——调用方回退"刚发布"
+/// 文案（窗口以小时计，更细粒度对"等还是装"的决策没有信息量）
+function publishAgeLabel(publishTime: string | null, t: ReturnType<typeof useTranslation>["t"]): string | null {
+  if (!publishTime) return null;
+  const ms = Date.now() - Date.parse(publishTime);
+  const HOUR_MS = 60 * 60 * 1000;
+  if (!Number.isFinite(ms) || ms < HOUR_MS) return null;
+  const hours = Math.floor(ms / HOUR_MS);
+  if (hours === 1) return t("an hour ago");
+  if (hours < 24) return t("{{n}} hours ago", { n: hours });
+  const days = Math.floor(hours / 24);
+  return days === 1 ? t("a day ago") : t("{{n}} days ago", { n: days });
+}
+
+/// 供应链窗口确认对话框：latest 落在 pnpm 11 minimumReleaseAge 保护窗口
+/// （内置默认 24h）时，@latest 会被静默拦回旧版造成假成功。钉版本是 pnpm
+/// 认的知情意图通道（自动写入 minimumReleaseAgeExclude）——是否抢跑新版
+/// 是用户决策点，launcher 不静默代劳。版本过渡与发布时长帮助决策；焦点
+/// 落在取消（安全默认），Esc 等价取消
+function ReleaseAgeConfirmDialog() {
+  const { t } = useTranslation();
+  const pending = useAppStore((s) => s.marketReleaseAgeConfirm);
+  const updating = useAppStore((s) => s.marketUpdating);
+  const confirm = useAppStore((s) => s.confirmMarketReleaseAge);
+  const dismiss = useAppStore((s) => s.dismissMarketReleaseAge);
+  if (!pending) return null;
+  const busy = updating === pending.name;
+  const age = publishAgeLabel(pending.publishTime, t);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      role="dialog"
+      aria-modal="true"
+      id="release-age-dialog"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) dismiss();
+      }}
+    >
+      <div className="w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-lg">
+        <h3 className="text-sm font-semibold">{t("Install a freshly published version?")}</h3>
+        <div className="mt-2 rounded bg-muted px-3 py-2 font-mono text-xs">
+          {pending.installedVersion ? (
+            <>
+              {pending.installedVersion} <span className="opacity-50">→</span> {pending.latestVersion}
+            </>
+          ) : (
+            pending.latestVersion
+          )}
+        </div>
+        <p className="mt-3 text-xs opacity-70">
+          {age
+            ? t("{{plugin}} was published {{age}} and is still inside pnpm's supply-chain protection window.", {
+                plugin: pending.name,
+                age,
+              })
+            : t("{{plugin}} was published very recently and is still inside pnpm's supply-chain protection window.", {
+                plugin: pending.name,
+              })}
+        </p>
+        <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+          {t(
+            "A normal update would be silently held back by pnpm and stay on the current version. Updating anyway pins this exact version, and pnpm records the exception in minimumReleaseAgeExclude.",
+          )}
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button className={BTN_SM} disabled={busy} onClick={dismiss} id="release-age-cancel" autoFocus>
+            {t("Cancel")}
+          </button>
+          <button className={BTN_PRIMARY} disabled={busy} onClick={() => void confirm()} id="release-age-confirm">
+            {busy ? t("Working…") : t("Update anyway")}
           </button>
         </div>
       </div>

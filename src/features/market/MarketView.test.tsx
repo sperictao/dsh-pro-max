@@ -88,6 +88,7 @@ beforeEach(() => {
     marketInstallError: null,
     marketRemoving: null,
     marketPendingApproval: null,
+    marketReleaseAgeConfirm: null,
     marketFavorites: [],
     toasts: [],
   });
@@ -183,6 +184,8 @@ describe("MarketView", () => {
         managed: false,
         installedVersion: "1.0.0",
         latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
         updateAvailable: true,
       },
       {
@@ -191,6 +194,8 @@ describe("MarketView", () => {
         managed: true,
         installedVersion: null,
         latestVersion: null,
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
         updateAvailable: false,
       },
     ]);
@@ -218,6 +223,8 @@ describe("MarketView", () => {
         managed: false,
         installedVersion: "1.0.0",
         latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
         updateAvailable: true,
       },
     ]);
@@ -231,7 +238,8 @@ describe("MarketView", () => {
 
     await user.click(screen.getByRole("button", { name: "Installed" }));
     await user.click(await screen.findByRole("button", { name: "Update all (1)" }));
-    // 更新 = 以 name@latest 重装（与安装同一闸门与审计路径）
+    // 正常更新 = 以 name@latest 重装（与安装同一闸门与审计路径）；
+    // minimumReleaseAge 窗口内的版本走确认框钉版本，另测
     await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual("Updated 1 plugins"),
@@ -246,6 +254,8 @@ describe("MarketView", () => {
         managed: false,
         installedVersion: "1.0.0",
         latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
         updateAvailable: true,
       },
     ]);
@@ -304,6 +314,8 @@ describe("MarketView", () => {
         managed: false,
         installedVersion: "1.0.0",
         latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
         updateAvailable: true,
       },
     ]);
@@ -315,6 +327,147 @@ describe("MarketView", () => {
     expect(await screen.findByRole("button", { name: "Update DSH-better-sidebar" })).toBeInTheDocument();
     // 更新本身就是重装到 latest，不与 Reinstall 同卡并存
     expect(screen.queryByRole("button", { name: "Reinstall DSH-better-sidebar" })).not.toBeInTheDocument();
+  });
+
+  it("update inside the pnpm minimumReleaseAge window asks before pinning", async () => {
+    // latest 落在 pnpm 供应链保护窗口内：@latest 会被静默拦回旧版（假成功），
+    // 必须先弹确认框，用户知情确认后才钉版本重装
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "dsh-better-sidebar",
+        spec: "npm:dsh-better-sidebar@1.0.0",
+        managed: false,
+        installedVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: true,
+        latestPublishTime: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
+        updateAvailable: true,
+      },
+    ]);
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "installed",
+      receipt: { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@2.0.0" },
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
+    // 点 Update 不直接安装，先出供应链确认框；框内展示版本过渡与发布时长
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("1.0.0 → 2.0.0");
+    expect(dialog.textContent).toContain("5 hours ago");
+    expect(installSpy).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Update anyway" }));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@2.0.0"));
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual(
+        "Plugin updated: dsh-better-sidebar (npm:dsh-better-sidebar@2.0.0)",
+      ),
+    );
+    expect(useAppStore.getState().marketReleaseAgeConfirm).toBeNull();
+  });
+
+  it("dismissing the release-age dialog skips the update and explains the wait", async () => {
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "dsh-better-sidebar",
+        spec: "npm:dsh-better-sidebar@1.0.0",
+        managed: false,
+        installedVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: true,
+        latestPublishTime: null,
+        updateAvailable: true,
+      },
+    ]);
+    const installSpy = vi.spyOn(cmd, "marketInstall");
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(installSpy).not.toHaveBeenCalled();
+    expect(useAppStore.getState().marketReleaseAgeConfirm).toBeNull();
+    expect(useAppStore.getState().toasts.map((t) => t.type)).toContainEqual("info");
+  });
+
+  it("Escape dismisses the release-age dialog as a cancel", async () => {
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "dsh-better-sidebar",
+        spec: "npm:dsh-better-sidebar@1.0.0",
+        managed: false,
+        installedVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: true,
+        latestPublishTime: null,
+        updateAvailable: true,
+      },
+    ]);
+    const installSpy = vi.spyOn(cmd, "marketInstall");
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
+    await screen.findByRole("dialog");
+    // 焦点默认落在取消（安全默认）；Esc 等价取消：不安装、挂起清空
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(installSpy).not.toHaveBeenCalled();
+    expect(useAppStore.getState().marketReleaseAgeConfirm).toBeNull();
+  });
+
+  it("update all pauses at a release-age-windowed plugin and resumes it pinned after confirm", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", managed: false },
+      { name: "dsh-context", spec: "npm:dsh-context@0.41.0", managed: false },
+    ]);
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "dsh-better-sidebar",
+        spec: "npm:dsh-better-sidebar@1.0.0",
+        managed: false,
+        installedVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
+        updateAvailable: true,
+      },
+      {
+        name: "dsh-context",
+        spec: "npm:dsh-context@0.41.0",
+        managed: false,
+        installedVersion: "0.41.0",
+        latestVersion: "0.41.3",
+        latestInReleaseAgeWindow: true,
+        latestPublishTime: null,
+        updateAvailable: true,
+      },
+    ]);
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "installed",
+      receipt: { name: "dsh-context", spec: "npm:dsh-context@0.41.3" },
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    await user.click(await screen.findByRole("button", { name: "Update all (2)" }));
+    // 窗口外先正常更，撞上窗口内即停批弹框（与审批挂起同一模式）
+    await screen.findByRole("dialog");
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
+    expect(installSpy).not.toHaveBeenCalledWith("dsh-context@latest");
+
+    await user.click(screen.getByRole("button", { name: "Update anyway" }));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-context@0.41.3"));
   });
 
   it("favorites tab lists starred plugins in favorite order and allows unstarring", async () => {
@@ -507,6 +660,26 @@ describe("MarketView", () => {
     await user.click(screen.getByText("Cancel"));
     expect(useAppStore.getState().marketPendingApproval).toBeNull();
     expect(useAppStore.getState().toasts.map((t) => t.type)).toContain("info");
+    expect(cmd.marketApproveBuilds).not.toHaveBeenCalled();
+  });
+
+  it("Escape dismisses the build approval dialog and cancel is the focused default", async () => {
+    useAppStore.setState({
+      marketPendingApproval: {
+        specifier: "dsh-better-sidebar@latest",
+        label: "DSH-better-sidebar",
+        packages: ["node-pty"],
+        workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
+      },
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+
+    await screen.findByRole("dialog");
+    // 放行 = 允许任意代码执行，焦点默认落在取消（安全默认）；Esc 等价取消
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(useAppStore.getState().marketPendingApproval).toBeNull();
     expect(cmd.marketApproveBuilds).not.toHaveBeenCalled();
   });
 

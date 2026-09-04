@@ -717,6 +717,63 @@
     }
 
     #[test]
+    fn release_age_policy_from_yaml_reads_window_and_excludes() {
+        use super::market::{DEFAULT_MINIMUM_RELEASE_AGE_MINUTES, release_age_policy_from_yaml};
+        // 键缺席 → pnpm 11 内置默认 24h，无豁免
+        assert_eq!(release_age_policy_from_yaml("packages:\n  - .\n"), (DEFAULT_MINIMUM_RELEASE_AGE_MINUTES, vec![]));
+        // 显式配置覆盖默认；exclude 列表原样读出
+        let (minutes, excludes) = release_age_policy_from_yaml(
+            "minimumReleaseAge: 60\nminimumReleaseAgeExclude:\n  - dsh-better-sidebar@0.18.0\n  - '@scope/pkg@1.0.0'\n",
+        );
+        assert_eq!(minutes, 60);
+        assert_eq!(excludes, vec!["dsh-better-sidebar@0.18.0", "@scope/pkg@1.0.0"]);
+        // 显式 0 = 关闭窗口；损坏 yaml 回退内置默认
+        assert_eq!(release_age_policy_from_yaml("minimumReleaseAge: 0\n").0, 0);
+        assert_eq!(release_age_policy_from_yaml("{{{").0, DEFAULT_MINIMUM_RELEASE_AGE_MINUTES);
+    }
+
+    #[test]
+    fn release_age_excluded_matches_exact_or_bare_name() {
+        use super::market::release_age_excluded;
+        let excludes = vec!["dsh-better-sidebar@0.18.0".to_string(), "@scope/pkg".to_string()];
+        assert!(release_age_excluded(&excludes, "dsh-better-sidebar", "0.18.0"));
+        assert!(release_age_excluded(&excludes, "@scope/pkg", "9.9.9")); // 裸名命中任意版本
+        assert!(!release_age_excluded(&excludes, "dsh-better-sidebar", "0.19.0"));
+        assert!(!release_age_excluded(&excludes, "other", "0.18.0"));
+        assert!(!release_age_excluded(&[], "dsh-better-sidebar", "0.18.0"));
+    }
+
+    #[test]
+    fn in_release_age_window_judges_publish_freshness() {
+        use super::market::in_release_age_window;
+        use time::format_description::well_known::Rfc3339;
+        let now = time::OffsetDateTime::parse("2026-09-04T12:00:00Z", &Rfc3339).unwrap();
+        let fresh = Some("2026-09-04T10:00:00Z"); // 2h 前，窗口内
+        let mature = Some("2026-09-03T10:00:00Z"); // 26h 前，窗口外
+        assert!(in_release_age_window(fresh, now, 24 * 60, false));
+        assert!(!in_release_age_window(mature, now, 24 * 60, false));
+        // 显式 0 = 关闭供应链窗口；已豁免版本不在窗口
+        assert!(!in_release_age_window(fresh, now, 0, false));
+        assert!(!in_release_age_window(fresh, now, 24 * 60, true));
+        // 发布时间缺失/不可解析 → 按窗口内（钉版本对成熟版本同样正确，反向才假成功）
+        assert!(in_release_age_window(None, now, 24 * 60, false));
+        assert!(in_release_age_window(Some("not-a-time"), now, 24 * 60, false));
+        // 自定义窗口生效
+        assert!(!in_release_age_window(fresh, now, 60, false));
+    }
+
+    #[test]
+    fn publish_time_from_packument_reads_time_map() {
+        use super::market::publish_time_from_packument;
+        let raw = r#"{"name":"x","dist-tags":{"latest":"0.3.14"},"time":{"0.3.13":"2026-09-03T00:19:01.565Z","0.3.14":"2026-09-03T23:19:35.082Z","modified":"2026-09-03T23:19:35.350Z"}}"#;
+        assert_eq!(publish_time_from_packument(raw, "0.3.14").as_deref(), Some("2026-09-03T23:19:35.082Z"));
+        // 版本缺席 / time 缺席 / 非 JSON → None
+        assert_eq!(publish_time_from_packument(raw, "9.9.9"), None);
+        assert_eq!(publish_time_from_packument(r#"{"name":"x"}"#, "0.3.14"), None);
+        assert_eq!(publish_time_from_packument("not json", "0.3.14"), None);
+    }
+
+    #[test]
     fn desktop_entry_quotes_script_path() {
         // XDG autostart 的 Exec 由桌面环境按 GLib 规则解析：单引号引路径
         assert_eq!(
@@ -1309,6 +1366,21 @@
         // 无关失败不误判；脏数据（含空格）被白名单过滤
         assert!(blocked_build_packages("boom").is_empty());
         assert!(blocked_build_packages("Ignored build scripts: bad name@1.0").is_empty());
+    }
+
+    #[test]
+    fn failure_raw_merges_stdout_and_stderr_for_fingerprint_detection() {
+        use super::market::{blocked_build_packages, failure_raw};
+        // 实机回归（pnpm 11.25）：ERR_PNPM_IGNORED_BUILDS 打在 stdout，
+        // stderr 只有 dsh 的转发提示；单看 stderr 审批对话框永不弹出
+        let stdout = "Progress: resolved 178, reused 166, added 164, done\n[ERR_PNPM_IGNORED_BUILDS] Ignored build scripts: node-pty@1.1.0\nRun \"pnpm approve-builds\" to pick which dependencies should be allowed to run scripts.";
+        let stderr = "dsh: pnpm failed in profile directory C:\\Users\\x\\.dsh\\profiles\\web";
+        let raw = failure_raw(stdout, stderr, "add");
+        assert_eq!(blocked_build_packages(&raw), vec!["node-pty"]);
+        // stderr 为空时不能丢 stdout；双空兜底通用事实
+        assert_eq!(blocked_build_packages(&failure_raw(stdout, "", "add")), vec!["node-pty"]);
+        assert_eq!(failure_raw("", "", "add"), "dsh plugin add failed");
+        assert_eq!(failure_raw("", "", "remove"), "dsh plugin remove failed");
     }
 
     #[test]

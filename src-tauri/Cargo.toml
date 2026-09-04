@@ -28,8 +28,8 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 tokio = { version = "1", features = ["full"] }
 log = "0.4"
 sys-locale = "0.3"
-# 审计台账时间戳（RFC3339）
-time = { version = "0.3", features = ["formatting"] }
+# 审计台账时间戳（RFC3339）；parsing 供更新检测解析 registry 发布时间（minimumReleaseAge 窗口判定）
+time = { version = "0.3", features = ["formatting", "parsing"] }
 # 内置插件 tarball 装机后 sha256 复核
 sha2 = "0.10"
 # dsh web 启动等待：unix 侧 kill(pid,0) 探活（进程已死则提前带日志报错，不干等超时）

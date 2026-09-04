@@ -390,6 +390,15 @@ pub struct PluginUpdateInfo {
     pub installed_version: Option<String>,
     /// registry latest；该包查询失败为 None
     pub latest_version: Option<String>,
+    /// latest 是否落在 pnpm minimumReleaseAge 保护窗口内（pnpm 11 内置默认
+    /// 24h）：窗口内 @latest 会被静默解析回旧版、退出码仍为 0（假成功），
+    /// 前端据此先弹供应链确认框，用户知情确认后才钉版本重装
+    pub latest_in_release_age_window: bool,
+    /// latestVersion 的发布时间（RFC3339，来自完整 packument 的 time 字段，
+    /// 仅对确有更新的包多付一次 HTTP 取得）。供应链确认框据此展示"发布
+    /// 多久了"——新鲜度是用户"等窗口过期还是现在就装"决策的核心事实；
+    /// packument 不可得（网络失败等）为 None，前端回退"刚发布"模糊文案
+    pub latest_publish_time: Option<String>,
     pub update_available: bool,
 }
 
@@ -447,7 +456,7 @@ pub(crate) fn installed_version_from_disk(profile_dir: &std::path::Path, name: &
 /// 可检形态（去掉 `npm:` 前缀后不含协议 `:`，与 installed_version_from_spec
 /// 判据一致）先读磁盘事实、磁盘不可得回退 spec 精确版本；协议形态
 /// （github:/file:/git+https: 等）不来自 registry，恒 None——其版本号多为
-/// 0.0.0 占位，误检会诱导 name@latest 重装覆盖掉 git 源。profile_dir 不可得
+/// 0.0.0 占位，误检会诱导按 registry 名重装覆盖掉 git 源。profile_dir 不可得
 /// （极端环境）时按 None 传入，整体回退纯 spec 解析的现状行为
 pub(crate) fn installed_version_for_update(
     profile_dir: Option<&std::path::Path>,
@@ -492,13 +501,106 @@ fn registry_latest(name: &str) -> Result<String, String> {
         .ok_or_else(|| keyf("Cannot parse npm registry response for {name}", &[("name", name.to_string())]))
 }
 
+/// pnpm 11 内置的 minimumReleaseAge 默认窗口（分钟）。profile yaml 未显式
+/// 配置时 pnpm 按此生效（实测 config get 显示 undefined，解析仍拦 4h 前
+/// 发布的新版）
+pub(crate) const DEFAULT_MINIMUM_RELEASE_AGE_MINUTES: u64 = 24 * 60;
+
+/// profile pnpm-workspace.yaml 的 minimumReleaseAge 策略：(窗口分钟数,
+/// exclude 列表)。键缺席 = 内置默认；显式 0 = 关闭供应链窗口。文件损坏
+/// 回退内置默认——窗口判定是提示性增强，不放大为检测失败
+pub(crate) fn release_age_policy_from_yaml(raw: &str) -> (u64, Vec<String>) {
+    let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(raw) else {
+        return (DEFAULT_MINIMUM_RELEASE_AGE_MINUTES, Vec::new());
+    };
+    let minutes = v
+        .get("minimumReleaseAge")
+        .and_then(serde_yaml::Value::as_u64)
+        .unwrap_or(DEFAULT_MINIMUM_RELEASE_AGE_MINUTES);
+    let excludes = v
+        .get("minimumReleaseAgeExclude")
+        .and_then(serde_yaml::Value::as_sequence)
+        .map(|s| s.iter().filter_map(|e| e.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    (minutes, excludes)
+}
+
+/// minimumReleaseAgeExclude 命中判定：`name@version` 精确命中或裸 `name`
+/// 命中该包全版本（pnpm 11 起裸名规则一致匹配任意版本）
+pub(crate) fn release_age_excluded(excludes: &[String], name: &str, version: &str) -> bool {
+    excludes.iter().any(|e| e == name || *e == format!("{name}@{version}"))
+}
+
+/// latest 是否落在 minimumReleaseAge 窗口内（纯函数，IO 全在调用方）：
+/// 发布时间距 now 不足窗口分钟数即窗口内。窗口 0（显式关闭）与已豁免直接
+/// false；发布时间缺失/不可解析按窗口内——安全方向：钉版本对成熟版本同样
+/// 正确（pnpm 原样安装），反向才会复现 @latest 静默解析回旧版的假成功
+pub(crate) fn in_release_age_window(
+    publish_time: Option<&str>,
+    now: time::OffsetDateTime,
+    minimum_age_minutes: u64,
+    excluded: bool,
+) -> bool {
+    if minimum_age_minutes == 0 || excluded {
+        return false;
+    }
+    let Some(raw) = publish_time else { return true };
+    let Ok(published) = time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339) else {
+        return true;
+    };
+    now - published < time::Duration::minutes(minimum_age_minutes as i64)
+}
+
+/// 完整 packument → 指定版本的发布时间（RFC3339 原样返回）。time 只存在于
+/// 完整 packument（/latest 端点与精简 metadata 都没有），故仅在确有更新时
+/// 才多付这一次 HTTP
+pub(crate) fn publish_time_from_packument(raw: &str, version: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()?
+        .get("time")?
+        .get(version)?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// 单包发布时间查询：GET {registry}/{name} 完整 packument → time[version]。
+/// 失败返回 None（调用方按窗口内处理——钉版本对成熟版本同样正确）
+fn registry_publish_time(name: &str, version: &str) -> Option<String> {
+    let url = format!("https://registry.npmjs.org/{name}");
+    let resp = reqwest::blocking::Client::builder()
+        .timeout(UPDATE_CHECK_TIMEOUT)
+        .user_agent(concat!("dsh-pro-max/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .ok()?
+        .get(&url)
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let raw = resp.text().ok()?;
+    publish_time_from_packument(&raw, version)
+}
+
+/// 当前 profile 的 minimumReleaseAge 策略（读 pnpm-workspace.yaml）；路径/
+/// 读取失败回退内置默认。只覆盖 profile 级配置与内置默认，全局 config.yaml
+/// 覆盖是边缘形态，不在此展开
+fn release_age_policy() -> (u64, Vec<String>) {
+    workspace_yaml_path()
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|raw| release_age_policy_from_yaml(&raw))
+        .unwrap_or_else(|| (DEFAULT_MINIMUM_RELEASE_AGE_MINUTES, Vec::new()))
+}
+
 /// 更新检测执行体（market_check_updates 的阻塞部分）：逐包串行查 registry
 /// （已装列表是个位数，并发无收益）。实际版本由 installed_version_for_update
 /// 判定：磁盘事实优先（范围 spec `^x.y.z` 即此路径参与检测），spec 精确版本
-/// 兜底。部分包查询失败不放大为整体失败（如实无 latest、不出更新按钮）；
-/// 全部可检包都失败才报错——那是网络问题的信号
-// 版本来源改版（Bug 修复）：pnpm 落盘的范围 spec 不再把 npm 形态插件
-// 排除出检测。—— Eric Tao, 2026-09-04 09:10:00
+/// 兜底；latest 落在 pnpm minimumReleaseAge 窗口内的额外标记
+/// latest_in_release_age_window 并携带 latest_publish_time（窗口内
+/// @latest 会被静默拦回旧版，前端据此先弹确认框并展示发布新鲜度）。部分
+/// 包查询失败不放大为整体失败（如实无 latest、不出更新
+/// 按钮）；全部可检包都失败才报错——那是网络问题的信号
 fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
     let list = installed_plugins()?;
     // 磁盘事实的读取根 = profile 目录（package.json 的 parent）；获取失败
@@ -516,11 +618,17 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
             },
             update_available: false,
             latest_version: None,
+            latest_in_release_age_window: false,
+            latest_publish_time: None,
             name: p.name,
             spec: p.spec,
             managed: p.managed,
         })
         .collect();
+    // 窗口判定的事实源：策略（profile yaml + 内置默认）读一次，发布时间只对
+    // 确有更新的包多付一次 HTTP
+    let (age_minutes, age_excludes) = release_age_policy();
+    let now = time::OffsetDateTime::now_utc();
     let mut checked = 0usize;
     let mut failed = 0usize;
     let mut first_error: Option<String> = None;
@@ -529,6 +637,16 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
         match registry_latest(&info.name) {
             Ok(latest) => {
                 info.update_available = is_newer(&latest, info.installed_version.as_deref().unwrap_or_default());
+                if info.update_available {
+                    let publish = registry_publish_time(&info.name, &latest);
+                    info.latest_in_release_age_window = in_release_age_window(
+                        publish.as_deref(),
+                        now,
+                        age_minutes,
+                        release_age_excluded(&age_excludes, &info.name, &latest),
+                    );
+                    info.latest_publish_time = publish;
+                }
                 info.latest_version = Some(latest);
             }
             Err(e) => {
@@ -714,9 +832,24 @@ pub struct MarketInstallLogEvent {
     pub line: String,
 }
 
+/// 失败输出的原始事实拼装（纯函数，便于测试）：pnpm 11 把
+/// ERR_PNPM_IGNORED_BUILDS 等关键错误打到 stdout，stderr 只剩 dsh 的转发
+/// 提示甚至为空——单看 stderr 会让 blocked_build_packages /
+/// install_failure_message 的指纹检测漏检（审批对话框不弹的直接原因）。
+/// stderr 在前（摘要性错误通常在这），stdout 在后；双空兜底一行通用事实
+pub(crate) fn failure_raw(stdout: &str, stderr: &str, action: &str) -> String {
+    let merged = [stderr, stdout]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if merged.is_empty() { format!("dsh plugin {action} failed") } else { merged }
+}
+
 /// 执行 dsh plugin 子命令；每行输出经 on_line 实时回调（首行是执行命令本身，
 /// 与实际 argv 同一拼装），Err 的 (raw, display) 中 raw 是本地化前的原始
-/// 错误（审计台账的可复述事实，不随界面语言漂移），display 是加工后的用户文案
+/// 输出（stdout+stderr 合并，见 failure_raw；审计台账的可复述事实，不随
+/// 界面语言漂移），display 是加工后的用户文案
 fn run_plugin_cmd(
     action: &str,
     arg: &str,
@@ -737,12 +870,8 @@ fn run_plugin_cmd(
     on_line(&format!("$ dsh {}", argv.join(" ")));
     match run_capture_lines(&dsh, &argv, on_line) {
         Ok((_, _, true)) => Ok(()),
-        Ok((_, err, false)) => {
-            let raw = if err.is_empty() {
-                format!("dsh plugin {action} failed")
-            } else {
-                err
-            };
+        Ok((out, err, false)) => {
+            let raw = failure_raw(&out, &err, action);
             crate::logging::error(&format!("[market] plugin {action} 失败"), &raw);
             let display = install_failure_message(action, &raw);
             Err((raw, display))
@@ -754,12 +883,13 @@ fn run_plugin_cmd(
     }
 }
 
-/// 从 pnpm stderr 提取被拦构建脚本的包名。pnpm 10 与 11/12 的错误形态不同
-/// 但都含 `Ignored build scripts:` 行（逗号分隔、带版本号）；scope 包剥版本
+/// 从 pnpm/dsh 失败输出（stdout+stderr 合并）提取被拦构建脚本的包名。
+/// pnpm 10 与 11/12 的错误形态不同但都含 `Ignored build scripts:` 行
+/// （逗号分隔、带版本号；11.25 起该行落在 stdout）；scope 包剥版本
 /// 用 rfind 保护 `@scope` 前缀。解析不出的脏数据被 valid_identifier 过滤，
 /// 空结果 → 调用方回退普通失败文案
-pub(crate) fn blocked_build_packages(stderr: &str) -> Vec<String> {
-    let Some(line) = stderr.lines().find(|l| l.contains("Ignored build scripts:")) else {
+pub(crate) fn blocked_build_packages(output: &str) -> Vec<String> {
+    let Some(line) = output.lines().find(|l| l.contains("Ignored build scripts:")) else {
         return Vec::new();
     };
     let list = line.split("Ignored build scripts:").nth(1).unwrap_or_default();
@@ -849,7 +979,7 @@ pub(crate) fn merge_allow_builds(path: &std::path::Path, packages: &[String]) ->
 // ============ 审计台账 ============
 
 /// 台账行（JSONL 单行）：ts/action/identifier/result/error/两个版本号。
-/// error 记本地化前的原始错误（stderr 或内部原因），不随界面语言漂移——
+/// error 记本地化前的原始错误（子进程输出或内部原因），不随界面语言漂移——
 /// 台账是"可复述"的最低形态：排错日志 2MB 轮转即删，装了什么必须另有所在
 pub(crate) fn audit_line(action: &str, identifier: &str, dsh_version: Option<String>, error: Option<&str>) -> String {
     serde_json::json!({
@@ -1005,7 +1135,7 @@ pub(crate) fn install_decision(
 
 /// 安装一键候选的执行体（market_install 的阻塞部分）：进程执行与审计台账
 /// 在本壳，判定决策在 install_decision（审批分流附带回执/拦截原始事实，
-/// 台账记原始 stderr，不随判定层的加工漂移）
+/// 台账记原始子进程输出，不随判定层的加工漂移）
 fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcome, String> {
     let before = installed_plugins()
         .ok()
@@ -1114,7 +1244,9 @@ pub async fn market_remove(app: tauri::AppHandle, name: String) -> Result<(), St
 }
 
 /// 更新检测：npm 形态已装插件比对 registry latest（进入市场页自动跑，
-/// 已安装页可手动重跑）。更新本身不在此处——前端以 name@latest 重装，
+/// 已安装页可手动重跑）。更新本身不在此处——前端正常以 name@latest 重装；
+/// latest 落在 pnpm minimumReleaseAge 窗口内（latest_in_release_age_window）
+/// 时先弹供应链确认框，用户确认后才钉版本 name@latestVersion 重装，
 /// 与安装同一 dsh 闸门、审计与审批路径
 #[tauri::command]
 pub async fn market_check_updates() -> Result<Vec<PluginUpdateInfo>, String> {

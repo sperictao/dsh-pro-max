@@ -19,4 +19,17 @@ installedVersion: string | null,
 /**
  * registry latest；该包查询失败为 None
  */
-latestVersion: string | null, updateAvailable: boolean, };
+latestVersion: string | null, 
+/**
+ * latest 是否落在 pnpm minimumReleaseAge 保护窗口内（pnpm 11 内置默认
+ * 24h）：窗口内 @latest 会被静默解析回旧版、退出码仍为 0（假成功），
+ * 前端据此先弹供应链确认框，用户知情确认后才钉版本重装
+ */
+latestInReleaseAgeWindow: boolean, 
+/**
+ * latestVersion 的发布时间（RFC3339，来自完整 packument 的 time 字段，
+ * 仅对确有更新的包多付一次 HTTP 取得）。供应链确认框据此展示"发布
+ * 多久了"——新鲜度是用户"等窗口过期还是现在就装"决策的核心事实；
+ * packument 不可得（网络失败等）为 None，前端回退"刚发布"模糊文案
+ */
+latestPublishTime: string | null, updateAvailable: boolean, };
