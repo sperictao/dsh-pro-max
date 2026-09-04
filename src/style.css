@@ -296,21 +296,30 @@
   width: 88px;
   height: 88px;
 }
+/* 光晕双层：近距高亮晕（清晰描边感）+ 远距柔光（保留悬浮深度） */
 .status-indicator-icon.running {
   background: radial-gradient(circle at 35% 30%, #78f59c 0%, #34c759 58%, #168d34 100%);
-  box-shadow: 0 10px 28px rgba(52, 199, 89, 0.3);
+  box-shadow:
+    0 0 36px rgba(52, 199, 89, 0.55),
+    0 14px 44px rgba(52, 199, 89, 0.32);
 }
 .status-indicator-icon.stopped {
   background: radial-gradient(circle at 35% 30%, #c9c9cf 0%, #8e8e93 60%, #636366 100%);
-  box-shadow: 0 10px 28px rgba(99, 99, 102, 0.24);
+  box-shadow:
+    0 0 36px rgba(99, 99, 102, 0.45),
+    0 14px 44px rgba(99, 99, 102, 0.26);
 }
 .status-indicator-icon.starting {
   background: radial-gradient(circle at 35% 30%, #ffe88a 0%, #ffcc00 58%, #ff9500 100%);
-  box-shadow: 0 10px 28px rgba(255, 149, 0, 0.3);
+  box-shadow:
+    0 0 36px rgba(255, 149, 0, 0.55),
+    0 14px 44px rgba(255, 149, 0, 0.32);
 }
 .status-indicator-icon.failed {
   background: radial-gradient(circle at 35% 30%, #ff8d86 0%, #ff3b30 58%, #c82920 100%);
-  box-shadow: 0 10px 28px rgba(255, 59, 48, 0.3);
+  box-shadow:
+    0 0 36px rgba(255, 59, 48, 0.55),
+    0 14px 44px rgba(255, 59, 48, 0.32);
 }
 .status-indicator-text {
   font-size: 24px;
