@@ -5,7 +5,15 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import { updateSpecifierFor } from "@/shared/store/slices/market";
-import { BTN, BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, INPUT } from "@/shared/lib/ui";
+import {
+  BTN,
+  BTN_DANGER,
+  BTN_OUTLINE,
+  BTN_PRIMARY,
+  BTN_SM,
+  INPUT,
+  INPUT_MONO,
+} from "@/shared/lib/ui";
 import type { InstalledPlugin, MarketCatalog, MarketPlugin, PluginUpdateInfo } from "@/shared/types";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 
@@ -34,6 +42,48 @@ export function specifierToCatalogName(specifier: string): string {
   const i = specifier.lastIndexOf("/");
   const last = i >= 0 ? specifier.slice(i + 1) : specifier;
   return packageNameFromSpecifier(last) ?? last;
+}
+
+/// Rust 侧 valid_identifier 的前端镜像（自定义安装输入时快速反馈；Rust 闸门
+/// 仍是唯一事实来源，这里拦不住的会在安装时报错兜底）：npm/pnpm 合法字符集
+/// + 长度上限 + 无危险前缀/路径段
+function validCustomSpecifier(s: string): boolean {
+  return (
+    !!s &&
+    s.length <= 214 &&
+    /^[A-Za-z0-9@/._#:-]+$/.test(s) &&
+    !/^[-#:.\/]/.test(s) &&
+    !s.includes("..")
+  );
+}
+
+/// 用户输入的地址 → dsh plugin add 认的 specifier；归一不出受支持形态返回
+/// null。受支持：npm 包（pkg、pkg@1.2.3、@scope/pkg@1.2.3、npm:pkg@1.2.3）
+/// 与 GitHub 仓库（github:owner/repo[#ref]）；GitHub 粘贴形态（网页网址、
+/// .git 后缀、/tree/<ref>、git@ SSH、裸 owner/repo——npm 包名不含裸 `/`，
+/// 无歧义）一律归一为显式 github: 前缀，落盘 spec 与日志一眼可读。其余协议
+/// （git+https、gitlab 等）不被 valid_identifier 白名单接受（无 `+`），
+/// 如实拒绝，不假装支持
+export function normalizeCustomSpecifier(input: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  let candidate = raw;
+  const ssh = raw.match(/^git@github\.com:([\w.-]+)\/([\w.-]+?)(?:\.git)?$/i);
+  const url = raw.match(
+    /^https?:\/\/(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/tree\/([\w./-]+))?\/?$/i,
+  );
+  const shorthand = raw.match(/^([\w.-]+)\/([\w.-]+?)(?:\.git)?$/);
+  if (ssh) candidate = `github:${ssh[1]}/${ssh[2]}`;
+  else if (url) candidate = `github:${url[1]}/${url[2]}${url[3] ? `#${url[3]}` : ""}`;
+  else if (shorthand) candidate = `github:${shorthand[1]}/${shorthand[2]}`;
+  if (!validCustomSpecifier(candidate)) return null;
+  if (candidate.startsWith("github:")) {
+    // owner/repo 结构必须完整（ref 可带斜杠，如 #refs/heads/main）
+    return /^([\w.-]+)\/([\w.-]+)(?:#([\w./-]+))?$/.test(candidate.slice(7)) ? candidate : null;
+  }
+  if (candidate.startsWith("npm:")) return candidate.slice(4) ? candidate : null;
+  // 其余带协议的形态不支持（白名单能过的只剩 npm 裸形态）
+  return candidate.includes(":") ? null : candidate;
 }
 
 /// 协议形态安装的已装匹配：specifier 非 npm 形态时按"spec 的仓库标识是
@@ -123,6 +173,7 @@ function DiscoverPane() {
   const [category, setCategory] = useState("");
   const [sort, setSort] = useState<"stars" | "name">("stars");
   const [visible, setVisible] = useState(PAGE_SIZE);
+  const [customOpen, setCustomOpen] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const installedByName = useMemo(() => new Map(installed.map((p) => [p.name, p])), [installed]);
@@ -182,9 +233,19 @@ function DiscoverPane() {
           <h2 className="text-base font-semibold">{t("Plugin Marketplace")}</h2>
           <p className="text-xs opacity-60">{t("Curated catalog by awesome-dsh-plugin.com.")}</p>
         </div>
-        <button className={BTN} id="btn-market-refresh" disabled={catalogBusy} onClick={() => void refreshCatalog(true)}>
-          {catalogBusy ? t("Working…") : t("Refresh")}
-        </button>
+        <div className="flex items-center gap-2">
+          <button className={BTN} id="btn-market-custom-install" onClick={() => setCustomOpen(true)}>
+            {t("Custom install")}
+          </button>
+          <button
+            className={BTN}
+            id="btn-market-refresh"
+            disabled={catalogBusy}
+            onClick={() => void refreshCatalog(true)}
+          >
+            {catalogBusy ? t("Working…") : t("Refresh")}
+          </button>
+        </div>
       </div>
       {/* 快照数据（首屏直读或断网降级）如实标注来源与时点；刷新进行中不标注，
           等结果落定：成功则替换为在线目录，失败则横幅如实说明 */}
@@ -267,6 +328,7 @@ function DiscoverPane() {
         })}
       </div>
       <div ref={sentinelRef} className="h-4" />
+      {customOpen && <CustomInstallDialog onClose={() => setCustomOpen(false)} />}
       {visible < filtered.length && (
         <div className="mt-2 flex justify-center">
           <button className={BTN_SM} onClick={() => setVisible((v) => v + PAGE_SIZE)}>
@@ -921,6 +983,149 @@ function ReleaseAgeConfirmDialog() {
           </button>
           <button className={BTN_PRIMARY} disabled={busy} onClick={() => void confirm()} id="release-age-confirm">
             {busy ? t("Working…") : t("Update anyway")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/// 自定义安装对话框：目录之外的长尾来源（npm 包 / GitHub 仓库）复用目录安装
+/// 同一闸门、审计、构建脚本审批与流式日志管线（installMarketPlugin 全局单飞，
+/// z-40 让审批对话框与 toast 覆于其上）。地址在提交前归一（normalizeCustomSpecifier），
+/// 安装按钮贴输入框右侧，进度明细复用卡片同款 InstallLogView。终态从 store
+/// 推导而非只看本次调用返回：needsApproval 时 installing 已被清空、审批放行
+/// 后的重装又由 approveMarketBuilds 独立跑完（不经本对话框），store 态是
+/// 唯一能同时覆盖三条路径的事实——busy 中 installing 落空即本次结束（有锚定
+/// 错误为 failed，否则 done）；approval 态由审批去留下推
+type CustomInstallPhase = "input" | "busy" | "approval" | "done" | "failed";
+
+function CustomInstallDialog({ onClose }: { onClose: () => void }) {
+  const { t } = useTranslation();
+  const [address, setAddress] = useState("");
+  const [submitted, setSubmitted] = useState<string | null>(null);
+  const [phase, setPhase] = useState<CustomInstallPhase>("input");
+  const installPlugin = useAppStore((s) => s.installMarketPlugin);
+  const installing = useAppStore((s) => s.marketInstalling);
+  const installLog = useAppStore((s) => s.marketInstallLog);
+  const installError = useAppStore((s) => s.marketInstallError);
+  const pendingApproval = useAppStore((s) => s.marketPendingApproval);
+  const dismissError = useAppStore((s) => s.dismissMarketInstallError);
+
+  const candidate = useMemo(() => normalizeCustomSpecifier(address), [address]);
+  const invalid = address.trim() !== "" && candidate === null;
+  const busy = phase === "busy" || phase === "approval";
+
+  useEffect(() => {
+    if (phase === "busy") {
+      if (installing !== null) return;
+      // 被拦构建脚本：转审批对话框（覆盖本框），由其去留推进
+      if (pendingApproval?.specifier === submitted) setPhase("approval");
+      else setPhase(installError?.specifier === submitted ? "failed" : "done");
+    } else if (phase === "approval") {
+      // 放行：重装已由 approveMarketBuilds 启动（installing 重新挂上），
+      // 回 busy 走同一终态推导；拒绝：回输入态（toast 已给出手动路径）
+      if (installing === submitted) setPhase("busy");
+      else if (pendingApproval === null && installing === null) setPhase("input");
+    }
+  }, [phase, installing, pendingApproval, installError, submitted]);
+
+  // spec 缺省取当前输入的归一结果；Retry 固定重跑原 specifier（输入可能已被改掉）
+  const install = (spec: string | null = candidate) => {
+    if (spec === null || installing !== null || busy) return;
+    setSubmitted(spec);
+    setPhase("busy");
+    void installPlugin(spec, spec);
+  };
+
+  // 失败态随对话框关闭一并清（错误 + 留存明细），不留孤儿 store 态；
+  // 与同名 specifier 的目录卡片共用同一安装身份，一并消失是预期行为
+  const close = () => {
+    if (installError?.specifier === submitted) dismissError();
+    onClose();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-6"
+      role="dialog"
+      aria-modal="true"
+      id="custom-install-dialog"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) close();
+      }}
+    >
+      <div className="w-full max-w-lg rounded-lg border border-border bg-background p-5 shadow-lg" aria-busy={busy}>
+        <h3 className="text-sm font-semibold">{t("Install a custom plugin")}</h3>
+        <p className="mt-2 text-xs opacity-70">
+          {t(
+            "Install from outside the curated catalog — same install gate, audit and build-script approval as catalog plugins.",
+          )}
+        </p>
+        <div className="mt-3 flex items-center gap-2">
+          <input
+            className={`${INPUT_MONO} flex-1`}
+            placeholder={t("e.g. github:owner/repo or pkg@1.2.3")}
+            value={address}
+            disabled={busy}
+            onChange={(e) => setAddress(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") install();
+            }}
+            id="custom-install-input"
+          />
+          <button
+            className={BTN_PRIMARY}
+            disabled={busy || candidate === null}
+            onClick={() => install()}
+            id="custom-install-button"
+          >
+            {busy ? t("Working…") : t("Install")}
+          </button>
+        </div>
+        {invalid && (
+          <p className="mt-2 text-xs text-red-600 dark:text-red-400" id="custom-install-invalid">
+            {t(
+              "Unsupported address — use an npm package (pkg@1.2.3), a GitHub repo (github:owner/repo), or a GitHub URL.",
+            )}
+          </p>
+        )}
+        {/* 安装进度/结果区：安装中流式明细、失败原因+留存明细+重试、成功回执；
+            锚定本次提交的 specifier，与目录卡片共用同一 store 通道 */}
+        {(phase === "busy" || phase === "failed") && installLog?.specifier === submitted && (
+          <div className="mt-3">
+            {phase === "failed" && installError && (
+              <p className="mb-2 text-xs text-red-600 dark:text-red-400" id="custom-install-failed">
+                {t("Install failed: {{error}}", { error: installError.message })}
+              </p>
+            )}
+            <InstallLogView log={installLog} failed={phase === "failed"} />
+            {phase === "failed" && (
+              <div className="mt-2 flex justify-end">
+                <button
+                  className={BTN_PRIMARY}
+                  disabled={installing !== null}
+                  onClick={() => submitted && install(submitted)}
+                  id="custom-install-retry"
+                >
+                  {t("Retry")}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {phase === "done" && (
+          <p className="mt-3 flex min-w-0 items-center gap-1.5" id="custom-install-done">
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+              {t("Installed")}
+            </span>
+            <span className="truncate font-mono text-xs opacity-70">{submitted}</span>
+          </p>
+        )}
+        <div className="mt-4 flex justify-end">
+          <button className={BTN_OUTLINE} disabled={busy} onClick={close} id="custom-install-close" autoFocus>
+            {t("Close")}
           </button>
         </div>
       </div>

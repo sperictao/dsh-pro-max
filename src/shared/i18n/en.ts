@@ -60,6 +60,12 @@ export const en = {
   "unknown time": "unknown time",
   "Plugin catalog": "Plugin catalog",
   "Optional https:// or http:// mirror serving the same catalog JSON. Empty = built-in awesome-dsh-plugin.com source; applied on next refresh.": "Optional https:// or http:// mirror serving the same catalog JSON. Empty = built-in awesome-dsh-plugin.com source; applied on next refresh.",
+  "Custom install": "Custom install",
+  "Install a custom plugin": "Install a custom plugin",
+  "Install from outside the curated catalog — same install gate, audit and build-script approval as catalog plugins.": "Install from outside the curated catalog — same install gate, audit and build-script approval as catalog plugins.",
+  "e.g. github:owner/repo or pkg@1.2.3": "e.g. github:owner/repo or pkg@1.2.3",
+  "Unsupported address — use an npm package (pkg@1.2.3), a GitHub repo (github:owner/repo), or a GitHub URL.": "Unsupported address — use an npm package (pkg@1.2.3), a GitHub repo (github:owner/repo), or a GitHub URL.",
+  "Close": "Close",
 
   // —— 模型配置 ——
   "Model Configuration": "Model Configuration",

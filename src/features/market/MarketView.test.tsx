@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +12,13 @@ interface SpecifierVectors {
   specifierToCatalogName: [string, string][];
 }
 const vectors = vectorsJson as SpecifierVectors;
-import { MarketView, packageNameFromSpecifier, protocolInstalledMatch, specifierToCatalogName } from "./MarketView";
+import {
+  MarketView,
+  normalizeCustomSpecifier,
+  packageNameFromSpecifier,
+  protocolInstalledMatch,
+  specifierToCatalogName,
+} from "./MarketView";
 
 const catalog: MarketCatalog = {
   updated: "2026-08-30",
@@ -142,6 +148,40 @@ describe("protocolInstalledMatch", () => {
 
   it("refuses a zero hit", () => {
     expect(protocolInstalledMatch("github:owner/missing", "missing", [])).toBeNull();
+  });
+});
+
+describe("normalizeCustomSpecifier", () => {
+  it("passes npm and explicit protocol forms through", () => {
+    expect(normalizeCustomSpecifier("pkg")).toBe("pkg");
+    expect(normalizeCustomSpecifier("  pkg@1.2.3  ")).toBe("pkg@1.2.3");
+    expect(normalizeCustomSpecifier("@scope/pkg@1.0.0")).toBe("@scope/pkg@1.0.0");
+    expect(normalizeCustomSpecifier("npm:pkg@1.2.3")).toBe("npm:pkg@1.2.3");
+    expect(normalizeCustomSpecifier("github:owner/repo#v1.2.3")).toBe("github:owner/repo#v1.2.3");
+    expect(normalizeCustomSpecifier("github:owner/repo#refs/heads/main")).toBe("github:owner/repo#refs/heads/main");
+  });
+
+  it("normalizes pasted GitHub forms to explicit github: owner/repo", () => {
+    expect(normalizeCustomSpecifier("https://github.com/owner/repo")).toBe("github:owner/repo");
+    expect(normalizeCustomSpecifier("https://www.github.com/owner/repo.git")).toBe("github:owner/repo");
+    expect(normalizeCustomSpecifier("http://github.com/owner/repo/")).toBe("github:owner/repo");
+    expect(normalizeCustomSpecifier("https://github.com/owner/repo/tree/v1.2.3")).toBe("github:owner/repo#v1.2.3");
+    expect(normalizeCustomSpecifier("git@github.com:owner/repo.git")).toBe("github:owner/repo");
+    // 裸 owner/repo 只能是 GitHub 简写（npm 包名不含裸 /），归一为显式形态
+    expect(normalizeCustomSpecifier("owner/repo")).toBe("github:owner/repo");
+  });
+
+  it("rejects unsupported shapes honestly", () => {
+    expect(normalizeCustomSpecifier("")).toBeNull();
+    expect(normalizeCustomSpecifier("   ")).toBeNull();
+    // git+https 带 `+`，过不了 Rust 侧 valid_identifier 白名单
+    expect(normalizeCustomSpecifier("git+https://github.com/owner/repo")).toBeNull();
+    expect(normalizeCustomSpecifier("https://gitlab.com/owner/repo")).toBeNull();
+    expect(normalizeCustomSpecifier("file:/x/y.tgz")).toBeNull();
+    expect(normalizeCustomSpecifier("github:owner")).toBeNull();
+    expect(normalizeCustomSpecifier("github:o#x/r")).toBeNull();
+    // `^` 范围形态不在白名单字符集内，如实拒绝
+    expect(normalizeCustomSpecifier("pkg@^1.2.3")).toBeNull();
   });
 });
 
@@ -806,5 +846,79 @@ describe("MarketView", () => {
     expect(useAppStore.getState().marketInstallError).toBeNull();
     expect(useAppStore.getState().marketInstallLog).toBeNull();
     expect(await screen.findByRole("button", { name: "Install" })).toBeInTheDocument();
+  });
+
+  it("custom install normalizes pasted GitHub URLs and streams progress into the dialog", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    useAppStore.setState({ marketInstalled: [] });
+    let resolveInstall: (v: InstallOutcome) => void = () => {};
+    vi.spyOn(cmd, "marketInstall").mockReturnValue(
+      new Promise<InstallOutcome>((resolve) => {
+        resolveInstall = resolve;
+      }),
+    );
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Custom install" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(screen.getByPlaceholderText("e.g. github:owner/repo or pkg@1.2.3"), "https://github.com/owner/repo");
+    await user.click(within(dialog).getByRole("button", { name: "Install" }));
+    // 粘贴的 GitHub 网址归一为 github: 形态后才进安装闸门（与目录安装同一命令通道）
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("github:owner/repo"));
+    // 流式进度明细与卡片同款：首行命令 + pnpm 输出实时上屏
+    useAppStore.getState().appendMarketInstallLog({ specifier: "github:owner/repo", line: "Packages: +1" });
+    expect(await within(dialog).findByText("Packages: +1")).toBeInTheDocument();
+    // 全局单飞：安装挂起期间对话框按钮 Working… 且禁用
+    expect(within(dialog).getByRole("button", { name: "Working…" })).toBeDisabled();
+
+    resolveInstall({ status: "installed", receipt: { name: "dsh-repo", spec: "github:owner/repo" } });
+    expect(await within(dialog).findByText("Installed")).toBeInTheDocument();
+    expect(within(dialog).getByText("github:owner/repo")).toBeInTheDocument();
+  });
+
+  it("custom install validates the address before touching the install gate", async () => {
+    vi.spyOn(cmd, "marketInstall");
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Custom install" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(
+      screen.getByPlaceholderText("e.g. github:owner/repo or pkg@1.2.3"),
+      "https://gitlab.com/owner/repo",
+    );
+    // 不支持协议如实就地报错，安装按钮禁用，闸门未被触碰
+    expect(screen.getByText(/Unsupported address/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Install" })).toBeDisabled();
+    expect(cmd.marketInstall).not.toHaveBeenCalled();
+  });
+
+  it("custom install keeps the failure in the dialog and retries the same specifier", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    useAppStore.setState({ marketInstalled: [] });
+    const installSpy = vi
+      .spyOn(cmd, "marketInstall")
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({ status: "installed", receipt: { name: "dsh-repo", spec: "github:owner/repo" } });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Custom install" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(screen.getByPlaceholderText("e.g. github:owner/repo or pkg@1.2.3"), "owner/repo");
+    await user.click(within(dialog).getByRole("button", { name: "Install" }));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("github:owner/repo"));
+    // 失败态持久在对话框内：原因 + 留存明细
+    expect(await screen.findByText("Install failed: Error: network down")).toBeInTheDocument();
+    expect(screen.getByText("$ dsh plugin --profile web add github:owner/repo")).toBeInTheDocument();
+
+    // Retry 固定重跑原 specifier（输入可能已被改掉）
+    await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(installSpy).toHaveBeenNthCalledWith(2, "github:owner/repo"));
+    expect(await within(dialog).findByText("Installed")).toBeInTheDocument();
   });
 });

@@ -62,6 +62,12 @@ export const zhCN: Record<I18nKey, string> = {
   "unknown time": "时间未知",
   "Plugin catalog": "插件目录源",
   "Optional https:// or http:// mirror serving the same catalog JSON. Empty = built-in awesome-dsh-plugin.com source; applied on next refresh.": "可选的目录镜像地址（https:// 或 http://，需提供同一份目录 JSON 契约）。留空使用内置 awesome-dsh-plugin.com 源，下次刷新生效。",
+  "Custom install": "自定义安装",
+  "Install a custom plugin": "安装自定义插件",
+  "Install from outside the curated catalog — same install gate, audit and build-script approval as catalog plugins.": "安装精选目录之外的插件——与目录插件同一安装闸门、审计与构建脚本审批流程。",
+  "e.g. github:owner/repo or pkg@1.2.3": "例如 github:owner/repo 或 pkg@1.2.3",
+  "Unsupported address — use an npm package (pkg@1.2.3), a GitHub repo (github:owner/repo), or a GitHub URL.": "地址不支持——请使用 npm 包（pkg@1.2.3）、GitHub 仓库（github:owner/repo）或 GitHub 网址。",
+  "Close": "关闭",
 
   // —— 模型配置 ——
   "Model Configuration": "模型配置",
