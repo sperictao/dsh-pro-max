@@ -57,7 +57,7 @@
 - **插件审计台账（Plugin Audit Log）** — 市场视图安装/移除操作的 append-only JSONL（`plugin-audit.jsonl`，app log dir，含时间/动作/标识符/结果/两侧版本号，error 记本地化前的原始错误）；受管授权插件由 Launcher 修复/卸载流程管理，不走市场路径、不入台账；尽力而为写入，失败不回滚操作。
 - **受管插件（Managed Plugin）** — Launcher 自装的授权插件（`@dsh-external/*`），在已装列表中标记但不提供移除按钮，由 Launcher 的修复/卸载流程管理。
 - **已装匹配（Installed Match）** — npm 形态 specifier 的包名部分与 web profile `package.json` dependencies 键比对；带协议前缀的形态（`github:`、`npm:`、`file:` 等）安装后的键名无法从目录预知，不参与匹配。
-- **更新检测（Update Check）** — 已安装页对 npm 形态安装的非受管插件自动比对 registry latest（进入市场页即查，可手动重跑）：spec 能解析出具体版本（`pkg@1.2.3` / `npm:pkg@1.0.0` / 裸版本；范围 `^ ~` 与协议形态不可检）即逐包查 `registry.npmjs.org/<name>/latest` 语义版本比对，部分包查询失败不放大为整体失败（如实无 latest、不出按钮），全部可检包都失败才报错。更新动作 = 以 `name@latest` 重装，与一键安装同一 dsh 闸门、策略、审计与构建脚本审批路径；批量更新顺序执行（共享同一 profile，pnpm 并发会争锁），中途撞上审批挂起即停，剩余项待放行后重试。
+- **更新检测（Update Check）** — 已安装页对 npm 形态安装的非受管插件自动比对 registry latest（进入市场页即查，可手动重跑）：当前版本优先读磁盘事实（profile `node_modules/<name>/package.json` 的 version，范围 spec `^ ~` 即靠它参与检测），磁盘不可得回退 spec 精确版本（`pkg@1.2.3` / `npm:pkg@1.0.0` / 裸版本）；协议形态（`github:` `file:` 等）不来自 registry 恒不检。逐包查 `registry.npmjs.org/<name>/latest` 语义版本比对，部分包查询失败不放大为整体失败（如实无 latest、不出按钮），全部可检包都失败才报错。更新动作 = 以 `name@latest` 重装，与一键安装同一 dsh 闸门、策略、审计与构建脚本审批路径；批量更新顺序执行（共享同一 profile，pnpm 并发会争锁），中途撞上审批挂起即停，剩余项待放行后重试。
 
 ### 语义边界
 
