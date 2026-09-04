@@ -580,6 +580,132 @@
     }
 
     #[test]
+    fn installed_version_from_disk_reads_node_modules_facts() {
+        use super::market::installed_version_from_disk;
+        // 回归（市场更新检测 Bug）：pnpm 落盘的依赖 spec 常是 ^x.y.z 范围
+        // 形态，installed_version_from_spec 对其返回 None，npm 形态插件整体
+        // 脱离更新检测。磁盘上的实际版本（node_modules 内 package.json）是
+        // 现成事实，必须能读出来
+        let dir = std::env::temp_dir().join(format!("dsh-pro-max-disk-ver-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let nm = dir.join("node_modules");
+        // 普通包
+        std::fs::create_dir_all(nm.join("dsh-context")).unwrap();
+        std::fs::write(
+            nm.join("dsh-context").join("package.json"),
+            r#"{"name":"dsh-context","version":"0.38.5"}"#,
+        )
+        .unwrap();
+        assert_eq!(installed_version_from_disk(&dir, "dsh-context").as_deref(), Some("0.38.5"));
+        // scope 包：@scope/pkg 拼成 node_modules/@scope/pkg 自然子路径
+        std::fs::create_dir_all(nm.join("@scope").join("pkg")).unwrap();
+        std::fs::write(nm.join("@scope").join("pkg").join("package.json"), r#"{"version":"1.2.3"}"#).unwrap();
+        assert_eq!(installed_version_from_disk(&dir, "@scope/pkg").as_deref(), Some("1.2.3"));
+        // 文件缺失
+        assert_eq!(installed_version_from_disk(&dir, "not-installed"), None);
+        // 坏 JSON
+        std::fs::create_dir_all(nm.join("broken")).unwrap();
+        std::fs::write(nm.join("broken").join("package.json"), "not json").unwrap();
+        assert_eq!(installed_version_from_disk(&dir, "broken"), None);
+        // version 字段缺失 / 非语义版本
+        std::fs::create_dir_all(nm.join("no-version")).unwrap();
+        std::fs::write(nm.join("no-version").join("package.json"), r#"{"name":"x"}"#).unwrap();
+        assert_eq!(installed_version_from_disk(&dir, "no-version"), None);
+        std::fs::create_dir_all(nm.join("bad-version")).unwrap();
+        std::fs::write(nm.join("bad-version").join("package.json"), r#"{"version":"latest"}"#).unwrap();
+        assert_eq!(installed_version_from_disk(&dir, "bad-version"), None);
+        // `..` 注入名：路径拼接防纵深（上游 valid_identifier 已挡，不信任调用方）
+        assert_eq!(installed_version_from_disk(&dir, "../escape"), None);
+        assert_eq!(installed_version_from_disk(&dir, "..\\escape"), None);
+        assert_eq!(installed_version_from_disk(&dir, ""), None);
+        // 绝对路径 / 盘符注入：Path::join 遇绝对路径组件会整体替换基路径，
+        // Windows 下 `C:/evil`、`\evil`、`/evil` 都会逃出 profile 目录，
+        // 四条校验（字符白名单挡 `:` 与 `\`，首字符挡 `/`）必须全拦
+        assert_eq!(installed_version_from_disk(&dir, "C:/evil"), None);
+        assert_eq!(installed_version_from_disk(&dir, r"C:\evil"), None);
+        assert_eq!(installed_version_from_disk(&dir, "/evil"), None);
+        assert_eq!(installed_version_from_disk(&dir, "C:evil"), None);
+        // 合法包名回归：点划下划线与 scope 形态均正常放行
+        std::fs::create_dir_all(nm.join("pkg")).unwrap();
+        std::fs::write(nm.join("pkg").join("package.json"), r#"{"version":"1.0.0"}"#).unwrap();
+        std::fs::create_dir_all(nm.join("pkg.name-1_x")).unwrap();
+        std::fs::write(nm.join("pkg.name-1_x").join("package.json"), r#"{"version":"2.0.0"}"#).unwrap();
+        std::fs::create_dir_all(nm.join("@scope").join("pkg.name-1_x")).unwrap();
+        std::fs::write(nm.join("@scope").join("pkg.name-1_x").join("package.json"), r#"{"version":"3.0.0"}"#).unwrap();
+        assert_eq!(installed_version_from_disk(&dir, "pkg").as_deref(), Some("1.0.0"));
+        assert_eq!(installed_version_from_disk(&dir, "pkg.name-1_x").as_deref(), Some("2.0.0"));
+        assert_eq!(installed_version_from_disk(&dir, "@scope/pkg.name-1_x").as_deref(), Some("3.0.0"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn installed_version_for_update_prefers_disk_over_spec() {
+        use super::market::installed_version_for_update;
+        // check_updates_once 的版本决策纯函数化：磁盘事实优先，spec 精确版本兜底
+        let dir =
+            std::env::temp_dir().join(format!("dsh-pro-max-disk-ver-decision-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let nm = dir.join("node_modules");
+        std::fs::create_dir_all(nm.join("dsh-context")).unwrap();
+        std::fs::write(nm.join("dsh-context").join("package.json"), r#"{"version":"0.38.5"}"#).unwrap();
+        // 范围 spec（pnpm 落盘形态）：磁盘事实参与检测——修复前这里恒 None
+        assert_eq!(
+            installed_version_for_update(Some(&dir), "dsh-context", "^0.38.5").as_deref(),
+            Some("0.38.5")
+        );
+        // 磁盘不可得（profile 目录拿不到 / 包不在盘上）回退 spec 精确版本
+        assert_eq!(
+            installed_version_for_update(None, "dsh-context", "npm:dsh-context@0.38.4").as_deref(),
+            Some("0.38.4")
+        );
+        assert_eq!(installed_version_for_update(Some(&dir), "absent", "1.0.0").as_deref(), Some("1.0.0"));
+        // 协议形态不检：不来自 registry，其版本号多为 0.0.0 占位，
+        // 误检会诱导 name@latest 重装覆盖掉 git 源
+        assert_eq!(installed_version_for_update(Some(&dir), "dsh-context", "github:owner/repo#main"), None);
+        assert_eq!(installed_version_for_update(Some(&dir), "dsh-context", "file:/x/y.tgz"), None);
+        assert_eq!(installed_version_for_update(Some(&dir), "dsh-context", "git+https://x/y.git"), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn installed_version_from_disk_edge_shapes_return_none() {
+        use super::market::installed_version_from_disk;
+        use super::market::installed_version_for_update;
+        // 边界补测（QA 回归）：工程师用例未覆盖的畸形盘上事实，都必须
+        // 如实 None，不得 panic、不得误读
+        let dir = std::env::temp_dir().join(format!("dsh-pro-max-disk-ver-edge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let nm = dir.join("node_modules");
+        std::fs::create_dir_all(&nm).unwrap();
+        // node_modules 下的"包"是文件而非目录：路径拼接后读不到
+        // package.json（file\package.json 不存在），必须 None
+        std::fs::write(nm.join("file-not-dir"), "i am a file").unwrap();
+        assert_eq!(installed_version_from_disk(&dir, "file-not-dir"), None);
+        // version 字段是数字 / null：as_str() 拿不到字符串，必须 None
+        std::fs::create_dir_all(nm.join("numeric-version")).unwrap();
+        std::fs::write(nm.join("numeric-version").join("package.json"), r#"{"version":123}"#).unwrap();
+        assert_eq!(installed_version_from_disk(&dir, "numeric-version"), None);
+        std::fs::create_dir_all(nm.join("null-version")).unwrap();
+        std::fs::write(nm.join("null-version").join("package.json"), r#"{"version":null}"#).unwrap();
+        assert_eq!(installed_version_from_disk(&dir, "null-version"), None);
+        // profile 目录本身不存在：读文件失败，必须 None
+        let missing = dir.join("definitely-missing-profile");
+        assert_eq!(installed_version_from_disk(&missing, "dsh-context"), None);
+        // scope 名里带 `..`（@../pkg、@scope/../pkg）：路径防注入同样必须拦
+        assert_eq!(installed_version_from_disk(&dir, "@../pkg"), None);
+        assert_eq!(installed_version_from_disk(&dir, "@scope/../pkg"), None);
+        // 磁盘版本优先于 spec 精确版本：盘上是事实，spec 只是落盘时的
+        // 声明（可能滞后），两者冲突时以磁盘为准
+        std::fs::create_dir_all(nm.join("ahead")).unwrap();
+        std::fs::write(nm.join("ahead").join("package.json"), r#"{"version":"2.0.0"}"#).unwrap();
+        assert_eq!(
+            installed_version_for_update(Some(&dir), "ahead", "1.0.0").as_deref(),
+            Some("2.0.0")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn latest_from_registry_json_reads_semver_version_field() {
         use super::market::latest_from_registry_json;
         assert_eq!(latest_from_registry_json(r#"{"name":"x","version":"1.2.3"}"#).as_deref(), Some("1.2.3"));

@@ -9,6 +9,10 @@
 //! 目录在 Rust 侧解析并投影成精简列表（丢弃 screenshots、tarball 等浏览
 //! 用不上的字段），前端只收几百 KB。
 //!
+//! 更新检测以磁盘实际版本（profile node_modules 内的 package.json）为
+//! 事实来源，落盘 spec 只作回退——pnpm 常把依赖写成 `^x.y.z` 范围形态，
+//! 单靠 spec 解析会让 npm 形态插件整体脱离更新检测。
+//!
 //! 可复述与可治理：每次成功拉取后把投影目录落盘为本地快照（旧契约快照按
 //! 无快照处理、下次成功拉取自动重建）；前端首屏直读快照、网络目录由
 //! market_fetch 后台刷新替换，快照数据与断网降级都如实标注 `fromSnapshot`。
@@ -368,9 +372,11 @@ pub(crate) fn installed_plugins() -> Result<Vec<InstalledPlugin>, String> {
     installed_list_from_profile(&web_profile_package_path()?)
 }
 
-/// 插件更新检测的单包结果。检测范围 = npm 形态安装的非受管插件：协议形态
-/// （github:/file: 等）来源不是 registry、范围 spec 无具体版本可比，均如实
-/// 返回 None（不猜）；受管插件由 Launcher 的修复流程管理，不参与
+/// 插件更新检测的单包结果。检测范围 = npm 形态安装的非受管插件：实际版本
+/// 优先取磁盘事实（node_modules 内 package.json 的 version，范围 spec
+/// `^x.y.z` 就靠它参与检测），磁盘不可得回退 spec 精确版本；协议形态
+/// （github:/file: 等）来源不是 registry，恒不检（不猜）
+// 判定来源改版（Bug 修复）：范围 spec 不再排除出检测。—— Eric Tao, 2026-09-04 09:10:00
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/shared/bindings/")]
@@ -379,7 +385,8 @@ pub struct PluginUpdateInfo {
     /// 落盘 spec 原文（file:/github: 等形态如实展示）
     pub spec: String,
     pub managed: bool,
-    /// 从 spec 解析出的具体当前版本；范围/协议形态为 None
+    /// 实际安装版本：磁盘事实（node_modules/<name>/package.json）优先，
+    /// spec 精确版本次之；协议形态与两者均不可得时为 None
     pub installed_version: Option<String>,
     /// registry latest；该包查询失败为 None
     pub latest_version: Option<String>,
@@ -388,7 +395,9 @@ pub struct PluginUpdateInfo {
 
 /// 依赖 spec 值 → 具体当前版本。可检形态："pkg@1.2.3"、"npm:pkg@1.0.0"、
 /// "@scope/pkg@1.2.3"、裸版本 "1.2.3"；协议形态（github:/file: 等）与范围
-/// range（^ ~ * latest 等）返回 None。具体性由 parse_version 裁决，不另设规则
+/// range（^ ~ * latest 等）返回 None。具体性由 parse_version 裁决，不另设规则。
+/// 范围 range 本身不含版本，由调用方经磁盘事实补齐（installed_version_for_update），
+/// 本函数语义不变
 pub(crate) fn installed_version_from_spec(spec: &str) -> Option<String> {
     let rest = spec.strip_prefix("npm:").unwrap_or(spec);
     if rest.contains(':') {
@@ -401,6 +410,57 @@ pub(crate) fn installed_version_from_spec(spec: &str) -> Option<String> {
         None => rest,
     };
     parse_version(version).map(|_| version.to_string())
+}
+
+/// 磁盘事实 → 实际安装版本：读 `<profile_dir>/node_modules/<name>/package.json`
+/// 的 version 字段（scope 包 `@scope/pkg` 即子路径 `node_modules/@scope/pkg/`，
+/// pnpm 的 junction/symlink 读穿即得真实版本）。为什么需要它：pnpm 落盘的
+/// 依赖 spec 常是 `^x.y.z` 范围形态，installed_version_from_spec 对其返回
+/// None，而 registry 比对必须有具体版本——磁盘上的实际版本是现成事实。
+/// 文件缺失/解析失败/版本字段缺失/版本不可解析 → None。name 过四条校验，
+/// 缺一即拒（路径拼接防注入，上游 valid_identifier 已挡，此处不信任调用方）：
+/// 非空；不含 `..`；字符白名单（字母数字 + `@ / . _ -`，Windows 盘符 `C:`
+/// 与反斜杠路径因 `:` `\` 不在集合内天然被挡，合法 scope 分隔符 `/` 与
+/// 点划线不受影响）；不以 `/` 开头——`Path::join` 遇绝对路径组件会整体
+/// 替换基路径，Windows 下 `/evil` 即指向当前盘根
+// 新增（Bug 修复）：市场插件更新检测的版本事实来源。—— Eric Tao, 2026-09-04 09:10:00
+pub(crate) fn installed_version_from_disk(profile_dir: &std::path::Path, name: &str) -> Option<String> {
+    if name.is_empty()
+        || name.contains("..")
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '.' | '_' | '-'))
+        || name.starts_with('/')
+    {
+        return None;
+    }
+    let raw = std::fs::read_to_string(
+        profile_dir.join("node_modules").join(name).join("package.json"),
+    )
+    .ok()?;
+    let package: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let version = package.get("version")?.as_str()?;
+    parse_version(version).map(|_| version.to_string())
+}
+
+/// 单包实际版本判定（纯函数，check_updates_once 的版本决策抽出来以便测试）：
+/// 可检形态（去掉 `npm:` 前缀后不含协议 `:`，与 installed_version_from_spec
+/// 判据一致）先读磁盘事实、磁盘不可得回退 spec 精确版本；协议形态
+/// （github:/file:/git+https: 等）不来自 registry，恒 None——其版本号多为
+/// 0.0.0 占位，误检会诱导 name@latest 重装覆盖掉 git 源。profile_dir 不可得
+/// （极端环境）时按 None 传入，整体回退纯 spec 解析的现状行为
+pub(crate) fn installed_version_for_update(
+    profile_dir: Option<&std::path::Path>,
+    name: &str,
+    spec: &str,
+) -> Option<String> {
+    let rest = spec.strip_prefix("npm:").unwrap_or(spec);
+    if rest.contains(':') {
+        return None;
+    }
+    profile_dir
+        .and_then(|dir| installed_version_from_disk(dir, name))
+        .or_else(|| installed_version_from_spec(spec))
 }
 
 /// registry 响应 → latest 版本（纯解析，HTTP 与此分离以便测试）。
@@ -433,14 +493,27 @@ fn registry_latest(name: &str) -> Result<String, String> {
 }
 
 /// 更新检测执行体（market_check_updates 的阻塞部分）：逐包串行查 registry
-/// （已装列表是个位数，并发无收益）。部分包查询失败不放大为整体失败（如实
-/// 无 latest、不出更新按钮）；全部可检包都失败才报错——那是网络问题的信号
+/// （已装列表是个位数，并发无收益）。实际版本由 installed_version_for_update
+/// 判定：磁盘事实优先（范围 spec `^x.y.z` 即此路径参与检测），spec 精确版本
+/// 兜底。部分包查询失败不放大为整体失败（如实无 latest、不出更新按钮）；
+/// 全部可检包都失败才报错——那是网络问题的信号
+// 版本来源改版（Bug 修复）：pnpm 落盘的范围 spec 不再把 npm 形态插件
+// 排除出检测。—— Eric Tao, 2026-09-04 09:10:00
 fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
     let list = installed_plugins()?;
+    // 磁盘事实的读取根 = profile 目录（package.json 的 parent）；获取失败
+    // （极端环境）传 None，单包判定整体回退纯 spec 解析
+    let profile_dir = web_profile_package_path()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
     let mut infos: Vec<PluginUpdateInfo> = list
         .into_iter()
         .map(|p| PluginUpdateInfo {
-            installed_version: if p.managed { None } else { installed_version_from_spec(&p.spec) },
+            installed_version: if p.managed {
+                None
+            } else {
+                installed_version_for_update(profile_dir.as_deref(), &p.name, &p.spec)
+            },
             update_available: false,
             latest_version: None,
             name: p.name,
