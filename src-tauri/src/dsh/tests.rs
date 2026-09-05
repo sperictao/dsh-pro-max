@@ -1839,12 +1839,14 @@ fn set_entries_enabled_handles_official_empty_scaffold() {
         set_entries_enabled(&disabled, &entries, false).unwrap(),
         None
     );
-    // 启用：删除覆盖行，回到注释头空层
+    // 启用：删除覆盖行，空层归一回官方脚手架形态——纯注释文件 YAML 解析
+    // 为 null，dsh loader 必拒（顶层必须是数组），`[]` 占位必须回来
     let enabled = set_entries_enabled(&disabled, &entries, true)
         .unwrap()
         .unwrap();
     assert!(!enabled.contains("better-sidebar"));
     assert!(enabled.contains("# Your patch layer"));
+    assert_eq!(enabled, scaffold, "启停往返必须逐字节还原官方脚手架");
     // 启用后再启用：None
     assert_eq!(set_entries_enabled(&enabled, &entries, true).unwrap(), None);
 }

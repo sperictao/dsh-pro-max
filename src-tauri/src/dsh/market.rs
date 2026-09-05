@@ -1473,7 +1473,9 @@ fn is_empty_patch(raw: &str) -> bool {
 /// 即启用，官方同款语义）；停用 = 更新或追加 `{id, name, disabled: true}`
 /// 覆盖行。写入走行级编辑而不是 YAML 文档往返——serde_yaml 会静默剥掉
 /// dsh loader 依赖的 `!!js` 表达式标签，行级只增删覆盖行、其余字节原样
-/// 保留。内容未变化返回 None（调用方免写盘）
+/// 保留。落盘永远可解析为顶层数组：启用删空层时归一回官方脚手架形态
+/// （注释头 + `[]`），纯注释残留会让 dsh 启动预检全灭。内容未变化返回
+/// None（调用方免写盘）
 pub(crate) fn set_entries_enabled(
     raw: &str,
     entries: &[(String, String)],
@@ -1537,6 +1539,14 @@ pub(crate) fn set_entries_enabled(
     let mut out = lines.join("\n");
     if !out.is_empty() {
         out.push('\n');
+    }
+    if is_empty_patch(&out) {
+        // 空层归一回官方脚手架形态（注释头 + `[]`）：纯注释文件 YAML 解析
+        // 为 null，dsh loader 必拒（顶层必须是数组）——落盘永远可解析
+        while out.ends_with('\n') {
+            out.pop();
+        }
+        out.push_str("\n[]\n");
     }
     Ok(Some(out))
 }
