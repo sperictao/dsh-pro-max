@@ -1,19 +1,15 @@
 //! dsh 状态检测：聚合组件/插件/Tailscale/运行态与远程访问可达性（dsh_detect 命令）。
 
-
-
-
-
-use super::{DshStatus, SUPPORTED_DSH_VERSION, WEB_PORT};
 use super::auth::{resolve_auth_config, serve_configured, tailscale_online};
-use super::autostart::{autostart_enabled};
-use super::components::{auth_plugins_installed, bundled_plugin_specs, dsh_version, dsh_version_is_compatible, magic_dns_info, resolve_host_and_url, tailscale_path};
-use super::probe::{probe_remote_url};
+use super::autostart::autostart_enabled;
+use super::components::{
+    auth_plugins_installed, bundled_plugin_specs, dsh_version, dsh_version_is_compatible,
+    magic_dns_info, resolve_host_and_url, tailscale_path,
+};
+use super::probe::probe_remote_url;
 use super::process::{port_listening, which};
+use super::{DshStatus, SUPPORTED_DSH_VERSION, WEB_PORT};
 use crate::version::parse_version;
-
-
-
 
 // ============ 检测 ============
 
@@ -26,10 +22,7 @@ pub async fn dsh_detect(
     super::ipc_blocking(move || dsh_detect_once(&app, verify_remote_url.unwrap_or(false))).await
 }
 
-fn dsh_detect_once(
-    app: &tauri::AppHandle,
-    verify_remote_url: bool,
-) -> Result<DshStatus, String> {
+fn dsh_detect_once(app: &tauri::AppHandle, verify_remote_url: bool) -> Result<DshStatus, String> {
     let (hostname, url) = resolve_host_and_url();
     let ts = tailscale_path();
     let (magic, _) = match &ts {
@@ -69,7 +62,8 @@ fn dsh_detect_once(
     };
     let remote_url_access = if verify_remote_url {
         let auth = resolve_auth_config()?;
-        url.as_deref().map(|url| probe_remote_url(url, &auth).access)
+        url.as_deref()
+            .map(|url| probe_remote_url(url, &auth).access)
     } else {
         None
     };
@@ -95,5 +89,8 @@ fn dsh_detect_once(
         ready_timeline: Vec::new(), // 先占位，构造完整后统一推导（避免部分初始化借用问题）
     };
     let ready_timeline = super::ready_timeline(verify_remote_url, &status);
-    Ok(DshStatus { ready_timeline, ..status })
+    Ok(DshStatus {
+        ready_timeline,
+        ..status
+    })
 }

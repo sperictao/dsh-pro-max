@@ -60,7 +60,11 @@ pub(crate) fn rebuild_tray_menu(app: &tauri::AppHandle) -> Result<(), String> {
 /// 前端推送 dsh 运行状态（dshRunning / 任一流程 busy），托盘三键随之镜像
 /// 首页按钮的可用性。同值幂等跳过，避免无谓的菜单重建
 #[tauri::command]
-pub(crate) fn sync_tray_dsh_actions(app: tauri::AppHandle, running: bool, busy: bool) -> Result<(), String> {
+pub(crate) fn sync_tray_dsh_actions(
+    app: tauri::AppHandle,
+    running: bool,
+    busy: bool,
+) -> Result<(), String> {
     if let Ok(mut state) = TRAY_DSH_STATE.lock() {
         if *state == (running, busy) {
             return Ok(());

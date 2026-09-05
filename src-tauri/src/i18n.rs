@@ -101,13 +101,19 @@ mod tests {
     fn keyf_interpolates_without_resolving_language() {
         set_current("en");
         assert_eq!(
-            keyf("Path does not exist: {path}", &[("path", "/tmp/x".to_string())]),
+            keyf(
+                "Path does not exist: {path}",
+                &[("path", "/tmp/x".to_string())]
+            ),
             "Path does not exist: /tmp/x"
         );
         // key 即英文原文：不查表，中文界面下 Rust 也只产 key（前端 tErr 解析）
         set_current("zh-CN");
         assert_eq!(
-            keyf("Path does not exist: {path}", &[("path", "/tmp/y".to_string())]),
+            keyf(
+                "Path does not exist: {path}",
+                &[("path", "/tmp/y".to_string())]
+            ),
             "Path does not exist: /tmp/y"
         );
         set_current("en");

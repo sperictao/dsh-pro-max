@@ -7,11 +7,11 @@
 //! 编辑不丢失。凭据只存环境变量名（apiKeyEnv），密钥永不进配置文件。
 
 use super::components::dsh_dir;
+use crate::i18n::keyf;
 use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value as Yaml};
 use std::fs;
 use std::path::PathBuf;
-use crate::i18n::keyf;
 
 /// UI 管理的提供商字段；其余字段经 extra 透传保留
 const MANAGED_PROVIDER_KEYS: [&str; 5] = ["displayName", "baseURL", "api", "apiKeyEnv", "models"];
@@ -84,7 +84,11 @@ fn provider_from_yaml(route: &str, value: &Yaml) -> Option<ProviderConfig> {
         .and_then(Yaml::as_sequence)
         .map(|seq| {
             seq.iter()
-                .filter_map(|e| e.get(Yaml::String("id".into())).and_then(Yaml::as_str).map(str::to_string))
+                .filter_map(|e| {
+                    e.get(Yaml::String("id".into()))
+                        .and_then(Yaml::as_str)
+                        .map(str::to_string)
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -106,14 +110,22 @@ pub(crate) fn load_model_config_at(path: &PathBuf) -> Result<ModelConfig, String
     }
     let raw = fs::read_to_string(path).map_err(|e| {
         crate::logging::warn("读取 settings.yaml", &e.to_string());
-        keyf("Failed to read settings.yaml: {error}", &[("error", e.to_string())])
+        keyf(
+            "Failed to read settings.yaml: {error}",
+            &[("error", e.to_string())],
+        )
     })?;
     let root: Yaml = serde_yaml::from_str(&raw).map_err(|e| {
         crate::logging::warn("解析 settings.yaml", &e.to_string());
-        keyf("Failed to parse settings.yaml: {error}", &[("error", e.to_string())])
+        keyf(
+            "Failed to parse settings.yaml: {error}",
+            &[("error", e.to_string())],
+        )
     })?;
     let map = root.as_mapping();
-    let default = map.and_then(|m| m.get(Yaml::String(DEFAULT_MODEL_KEY.into()))).and_then(Yaml::as_mapping);
+    let default = map
+        .and_then(|m| m.get(Yaml::String(DEFAULT_MODEL_KEY.into())))
+        .and_then(Yaml::as_mapping);
     let providers = map
         .and_then(|m| m.get(Yaml::String(PI_AI_KEY.into())))
         .and_then(|v| v.get(Yaml::String("providers".into())))
@@ -193,7 +205,9 @@ fn yaml_from_json(v: &serde_json::Value) -> Yaml {
             }
         }
         serde_json::Value::String(s) => Yaml::String(s.clone()),
-        serde_json::Value::Array(items) => items.iter().map(yaml_from_json).collect::<Vec<_>>().into(),
+        serde_json::Value::Array(items) => {
+            items.iter().map(yaml_from_json).collect::<Vec<_>>().into()
+        }
         serde_json::Value::Object(fields) => {
             let mut map = Mapping::new();
             for (k, v) in fields {
@@ -213,13 +227,22 @@ pub(crate) fn save_model_config_at(path: &PathBuf, config: &ModelConfig) -> Resu
         _ => Mapping::new(),
     };
     let default_key = Yaml::String(DEFAULT_MODEL_KEY.into());
-    match (non_empty(&config.default_provider), non_empty(&config.default_model)) {
+    match (
+        non_empty(&config.default_provider),
+        non_empty(&config.default_model),
+    ) {
         (Some(provider), Some(model)) => {
             let mut default = Mapping::new();
-            default.insert(Yaml::String("provider".into()), Yaml::String(provider.into()));
+            default.insert(
+                Yaml::String("provider".into()),
+                Yaml::String(provider.into()),
+            );
             default.insert(Yaml::String("model".into()), Yaml::String(model.into()));
             if let Some(effort) = non_empty(&config.default_reasoning_effort) {
-                default.insert(Yaml::String("reasoningEffort".into()), Yaml::String(effort.into()));
+                default.insert(
+                    Yaml::String("reasoningEffort".into()),
+                    Yaml::String(effort.into()),
+                );
             }
             root.insert(default_key, Yaml::Mapping(default));
         }
@@ -236,7 +259,10 @@ pub(crate) fn save_model_config_at(path: &PathBuf, config: &ModelConfig) -> Resu
             if p.route.trim().is_empty() {
                 return Err("Provider route key cannot be empty".to_string());
             }
-            providers.insert(Yaml::String(p.route.trim().to_string()), provider_to_yaml(p)?);
+            providers.insert(
+                Yaml::String(p.route.trim().to_string()),
+                provider_to_yaml(p)?,
+            );
         }
         let mut pi_ai = Mapping::new();
         pi_ai.insert(Yaml::String("providers".into()), Yaml::Mapping(providers));
@@ -244,11 +270,17 @@ pub(crate) fn save_model_config_at(path: &PathBuf, config: &ModelConfig) -> Resu
     }
     let text = serde_yaml::to_string(&Yaml::Mapping(root)).map_err(|e| {
         crate::logging::error("序列化 settings.yaml", &e.to_string());
-        keyf("Failed to serialize settings.yaml: {error}", &[("error", e.to_string())])
+        keyf(
+            "Failed to serialize settings.yaml: {error}",
+            &[("error", e.to_string())],
+        )
     })?;
     fs::write(path, text).map_err(|e| {
         crate::logging::error("写入 settings.yaml", &e.to_string());
-        keyf("Failed to write settings.yaml: {error}", &[("error", e.to_string())])
+        keyf(
+            "Failed to write settings.yaml: {error}",
+            &[("error", e.to_string())],
+        )
     })
 }
 
@@ -258,11 +290,17 @@ fn read_root(path: &PathBuf) -> Result<Yaml, String> {
     }
     let raw = fs::read_to_string(path).map_err(|e| {
         crate::logging::warn("读取 settings.yaml", &e.to_string());
-        keyf("Failed to read settings.yaml: {error}", &[("error", e.to_string())])
+        keyf(
+            "Failed to read settings.yaml: {error}",
+            &[("error", e.to_string())],
+        )
     })?;
     serde_yaml::from_str(&raw).map_err(|e| {
         crate::logging::warn("解析 settings.yaml", &e.to_string());
-        keyf("Failed to parse settings.yaml: {error}", &[("error", e.to_string())])
+        keyf(
+            "Failed to parse settings.yaml: {error}",
+            &[("error", e.to_string())],
+        )
     })
 }
 

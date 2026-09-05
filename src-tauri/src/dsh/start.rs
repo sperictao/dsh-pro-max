@@ -1,17 +1,17 @@
 //! 本地一键启动（4 步时间轴）：仅 loopback 的 dsh web 启动链（dsh_start_web 命令）。
 
-
-use super::setup::{StepCtx};
-use super::{LOCAL_ONLY_LOGIN, SUPPORTED_DSH_VERSION, WEB_PORT};
-use super::auth::{any_http_status, AuthConfig, http_get};
-use super::components::{dsh_dir, dsh_version, dsh_version_is_compatible, install_supported_dsh, resolve_node_bin};
+use super::auth::{any_http_status, http_get, AuthConfig};
+use super::components::{
+    dsh_dir, dsh_version, dsh_version_is_compatible, install_supported_dsh, resolve_node_bin,
+};
 use super::process::{dsh_web_pid, port_listening, process_alive, wait_web_start};
+use super::setup::StepCtx;
 use super::setup::{restart_dsh_web, spawn_dsh_web, start_failure_diagnosis};
+use super::{LOCAL_ONLY_LOGIN, SUPPORTED_DSH_VERSION, WEB_PORT};
 use std::fs;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 
 use std::time::Duration;
-
 
 use crate::i18n::keyf;
 
@@ -55,7 +55,9 @@ pub(crate) fn local_access_url(offset: usize) -> Option<String> {
 /// 处理：等待超时后走裸地址回退，也不该把来历不明的旧行交出去；offset 恰好
 /// 落在多字节字符中间（文件被替换成不同内容）回退整份日志，保证不 panic
 pub(crate) fn fresh_log_region(contents: &str, offset: usize) -> &str {
-    contents.get(offset.min(contents.len())..).unwrap_or(contents)
+    contents
+        .get(offset.min(contents.len())..)
+        .unwrap_or(contents)
 }
 
 /// 记录本次启动动作前的日志末尾偏移，供 local_access_url 圈定解析区域
@@ -88,7 +90,10 @@ pub(crate) fn resolve_local_access_url(
 /// （如 web 由外部手工启动、其 token 只落在终端，日志新区域里没有 token 行）
 /// 回退裸地址，由 dsh 自己的 401 页面提示重新打开
 fn wait_local_access_url(offset: usize) -> String {
-    resolve_local_access_url(|| local_access_url(offset), || std::thread::sleep(Duration::from_millis(500)))
+    resolve_local_access_url(
+        || local_access_url(offset),
+        || std::thread::sleep(Duration::from_millis(500)),
+    )
 }
 
 // ============ ready 步验证：端口绑定 ≠ 可用 ============
@@ -193,13 +198,11 @@ fn verify_local_ready(
             let (problem, solution) = start_failure_diagnosis(&log);
             ctx.fail_err(&problem, &solution, &[])
         }
-        LocalReady::Unresponsive => {
-            ctx.fail_err(
-                "dsh web started but is not responding on 127.0.0.1:3899",
-                "Check the log at ~/.dsh/dsh-web.log",
-                &[],
-            )
-        }
+        LocalReady::Unresponsive => ctx.fail_err(
+            "dsh web started but is not responding on 127.0.0.1:3899",
+            "Check the log at ~/.dsh/dsh-web.log",
+            &[],
+        ),
     }
 }
 
@@ -258,16 +261,22 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
         if dsh_version_is_compatible(current.as_deref()) {
             // 显示实际版本而非锁定版本（同 dsh_setup 的修复）
             ctx.done(&keyf(
-                "Compatible dsh is installed: {version}", &[("version", current.clone().unwrap_or_default())],
+                "Compatible dsh is installed: {version}",
+                &[("version", current.clone().unwrap_or_default())],
             ));
         } else {
             ctx.running(&keyf(
-                "Installing the pinned dsh ({version})…", &[("version", SUPPORTED_DSH_VERSION.to_string())],
+                "Installing the pinned dsh ({version})…",
+                &[("version", SUPPORTED_DSH_VERSION.to_string())],
             ));
             match install_supported_dsh() {
                 Ok(version) => ctx.done(&keyf("Installed {version}", &[("version", version)])),
                 Err(error) => {
-                    return ctx.fail_err(&error, "Check your network and npm settings, then retry", &remaining_after(1))
+                    return ctx.fail_err(
+                        &error,
+                        "Check your network and npm settings, then retry",
+                        &remaining_after(1),
+                    )
                 }
             }
         }
@@ -281,7 +290,11 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
                 id: steps[2],
             };
             let err = "Port 3899 is occupied by another process".to_string();
-            return ctx.fail_err(&err, "Stop the process listening on 127.0.0.1:3899", &remaining_after(2));
+            return ctx.fail_err(
+                &err,
+                "Stop the process listening on 127.0.0.1:3899",
+                &remaining_after(2),
+            );
         }
         // 已在跑：本地访问不依赖 trusted-host，直接用。若刚才装了新 dsh 则重启生效
         // 锚点须在重启动作前记录：重启会换 token，只有重启之后打印的
@@ -300,7 +313,11 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
                     pid
                 }
                 Err(error) => {
-                    return ctx.fail_err(&error, "Check the log at ~/.dsh/dsh-web.log", &remaining_after(2));
+                    return ctx.fail_err(
+                        &error,
+                        "Check the log at ~/.dsh/dsh-web.log",
+                        &remaining_after(2),
+                    );
                 }
             }
         };

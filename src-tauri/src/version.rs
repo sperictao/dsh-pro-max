@@ -53,7 +53,12 @@ pub fn parse_version(v: &str) -> Option<Version> {
             ids
         }
     };
-    Some(Version { major, minor, patch, pre })
+    Some(Version {
+        major,
+        minor,
+        patch,
+        pre,
+    })
 }
 
 impl PartialOrd for Version {
@@ -68,16 +73,18 @@ impl Version {
     /// 重排插件接口与数据格式；按 semver 范围（^0.1.0-rc.8 覆盖 0.1.1）
     /// 放行是错的。
     pub fn same_line(&self, other: &Version) -> bool {
-        self.major == other.major
-            && self.minor == other.minor
-            && self.patch == other.patch
+        self.major == other.major && self.minor == other.minor && self.patch == other.patch
     }
 }
 
 impl Ord for Version {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
-        for (a, b) in [(self.major, other.major), (self.minor, other.minor), (self.patch, other.patch)] {
+        for (a, b) in [
+            (self.major, other.major),
+            (self.minor, other.minor),
+            (self.patch, other.patch),
+        ] {
             match a.cmp(&b) {
                 Ordering::Equal => {}
                 o => return o,
@@ -124,15 +131,30 @@ mod tests {
     fn parse_basic() {
         assert_eq!(
             parse_version("1.2.3"),
-            Some(Version { major: 1, minor: 2, patch: 3, pre: vec![] })
+            Some(Version {
+                major: 1,
+                minor: 2,
+                patch: 3,
+                pre: vec![]
+            })
         );
         assert_eq!(
             parse_version("v1.2.3"),
-            Some(Version { major: 1, minor: 2, patch: 3, pre: vec![] })
+            Some(Version {
+                major: 1,
+                minor: 2,
+                patch: 3,
+                pre: vec![]
+            })
         );
         assert_eq!(
             parse_version(" 1.2.3 "),
-            Some(Version { major: 1, minor: 2, patch: 3, pre: vec![] })
+            Some(Version {
+                major: 1,
+                minor: 2,
+                patch: 3,
+                pre: vec![]
+            })
         );
     }
 

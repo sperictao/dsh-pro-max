@@ -57,12 +57,10 @@ pub fn home_dir() -> Result<PathBuf, String> {
     // Unix 使用 HOME，Windows 使用 USERPROFILE
     #[cfg(unix)]
     {
-        std::env::var("HOME")
-            .map(PathBuf::from)
-            .map_err(|e| {
-                crate::logging::fail("读取 HOME 环境变量", &e.to_string());
-                keyf("Cannot get HOME environment variable", &[])
-            })
+        std::env::var("HOME").map(PathBuf::from).map_err(|e| {
+            crate::logging::fail("读取 HOME 环境变量", &e.to_string());
+            keyf("Cannot get HOME environment variable", &[])
+        })
     }
     #[cfg(windows)]
     {
@@ -103,16 +101,20 @@ pub fn load_config() -> Result<LauncherConfig, String> {
     if !path.exists() {
         return Ok(LauncherConfig::default());
     }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| {
-            crate::logging::warn("读取配置文件", &e.to_string());
-            keyf("Failed to read config file: {error}", &[("error", e.to_string())])
-        })?;
-    let config: LauncherConfig = serde_json::from_str(&content)
-        .map_err(|e| {
-            crate::logging::warn("解析配置文件", &e.to_string());
-            keyf("Failed to parse config file: {error}", &[("error", e.to_string())])
-        })?;
+    let content = std::fs::read_to_string(&path).map_err(|e| {
+        crate::logging::warn("读取配置文件", &e.to_string());
+        keyf(
+            "Failed to read config file: {error}",
+            &[("error", e.to_string())],
+        )
+    })?;
+    let config: LauncherConfig = serde_json::from_str(&content).map_err(|e| {
+        crate::logging::warn("解析配置文件", &e.to_string());
+        keyf(
+            "Failed to parse config file: {error}",
+            &[("error", e.to_string())],
+        )
+    })?;
     Ok(config)
 }
 
@@ -130,22 +132,28 @@ pub fn merge_settings(current: &mut LauncherConfig, settings: &LauncherConfig) {
 pub fn save_config(config: &LauncherConfig) -> Result<(), String> {
     let path = config_file_path()?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| {
-                crate::logging::error("创建配置目录", &e.to_string());
-                keyf("Failed to create config directory: {error}", &[("error", e.to_string())])
-            })?;
-    }
-    let content = serde_json::to_string_pretty(config)
-        .map_err(|e| {
-            crate::logging::error("序列化配置", &e.to_string());
-            keyf("Failed to serialize config: {error}", &[("error", e.to_string())])
+        std::fs::create_dir_all(parent).map_err(|e| {
+            crate::logging::error("创建配置目录", &e.to_string());
+            keyf(
+                "Failed to create config directory: {error}",
+                &[("error", e.to_string())],
+            )
         })?;
-    std::fs::write(&path, content)
-        .map_err(|e| {
-            crate::logging::error("写入配置文件", &e.to_string());
-            keyf("Failed to write config file: {error}", &[("error", e.to_string())])
-        })
+    }
+    let content = serde_json::to_string_pretty(config).map_err(|e| {
+        crate::logging::error("序列化配置", &e.to_string());
+        keyf(
+            "Failed to serialize config: {error}",
+            &[("error", e.to_string())],
+        )
+    })?;
+    std::fs::write(&path, content).map_err(|e| {
+        crate::logging::error("写入配置文件", &e.to_string());
+        keyf(
+            "Failed to write config file: {error}",
+            &[("error", e.to_string())],
+        )
+    })
 }
 
 #[cfg(test)]
@@ -171,7 +179,13 @@ mod tests {
         assert_eq!(current.language, "zh-CN");
         assert_eq!(current.dsh_admin_cap_domain, "admin.example.com");
         assert_eq!(current.dsh_use_cap_domain, "use.example.com");
-        assert_eq!(current.dsh_extra_allowed_logins, "alice@example.com,bob@example.com");
-        assert_eq!(current.market_catalog_url, "https://mirror.example.com/catalog.json");
+        assert_eq!(
+            current.dsh_extra_allowed_logins,
+            "alice@example.com,bob@example.com"
+        );
+        assert_eq!(
+            current.market_catalog_url,
+            "https://mirror.example.com/catalog.json"
+        );
     }
 }

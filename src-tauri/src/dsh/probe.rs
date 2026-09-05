@@ -1,8 +1,8 @@
 //! 远程 URL 探测：直连/经代理的 HTTPS 与 WebSocket 可达性、macOS 系统代理解析、RPC 鉴权分类。
 
-use super::{MacosHttpsProxy, RemoteRpcAccess, RemoteUrlAccess, RemoteUrlProbe};
-use super::auth::{AuthConfig, rpc_body};
+use super::auth::{rpc_body, AuthConfig};
 use super::process::{run_capture, string_args, which};
+use super::{MacosHttpsProxy, RemoteRpcAccess, RemoteUrlAccess, RemoteUrlProbe};
 
 pub(crate) const REMOTE_WS_PATH: &str = "/api/remote.mux";
 
@@ -241,14 +241,23 @@ setTimeout(function(){finish(1);},6000).unref();";
 /// 用 node 跑 WS 探测脚本。ws:// 走纯 TCP，wss:// 走 TLS。
 /// node 不可用时跳过（视为通过）——setup 第 0 步已确认 node。
 pub(crate) fn ws_probe_ok(node: &str, ws_url: &str) -> bool {
-    matches!(run_capture(node, &["-e", WS_PROBE_JS, ws_url]), Ok((_, _, true)))
+    matches!(
+        run_capture(node, &["-e", WS_PROBE_JS, ws_url]),
+        Ok((_, _, true))
+    )
 }
 
 /// 真实 WebSocket 链路检查：经 Tailscale Serve 直接到 dsh，对
 /// /api/remote.mux 做 WS upgrade 握手。
 pub(crate) fn ws_endpoint_ok(url: &str) -> bool {
-    let Some(node) = which("node") else { return true };
-    let ws_url = format!("{}{}", url.replacen("https://", "wss://", 1), REMOTE_WS_PATH);
+    let Some(node) = which("node") else {
+        return true;
+    };
+    let ws_url = format!(
+        "{}{}",
+        url.replacen("https://", "wss://", 1),
+        REMOTE_WS_PATH
+    );
     ws_probe_ok(&node, &ws_url)
 }
 
@@ -315,16 +324,19 @@ static SYSTEM_REMOTE_PROBES: RemoteProbeHooks = RemoteProbeHooks {
 /// 远程 URL 探测编排：直连 HTTPS/WS → capability RPC 鉴权（use 先于 admin，
 /// use 已拒则不浪费 admin 探测）→ 直连全过时复查系统代理路径。任何一环失败
 /// 按 classify_remote_url_access 的优先级归因
-pub(crate) fn probe_remote_url_with(url: &str, auth: &AuthConfig, hooks: &RemoteProbeHooks) -> RemoteUrlProbe {
+pub(crate) fn probe_remote_url_with(
+    url: &str,
+    auth: &AuthConfig,
+    hooks: &RemoteProbeHooks,
+) -> RemoteUrlProbe {
     let direct_https_ok = (hooks.https_ok)(url);
     let direct_ws_ok = (hooks.ws_ok)(url);
     let remote_use_access = (direct_https_ok && auth.use_capability.is_some())
         .then(|| (hooks.rpc_access)(url, "llm/listProviders"));
     let remote_use_ready = matches!(remote_use_access, None | Some(RemoteRpcAccess::Ready));
-    let remote_settings_access = (direct_https_ok
-        && remote_use_ready
-        && auth.admin_capability.is_some())
-        .then(|| (hooks.rpc_access)(url, "settings/describe"));
+    let remote_settings_access =
+        (direct_https_ok && remote_use_ready && auth.admin_capability.is_some())
+            .then(|| (hooks.rpc_access)(url, "settings/describe"));
     let remote_rpc_access = if remote_use_access == Some(RemoteRpcAccess::Denied)
         || remote_settings_access == Some(RemoteRpcAccess::Denied)
     {

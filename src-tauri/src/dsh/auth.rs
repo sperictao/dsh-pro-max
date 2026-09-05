@@ -1,13 +1,11 @@
 //! 远程授权配置：capability 域名校验、允许登录名解析、Tailscale serve 状态、loopback HTTP/RPC 探测。
 
-
-
-
-use super::{ADMIN_CAP_ENV, ADMIN_CAP_PATH, TAILSCALE_LOGIN_ENV, USE_CAP_ENV, USE_CAP_PATH, WEB_PORT};
 use super::components::{magic_dns_info, resolve_host_and_url, tailscale_path};
-use super::process::{run_capture};
+use super::process::run_capture;
+use super::{
+    ADMIN_CAP_ENV, ADMIN_CAP_PATH, TAILSCALE_LOGIN_ENV, USE_CAP_ENV, USE_CAP_PATH, WEB_PORT,
+};
 use std::time::Duration;
-
 
 use crate::config;
 use crate::i18n::keyf;
@@ -75,7 +73,8 @@ pub(crate) fn validate_cap_domain(domain: &str) -> Result<String, String> {
         Ok(trimmed.to_string())
     } else {
         Err(keyf(
-            "Invalid capability domain: {domain}. Use a domain you control (e.g. example.com)", &[("domain", domain.to_string())],
+            "Invalid capability domain: {domain}. Use a domain you control (e.g. example.com)",
+            &[("domain", domain.to_string())],
         ))
     }
 }
@@ -110,12 +109,20 @@ pub(crate) fn resolve_auth_config() -> Result<AuthConfig, String> {
         use_capability: if config.dsh_use_cap_domain.trim().is_empty() {
             None
         } else {
-            Some(format!("{}{}", validate_cap_domain(&config.dsh_use_cap_domain)?, USE_CAP_PATH))
+            Some(format!(
+                "{}{}",
+                validate_cap_domain(&config.dsh_use_cap_domain)?,
+                USE_CAP_PATH
+            ))
         },
         admin_capability: if config.dsh_admin_cap_domain.trim().is_empty() {
             None
         } else {
-            Some(format!("{}{}", validate_cap_domain(&config.dsh_admin_cap_domain)?, ADMIN_CAP_PATH))
+            Some(format!(
+                "{}{}",
+                validate_cap_domain(&config.dsh_admin_cap_domain)?,
+                ADMIN_CAP_PATH
+            ))
         },
     })
 }
@@ -123,7 +130,8 @@ pub(crate) fn resolve_auth_config() -> Result<AuthConfig, String> {
 pub(crate) fn tailscale_login_from_status_json(raw: &str) -> Result<String, String> {
     let status: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
         let err = keyf(
-            "Cannot parse Tailscale status: {error}", &[("error", e.to_string())],
+            "Cannot parse Tailscale status: {error}",
+            &[("error", e.to_string())],
         );
         log::error!("[dsh tailscale] 解析 status 失败: {}", err);
         err
@@ -180,7 +188,8 @@ pub(crate) fn resolve_tailscale_login(ts: &str) -> Result<String, String> {
         Ok((out, _, true)) => tailscale_login_from_status_json(&out),
         Ok((_, err, false)) => {
             let e = keyf(
-                "Cannot read the current Tailscale identity: {error}", &[(
+                "Cannot read the current Tailscale identity: {error}",
+                &[(
                     "error",
                     if err.is_empty() {
                         "tailscale status --json failed".to_string()

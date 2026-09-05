@@ -5,15 +5,17 @@ use super::{ADMIN_CAP_ENV, TAILSCALE_LOGIN_ENV, USE_CAP_ENV, WEB_PORT};
 #[cfg(target_os = "macos")]
 use super::AUTOSTART_PREFIX;
 // PathBuf 仅 Windows 自启分支使用（常量与分支均 cfg(windows)，Linux/macOS 不编译）
+use super::auth::{resolve_auth_config, resolve_fqdn, resolve_tailscale_login, AuthConfig};
+use super::components::{
+    dsh_dir, dsh_version, dsh_version_is_compatible, install_auth_plugins, install_supported_dsh,
+    resolve_dsh_bin, resolve_node_bin, tailscale_path,
+};
+use super::process::kill_by_pattern;
+use std::fs;
+use std::path::Path;
 #[cfg(windows)]
 use std::path::PathBuf;
-use super::auth::{AuthConfig, resolve_auth_config, resolve_fqdn, resolve_tailscale_login};
-use super::components::{dsh_dir, dsh_version, dsh_version_is_compatible, install_auth_plugins, install_supported_dsh, resolve_dsh_bin, resolve_node_bin, tailscale_path};
-use super::process::{kill_by_pattern};
-use std::fs;
-use std::path::{Path};
 use std::process::Command;
-
 
 use crate::config;
 use crate::i18n::keyf;
@@ -36,7 +38,13 @@ pub(crate) fn port_guard_js(port: u16) -> String {
 /// 生成 dsh web 启动脚本（自启用）：带端口守卫、loopback 绑定、
 /// Tailscale 授权身份、按配置解析的 use/admin App Capability 与 --trusted-host。
 #[cfg_attr(windows, allow(dead_code))]
-pub(crate) fn render_start_web(node: &str, dsh: &str, host: &str, login: &str, auth: &AuthConfig) -> String {
+pub(crate) fn render_start_web(
+    node: &str,
+    dsh: &str,
+    host: &str,
+    login: &str,
+    auth: &AuthConfig,
+) -> String {
     let trusted = if host.is_empty() {
         String::new()
     } else {
@@ -77,7 +85,9 @@ pub(crate) fn render_start_web(node: &str, dsh: &str, host: &str, login: &str, a
 /// XML 转义（plist 内容，仅 macOS launchd 使用）
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 pub(crate) fn autostart_enabled() -> bool {
@@ -123,7 +133,11 @@ pub fn dsh_set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), Str
         install_auth_plugins(&app)?;
     }
     autostart_impl(enabled).map_err(|e| {
-        log::error!("[dsh 自启] {} 失败: {}", if enabled { "开启" } else { "关闭" }, e);
+        log::error!(
+            "[dsh 自启] {} 失败: {}",
+            if enabled { "开启" } else { "关闭" },
+            e
+        );
         e
     })
 }
@@ -160,7 +174,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         fs::create_dir_all(&agents_dir).map_err(|error| {
             log::error!("[dsh 自启(mac)] 创建 LaunchAgents 目录失败: {}", error);
             keyf(
-                "Failed to create directory: {error}", &[("error", error.to_string())],
+                "Failed to create directory: {error}",
+                &[("error", error.to_string())],
             )
         })?;
         fs::write(
@@ -170,7 +185,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         .map_err(|error| {
             log::error!("[dsh 自启(mac)] 写启动脚本失败: {}", error);
             keyf(
-                "Failed to write {path}: {error}", &[
+                "Failed to write {path}: {error}",
+                &[
                     ("path", web_script.display().to_string()),
                     ("error", error.to_string()),
                 ],
@@ -214,7 +230,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         fs::write(&web_plist, plist).map_err(|error| {
             log::error!("[dsh 自启(mac)] 写 plist 失败: {}", error);
             keyf(
-                "Failed to write {path}: {error}", &[
+                "Failed to write {path}: {error}",
+                &[
                     ("path", web_plist.display().to_string()),
                     ("error", error.to_string()),
                 ],
@@ -228,7 +245,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
             .map_err(|error| {
                 log::error!("[dsh 自启(mac)] 注册 launchd agent 失败: {}", error);
                 keyf(
-                    "Cannot register launchd agent: {error}", &[("error", error.to_string())],
+                    "Cannot register launchd agent: {error}",
+                    &[("error", error.to_string())],
                 )
             })?;
     } else {
@@ -257,17 +275,17 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
     fs::create_dir_all(&dsh).map_err(|error| {
         log::error!("[dsh 自启(win)] 创建 ~/.dsh 目录失败: {}", error);
         keyf(
-            "Failed to create directory: {error}", &[("error", error.to_string())],
+            "Failed to create directory: {error}",
+            &[("error", error.to_string())],
         )
     })?;
     let web_cmd = dsh.join("start-web.cmd");
     let legacy_proxy_cmd = dsh.join("start-proxy.cmd");
-    let startup = windows_startup_dir()
-        .ok_or_else(|| {
-            let err = "Cannot locate the Windows Startup folder (APPDATA is missing)".to_string();
-            log::error!("[dsh 自启(win)] {}", err);
-            err
-        })?;
+    let startup = windows_startup_dir().ok_or_else(|| {
+        let err = "Cannot locate the Windows Startup folder (APPDATA is missing)".to_string();
+        log::error!("[dsh 自启(win)] {}", err);
+        err
+    })?;
     let vbs = startup.join("dsh-remote-autostart.vbs");
 
     let _ = fs::remove_file(&legacy_proxy_cmd);
@@ -315,7 +333,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         fs::write(&web_cmd, web).map_err(|error| {
             log::error!("[dsh 自启(win)] 写 start-web.cmd 失败: {}", error);
             keyf(
-                "Failed to write {path}: {error}", &[
+                "Failed to write {path}: {error}",
+                &[
                     ("path", web_cmd.display().to_string()),
                     ("error", error.to_string()),
                 ],
@@ -328,13 +347,15 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         fs::create_dir_all(&startup).map_err(|error| {
             log::error!("[dsh 自启(win)] 创建启动文件夹失败: {}", error);
             keyf(
-                "Failed to create directory: {error}", &[("error", error.to_string())],
+                "Failed to create directory: {error}",
+                &[("error", error.to_string())],
             )
         })?;
         fs::write(&vbs, vbs_body).map_err(|error| {
             log::error!("[dsh 自启(win)] 写自启 vbs 失败: {}", error);
             keyf(
-                "Failed to write {path}: {error}", &[
+                "Failed to write {path}: {error}",
+                &[
                     ("path", vbs.display().to_string()),
                     ("error", error.to_string()),
                 ],
@@ -381,7 +402,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
         .map_err(|error| {
             log::error!("[dsh 自启(linux)] 写启动脚本失败: {}", error);
             keyf(
-                "Failed to write {path}: {error}", &[
+                "Failed to write {path}: {error}",
+                &[
                     ("path", web_script.display().to_string()),
                     ("error", error.to_string()),
                 ],
@@ -392,7 +414,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
             fs::create_dir_all(&units_dir).map_err(|error| {
                 log::error!("[dsh 自启(linux)] 创建 systemd 目录失败: {}", error);
                 keyf(
-                    "Failed to create directory: {error}", &[("error", error.to_string())],
+                    "Failed to create directory: {error}",
+                    &[("error", error.to_string())],
                 )
             })?;
             let unit = format!(
@@ -402,7 +425,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
             fs::write(&web_unit, unit).map_err(|error| {
                 log::error!("[dsh 自启(linux)] 写 systemd unit 失败: {}", error);
                 keyf(
-                    "Failed to write {path}: {error}", &[
+                    "Failed to write {path}: {error}",
+                    &[
                         ("path", web_unit.display().to_string()),
                         ("error", error.to_string()),
                     ],
@@ -417,12 +441,14 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
                 .map_err(|error| {
                     log::error!("[dsh 自启(linux)] 执行 systemctl enable 失败: {}", error);
                     keyf(
-                        "Cannot enable systemd unit: {error}", &[("error", error.to_string())],
+                        "Cannot enable systemd unit: {error}",
+                        &[("error", error.to_string())],
                     )
                 })?;
             if !output.status.success() {
                 let err = keyf(
-                    "Cannot enable systemd unit: {error}", &[(
+                    "Cannot enable systemd unit: {error}",
+                    &[(
                         "error",
                         String::from_utf8_lossy(&output.stderr).trim().to_string(),
                     )],
@@ -435,7 +461,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
             fs::create_dir_all(&autostart_dir).map_err(|error| {
                 log::error!("[dsh 自启(linux)] 创建 autostart 目录失败: {}", error);
                 keyf(
-                    "Failed to create directory: {error}", &[("error", error.to_string())],
+                    "Failed to create directory: {error}",
+                    &[("error", error.to_string())],
                 )
             })?;
             fs::write(
@@ -448,7 +475,8 @@ pub(crate) fn autostart_impl(enabled: bool) -> Result<(), String> {
             .map_err(|error| {
                 log::error!("[dsh 自启(linux)] 写 .desktop 失败: {}", error);
                 keyf(
-                    "Failed to write {path}: {error}", &[
+                    "Failed to write {path}: {error}",
+                    &[
                         ("path", web_desktop.display().to_string()),
                         ("error", error.to_string()),
                     ],
