@@ -1895,66 +1895,64 @@ fn post_install_guard(
     let after = capture_profile_layer();
     verify_landed(specifier, before, &after)?;
     let notices = strip_duplicate_mounts(before, &after)?;
-    let Some(name) = after
+    let new_dep = after
         .dependencies
         .iter()
         .find(|n| !before.dependencies.contains(n))
-        .cloned()
-    else {
-        // 无新增依赖（重装/升级/上次预检失败后的重试）：B5 与回滚没有对象，
-        // 但启动预检必须照跑——在这里提前返回 Ok 会把存量损坏（正是上次
-        // 无关预检失败后的重试场景）假报成安装成功。失败无回滚对象，一律
-        // 按无关失败如实报告、不动已装插件
-        if let Err(tail) = dump_config() {
-            return Err(keyf(
-                "Boot preflight failed (unrelated to this install): {detail}",
-                &[("detail", tail)],
-            ));
-        }
-        return Ok(notices);
-    };
+        .cloned();
     // B5：新包 claimed 的入口 id 撞上既有占用（patch bare 行 + 其它依赖的
     // claimed 入口），下次启动必重复挂载失败。绝不写共享 disabled 行——
-    // 那挡不住 loader 的重复检查还会误伤现有插件，回滚新包才是正解
-    let profile_dir = web_profile_dir()?;
-    let claimed: Vec<String> = claimed_entry_rows(&profile_dir, &name)
-        .into_iter()
-        .map(|(id, _)| id)
-        .collect();
-    let mut taken = after.row_ids.clone();
-    for dep in &after.dependencies {
-        if dep != &name {
-            taken.extend(
-                claimed_entry_rows(&profile_dir, dep)
-                    .into_iter()
-                    .map(|(id, _)| id),
-            );
+    // 那挡不住 loader 的重复检查还会误伤现有插件，回滚新包才是正解；无新
+    // 增依赖（重装/升级/上次预检失败后的重试）时无回滚对象，跳过
+    let claimed: Vec<String> = match &new_dep {
+        Some(name) => {
+            let profile_dir = web_profile_dir()?;
+            let claimed_ids: Vec<String> = claimed_entry_rows(&profile_dir, name)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
+            let mut taken = after.row_ids.clone();
+            for dep in &after.dependencies {
+                if dep != name {
+                    taken.extend(
+                        claimed_entry_rows(&profile_dir, dep)
+                            .into_iter()
+                            .map(|(id, _)| id),
+                    );
+                }
+            }
+            let overlap: Vec<String> = claimed_ids
+                .iter()
+                .filter(|id| taken.contains(*id))
+                .cloned()
+                .collect();
+            if !overlap.is_empty() {
+                return Err(rollback_install(
+                    app,
+                    name,
+                    &keyf(
+                        "New plugin claims entry ids already held by existing plugins ({ids})",
+                        &[("ids", overlap.join(", "))],
+                    ),
+                    specifier,
+                ));
+            }
+            claimed_ids
         }
-    }
-    let overlap: Vec<String> = claimed
-        .iter()
-        .filter(|id| taken.contains(*id))
-        .cloned()
-        .collect();
-    if !overlap.is_empty() {
-        return Err(rollback_install(
-            app,
-            &name,
-            &keyf(
-                "New plugin claims entry ids already held by existing plugins ({ids})",
-                &[("ids", overlap.join(", "))],
-            ),
-            specifier,
-        ));
-    }
-    // 启动预检：组合失败且输出牵连新包（包名或其入口 id）→ 回滚；无关失败
-    // 如实报告、不动任何东西
+        None => Vec::new(),
+    };
+    // 启动预检（无条件执行，重装/升级/重试也照跑）：组合失败且输出牵连新包
+    // （包名或其入口 id）→ 回滚；无关失败如实报告、不动任何东西。无新增
+    // 依赖时恒为无关失败——在这里提前返回 Ok 会把存量损坏（正是上次无关
+    // 预检失败后的重试场景）假报成安装成功
     if let Err(tail) = dump_config() {
-        let implicated = tail.contains(&name) || claimed.iter().any(|id| tail.contains(id));
+        let implicated = new_dep
+            .as_deref()
+            .is_some_and(|name| tail.contains(name) || claimed.iter().any(|id| tail.contains(id)));
         if implicated {
             return Err(rollback_install(
                 app,
-                &name,
+                new_dep.as_deref().unwrap_or_default(),
                 "Boot preflight failed",
                 specifier,
             ));
