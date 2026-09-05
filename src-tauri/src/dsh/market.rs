@@ -1883,9 +1883,10 @@ fn rollback_install(app: &tauri::AppHandle, name: &str, reason: &str, specifier:
 }
 
 /// 安装 CLI 退出码 0 之后的护栏编排：落盘校验（B8）→ 重复挂载剥离（B9）→
-/// 重复入口 id 回滚（B5）→ 启动预检。护栏判定失败时已尽力回滚，返回
-/// Err(display)；成功返回剥离事实 notices。对无法唯一定位回滚目标的形态
-/// （协议形态重装）只校验与预检、不自动回滚——回滚目标可能正是用户既有插件
+/// 重复入口 id 回滚（B5，仅新增依赖）→ 启动预检（无条件）。护栏判定失败
+/// 时已尽力回滚，返回 Err(display)；成功返回剥离事实 notices。对无法唯一
+/// 定位回滚目标的形态（协议形态重装）只校验与预检、不自动回滚——回滚目标
+/// 可能正是用户既有插件
 fn post_install_guard(
     app: &tauri::AppHandle,
     specifier: &str,
@@ -1900,6 +1901,16 @@ fn post_install_guard(
         .find(|n| !before.dependencies.contains(n))
         .cloned()
     else {
+        // 无新增依赖（重装/升级/上次预检失败后的重试）：B5 与回滚没有对象，
+        // 但启动预检必须照跑——在这里提前返回 Ok 会把存量损坏（正是上次
+        // 无关预检失败后的重试场景）假报成安装成功。失败无回滚对象，一律
+        // 按无关失败如实报告、不动已装插件
+        if let Err(tail) = dump_config() {
+            return Err(keyf(
+                "Boot preflight failed (unrelated to this install): {detail}",
+                &[("detail", tail)],
+            ));
+        }
         return Ok(notices);
     };
     // B5：新包 claimed 的入口 id 撞上既有占用（patch bare 行 + 其它依赖的
