@@ -1,10 +1,13 @@
-// 插件市场视图：二级导航拆"发现 / 已安装"两页，发现（目录浏览）为默认页。
-// 安装走 dsh plugin --profile web add（长操作），风险确认内联在卡片上完成。
+// 插件市场视图：二级导航拆"发现 / 收藏 / 已安装 / 诊断"四页，发现（目录浏览）
+// 为默认页。安装走 dsh plugin --profile web add（长操作），风险确认内联在卡片
+// 上完成；渲染崩溃由 MarketErrorBoundary 兜成恢复面板（G3）。
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import { updateSpecifierFor } from "@/shared/store/slices/market";
+import * as cmd from "@/shared/commands";
+import { tErr } from "@/shared/i18n/error";
 import {
   BTN,
   BTN_DANGER,
@@ -14,8 +17,18 @@ import {
   INPUT,
   INPUT_MONO,
 } from "@/shared/lib/ui";
-import type { InstalledPlugin, MarketCatalog, MarketPlugin, PluginUpdateInfo } from "@/shared/types";
+import type {
+  DiscoveryCompat,
+  InstalledPlugin,
+  MarketCatalog,
+  MarketDiagnostics,
+  MarketPlugin,
+  PluginUpdateInfo,
+} from "@/shared/types";
+import { i18n } from "@/shared/i18n";
+import { restartDshWeb } from "@/features/integration/dshActions";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { MarketErrorBoundary } from "./MarketErrorBoundary";
 
 // 每批渲染条数（2700+ 条目录全量渲染会卡），滚动到底加载下一批
 const PAGE_SIZE = 60;
@@ -110,15 +123,67 @@ function catalogLocale(language: string): "en" | "zh" {
   return language.startsWith("zh") ? "zh" : "en";
 }
 
-type MarketTab = "discover" | "favorites" | "installed";
+/// 失败安装的修复上下文（纯函数，供测试）：自包含事实——目标、错误、命令
+/// 输出，贴给任意 agent 即可着手排查。框架用稳定英文（与审计台账同一哲学：
+/// 不随界面语言漂移），只含 specifier/错误/输出，不含环境等本机信息
+export function repairContextText(specifier: string, message: string, lines: string[]): string {
+  return [
+    "Plugin install failed — repair context",
+    `Target: ${specifier}`,
+    `Error: ${message}`,
+    "",
+    "Command output:",
+    ...(lines.length > 0 ? lines : ["(no output captured)"]),
+  ].join("\n");
+}
+
+/// 复制修复上下文到剪贴板（失败卡与自定义安装对话框共用），反馈与 DshCard
+/// 的复制出口同一形态（toast，成功 info / 失败 error）。日志行只在锚定同一
+/// specifier 时并入（跨卡错位防御与 store 同一规则）
+async function copyInstallContext(
+  error: { specifier: string; message: string },
+  log: { specifier: string; lines: string[] } | null,
+  toast: (message: string, type?: "info" | "error" | "success") => void,
+): Promise<void> {
+  const lines = log?.specifier === error.specifier ? log.lines : [];
+  try {
+    await navigator.clipboard.writeText(repairContextText(error.specifier, error.message, lines));
+    toast(i18n.t("Install details copied"), "info");
+  } catch (e) {
+    toast(i18n.t("Failed to copy: {{error}}", { error: String(e) }), "error");
+  }
+}
+
+/// 终端/CLI 类插件启发式（G6，B 方 looksTerminal 同源思路）：名称与描述匹配
+/// 终端形态词（中英双语），否定从句先剔除——"不是 TUI"不该命中。纯展示警示
+/// 不拦截安装：是否运行终端类插件是用户决策，风险在确认弹层如实告知
+export function looksTerminal(name: string, description: string | null): boolean {
+  const text = `${name} ${description ?? ""}`
+    // 否定从句剔除到句末标点：词级误伤（如"不错"）可接受——警示宁可漏报
+    // 不可误报
+    .replace(/(?:not|no|without|never|非|无|不)[^.!?。！？]*/gi, " ");
+  return /\b(?:tui|cli|terminal|shell|command[- ]?line)\b|终端|命令行/i.test(text);
+}
+
+type MarketTab = "discover" | "favorites" | "installed" | "diagnostics";
 
 const MARKET_TABS: { id: MarketTab; labelKey: string }[] = [
   { id: "discover", labelKey: "Discover" },
   { id: "favorites", labelKey: "Favorites" },
   { id: "installed", labelKey: "Installed" },
+  { id: "diagnostics", labelKey: "Diagnostics" },
 ];
 
 export function MarketView() {
+  // 渲染崩溃兜底（G3）：边界只包市场域，恢复面板内重载不拖累整壳
+  return (
+    <MarketErrorBoundary>
+      <MarketViewInner />
+    </MarketErrorBoundary>
+  );
+}
+
+function MarketViewInner() {
   const { t } = useTranslation();
   const [tab, setTab] = useState<MarketTab>("discover");
   const refreshCatalog = useAppStore((s) => s.refreshMarketCatalog);
@@ -147,10 +212,75 @@ export function MarketView() {
           </button>
         ))}
       </nav>
-      {tab === "discover" ? <DiscoverPane /> : tab === "favorites" ? <FavoritesPane /> : <InstalledPane />}
+      {tab === "discover" ? (
+        <DiscoverPane />
+      ) : tab === "favorites" ? (
+        <FavoritesPane />
+      ) : tab === "installed" ? (
+        <InstalledPane />
+      ) : (
+        <DiagnosticsPane />
+      )}
       <BuildApprovalDialog />
       <ReleaseAgeConfirmDialog />
+      <UpdateNotesDialog />
     </main>
+  );
+}
+
+/// 发现/收藏页共用的目录卡网格：两页的卡片能力完全一致——浏览 + 星标 + 安装，
+/// 已装匹配卡只读呈现启停状态与安装事实（无更新/移除/启停入口，那些归已装页）。
+/// 两页差异只在插件清单来源：发现页 = 筛选后的目录切片，收藏页 = 收藏 ∩ 目录
+/// （收藏页条目必然在收藏清单里，favorited 表达式两页同源恒真）。已装匹配
+/// 双路径：npm 形态按包名精确对表，协议形态按仓库标识唯一命中
+function BrowseCardGrid({ plugins, catalog }: { plugins: MarketPlugin[]; catalog: MarketCatalog | null }) {
+  const { i18n } = useTranslation();
+  const locale = catalogLocale(i18n.language);
+  const installed = useAppStore((s) => s.marketInstalled);
+  const updates = useAppStore((s) => s.marketUpdates);
+  const installPlugin = useAppStore((s) => s.installMarketPlugin);
+  const installing = useAppStore((s) => s.marketInstalling);
+  const installLog = useAppStore((s) => s.marketInstallLog);
+  const installError = useAppStore((s) => s.marketInstallError);
+  const favorites = useAppStore((s) => s.marketFavorites);
+  const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
+  // 发现期兼容性（G4）与用户取消（G2）：两页共用同一份事实与同一取消通道
+  const marketCompat = useAppStore((s) => s.marketCompat);
+  const cancelInstall = useAppStore((s) => s.cancelMarketInstall);
+
+  const installedByName = useMemo(() => new Map(installed.map((p) => [p.name, p])), [installed]);
+
+  return (
+    <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+      {plugins.map((p) => {
+        const spec = p.installSpecifier ?? null;
+        const pkg = spec !== null ? packageNameFromSpecifier(spec) : null;
+        const installedPlugin =
+          pkg !== null
+            ? (installedByName.get(pkg) ?? null)
+            : spec !== null
+              ? protocolInstalledMatch(spec, specifierToCatalogName(spec), installed)
+              : null;
+        return (
+          <MarketCard
+            key={p.fullName}
+            plugin={p}
+            installed={installedPlugin}
+            info={installedPlugin ? (updates?.[installedPlugin.name] ?? null) : null}
+            catalog={catalog}
+            locale={locale}
+            installing={installing}
+            installLog={installLog}
+            installError={installError}
+            compat={pkg && marketCompat[pkg] ? marketCompat[pkg] : null}
+            onCancelInstall={cancelInstall}
+            favorited={favorites.includes(p.fullName)}
+            onToggleFavorite={() => toggleFavorite(p.fullName)}
+            onInstall={() => void installPlugin(p.installSpecifier!, p.name)}
+          />
+        );
+      })}
+    </div>
   );
 }
 
@@ -160,24 +290,19 @@ function DiscoverPane() {
   const locale = catalogLocale(i18n.language);
   const catalog = useAppStore((s) => s.marketCatalog);
   const catalogBusy = useAppStore((s) => s.marketCatalogBusy);
-  const installed = useAppStore((s) => s.marketInstalled);
-  const installPlugin = useAppStore((s) => s.installMarketPlugin);
-  const installing = useAppStore((s) => s.marketInstalling);
-  const installLog = useAppStore((s) => s.marketInstallLog);
-  const installError = useAppStore((s) => s.marketInstallError);
   const refreshCatalog = useAppStore((s) => s.refreshMarketCatalog);
-  const favorites = useAppStore((s) => s.marketFavorites);
-  const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
 
+  // 发现期兼容性（G4）：可见卡片的 npm 包名按需批量查询；"仅看兼容"过滤
+  // 只隐藏确认不兼容的条目（未声明/未查询保持可见，避免误判）
+  const marketCompat = useAppStore((s) => s.marketCompat);
+  const fetchMarketCompat = useAppStore((s) => s.fetchMarketCompat);
+  const [compatibleOnly, setCompatibleOnly] = useState(false);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("");
   const [sort, setSort] = useState<"stars" | "name">("stars");
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [customOpen, setCustomOpen] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-
-  const installedByName = useMemo(() => new Map(installed.map((p) => [p.name, p])), [installed]);
-  const updates = useAppStore((s) => s.marketUpdates);
 
   const categories = useMemo(() => {
     if (!catalog) return [];
@@ -193,6 +318,10 @@ function DiscoverPane() {
     const q = query.trim().toLowerCase();
     const list = catalog.plugins.filter((p) => {
       if (category && p.category !== category) return false;
+      if (compatibleOnly && p.installSpecifier) {
+        const pkg = packageNameFromSpecifier(p.installSpecifier);
+        if (pkg && marketCompat[pkg]?.compatible === false) return false;
+      }
       if (!q) return true;
       return (
         p.name.toLowerCase().includes(q) ||
@@ -205,12 +334,27 @@ function DiscoverPane() {
     return sort === "stars"
       ? [...list].sort((a, b) => (b.stars ?? -1) - (a.stars ?? -1))
       : [...list].sort((a, b) => a.fullName.localeCompare(b.fullName));
-  }, [catalog, query, category, sort]);
+  }, [catalog, query, category, sort, compatibleOnly, marketCompat]);
 
   // 过滤条件变化后回到列表头部
   useEffect(() => {
     setVisible(PAGE_SIZE);
-  }, [query, category, sort]);
+  }, [query, category, sort, compatibleOnly]);
+
+  // 可见卡片的兼容性按需拉取（G4）：滚动/筛选导致可见集合变化时补查缺失项；
+  // store 侧会话去重防失败项循环重拉
+  const visibleNames = useMemo(
+    () =>
+      filtered
+        .slice(0, visible)
+        .map((p) => (p.installSpecifier ? packageNameFromSpecifier(p.installSpecifier) : null))
+        .filter((x): x is string => x !== null),
+    [filtered, visible],
+  );
+  useEffect(() => {
+    const missing = visibleNames.filter((n) => !(n in marketCompat));
+    if (missing.length > 0) void fetchMarketCompat(missing);
+  }, [visibleNames, marketCompat, fetchMarketCompat]);
 
   // 滚动到底自动加载下一批
   useEffect(() => {
@@ -287,6 +431,9 @@ function DiscoverPane() {
           <FilterBtn active={sort === "name"} onClick={() => setSort("name")}>
             {t("By Name")}
           </FilterBtn>
+          <FilterBtn active={compatibleOnly} onClick={() => setCompatibleOnly((v) => !v)}>
+            {t("Compatible only")}
+          </FilterBtn>
           <span
             className="shrink-0 whitespace-nowrap rounded bg-muted px-3.5 py-1.5 text-sm font-medium tabular-nums text-muted-foreground"
             id="market-count"
@@ -299,34 +446,7 @@ function DiscoverPane() {
       {!catalog && catalogBusy && <p className="text-sm opacity-60">{t("Loading catalog…")}</p>}
       {catalog && filtered.length === 0 && <p className="text-sm opacity-60">{t("No plugins match your filters.")}</p>}
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        {filtered.slice(0, visible).map((p) => {
-          const spec = p.installSpecifier ?? null;
-          const pkg = spec !== null ? packageNameFromSpecifier(spec) : null;
-          const installedPlugin =
-            pkg !== null
-              ? (installedByName.get(pkg) ?? null)
-              : spec !== null
-                ? protocolInstalledMatch(spec, specifierToCatalogName(spec), installed)
-                : null;
-          return (
-            <MarketCard
-              key={p.fullName}
-              plugin={p}
-              installed={installedPlugin}
-              info={installedPlugin ? (updates?.[installedPlugin.name] ?? null) : null}
-              catalog={catalog}
-              locale={locale}
-              installing={installing}
-              installLog={installLog}
-              installError={installError}
-              favorited={favorites.includes(p.fullName)}
-              onToggleFavorite={() => toggleFavorite(p.fullName)}
-              onInstall={() => void installPlugin(p.installSpecifier!, p.name)}
-            />
-          );
-        })}
-      </div>
+      <BrowseCardGrid plugins={filtered.slice(0, visible)} catalog={catalog} />
       <div ref={sentinelRef} className="h-4" />
       {customOpen && <CustomInstallDialog onClose={() => setCustomOpen(false)} />}
       {visible < filtered.length && (
@@ -340,23 +460,15 @@ function DiscoverPane() {
   );
 }
 
-/// 收藏页：收藏清单 × 目录条目按收藏顺序取交集，复用发现页同一 PluginCard
-/// （星标可就地取消）。目录未拉到时不谎称"没有收藏"——只渲染交集，如实留白
+/// 收藏页：收藏清单 × 目录条目按收藏顺序取交集（星标可就地取消，取消即从
+/// 本页消失）。卡片网格与能力与发现页完全一致（BrowseCardGrid），差异只在
+/// 插件清单来源。目录未拉到时不谎称"没有收藏"——只渲染交集，如实留白
 function FavoritesPane() {
-  const { t, i18n } = useTranslation();
-  const locale = catalogLocale(i18n.language);
+  const { t } = useTranslation();
   const catalog = useAppStore((s) => s.marketCatalog);
   const catalogBusy = useAppStore((s) => s.marketCatalogBusy);
-  const installed = useAppStore((s) => s.marketInstalled);
-  const installPlugin = useAppStore((s) => s.installMarketPlugin);
-  const installing = useAppStore((s) => s.marketInstalling);
-  const installLog = useAppStore((s) => s.marketInstallLog);
-  const installError = useAppStore((s) => s.marketInstallError);
   const favorites = useAppStore((s) => s.marketFavorites);
-  const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
 
-  const installedByName = useMemo(() => new Map(installed.map((p) => [p.name, p])), [installed]);
-  const updates = useAppStore((s) => s.marketUpdates);
   const byFullName = useMemo(() => new Map((catalog?.plugins ?? []).map((p) => [p.fullName, p])), [catalog]);
   const plugins = useMemo(() => favorites.flatMap((f) => byFullName.get(f) ?? []), [favorites, byFullName]);
 
@@ -372,34 +484,7 @@ function FavoritesPane() {
         <p className="text-sm opacity-60">{t("No favorites yet. Star plugins on the Discover tab to pin them here.")}</p>
       )}
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        {plugins.map((p) => {
-          const spec = p.installSpecifier ?? null;
-          const pkg = spec !== null ? packageNameFromSpecifier(spec) : null;
-          const installedPlugin =
-            pkg !== null
-              ? (installedByName.get(pkg) ?? null)
-              : spec !== null
-                ? protocolInstalledMatch(spec, specifierToCatalogName(spec), installed)
-                : null;
-          return (
-            <MarketCard
-              key={p.fullName}
-              plugin={p}
-              installed={installedPlugin}
-              info={installedPlugin ? (updates?.[installedPlugin.name] ?? null) : null}
-              catalog={catalog}
-              locale={locale}
-              installing={installing}
-              installLog={installLog}
-              installError={installError}
-              favorited
-              onToggleFavorite={() => toggleFavorite(p.fullName)}
-              onInstall={() => void installPlugin(p.installSpecifier!, p.name)}
-            />
-          );
-        })}
-      </div>
+      <BrowseCardGrid plugins={plugins} catalog={catalog} />
     </div>
   );
 }
@@ -419,16 +504,26 @@ function InstalledPane() {
   const refreshUpdates = useAppStore((s) => s.refreshMarketUpdates);
   const updatePlugin = useAppStore((s) => s.updateMarketPlugin);
   const updateAll = useAppStore((s) => s.updateAllMarketPlugins);
+  const setPluginEnabled = useAppStore((s) => s.setMarketPluginEnabled);
+  // 重启 dsh web（启停生效的就近入口）：复用 Shell 域一键重启（busy 守卫、
+  // 时间轴认领、托盘同步都在 dshActions），busy 镜像与 DshCard 同一套标志
+  const dshStartBusy = useAppStore((s) => s.dshStartBusy);
+  const dshStopBusy = useAppStore((s) => s.dshStopBusy);
+  const dshRestartBusy = useAppStore((s) => s.dshRestartBusy);
+  const dshRecheckBusy = useAppStore((s) => s.dshRecheckBusy);
   const updating = useAppStore((s) => s.marketUpdating);
   const installLog = useAppStore((s) => s.marketInstallLog);
   const installError = useAppStore((s) => s.marketInstallError);
   const favorites = useAppStore((s) => s.marketFavorites);
   const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
+  const cancelInstall = useAppStore((s) => s.cancelMarketInstall);
+  const openNotes = useAppStore((s) => s.openMarketReleaseNotes);
 
   // 目录匹配表：给已装卡片补全描述/分类/星标/链接（目录没有的如实留白）
   const byName = useMemo(() => new Map((catalog?.plugins ?? []).map((p) => [p.name, p])), [catalog]);
   const pendingCount = useMemo(
-    () => Object.values(updates ?? {}).filter((u) => u.updateAvailable && !u.managed).length,
+    // 兼容门禁判 false 的更新不进批量计数（单卡按钮已禁用，批量入口同样排除）
+    () => Object.values(updates ?? {}).filter((u) => u.updateAvailable && !u.managed && u.compatible !== false).length,
     [updates],
   );
 
@@ -453,6 +548,16 @@ function InstalledPane() {
               {updating !== null ? t("Working…") : t("Update all ({{count}})", { count: pendingCount })}
             </button>
           )}
+          {/* 启停/更新落盘后重启生效的就近入口；启停开关的「重启后生效」
+              提示即指向这里。流程复用 Shell 域一键重启（先关后启 + 启动时间线） */}
+          <button
+            className={BTN_OUTLINE}
+            disabled={dshStartBusy || dshStopBusy || dshRestartBusy || dshRecheckBusy}
+            onClick={() => void restartDshWeb()}
+            id="btn-market-restart-dsh"
+          >
+            {dshRestartBusy ? t("Restarting...") : t("Restart dsh web")}
+          </button>
         </div>
       </div>
 
@@ -479,7 +584,10 @@ function InstalledPane() {
                 if (catalogPlugin) toggleFavorite(catalogPlugin.fullName);
               }}
               onUpdate={() => void updatePlugin(p.name)}
+              onNotes={() => void openNotes(p.name)}
+              onCancelInstall={cancelInstall}
               onRemove={() => void removePlugin(p.name)}
+              onSetEnabled={p.managed ? undefined : (enabled) => void setPluginEnabled(p.name, enabled)}
             />
           );
         })}
@@ -489,10 +597,15 @@ function InstalledPane() {
 }
 
 /// 市场卡片：发现/收藏/已安装三页唯一实现。数据进、状态机出——目录条目
-/// plugin 与落盘条目 installed 推导出唯一卡片状态，状态条左侧恒为安装事实、
-/// 右侧为该状态下可用的操作（未接回调的操作不出现：发现/收藏页只管浏览与安装，
-/// 更新/移除归已安装页）。目录缺位（已装但目录没有）时如实只展示落盘事实。
-/// 收藏星标独占右上角，★ 计数在 meta 行——两个五角星不再并排撞义
+/// plugin 与落盘条目 installed 推导出唯一卡片状态；页面能力差异由回调决定，
+/// 未接回调的操作不渲染：
+///   发现/收藏（BrowseCardGrid 接线）——浏览 + 星标 + 安装；已装匹配卡只读
+///   （启停状态以只读胶囊呈现，无更新/移除/启停开关）；
+///   已安装（InstalledPane 接线）——更新/重装/移除/启停开关（重启入口在页头）。
+/// 布局分区（三页一致）：右上角 = 安装事实胶囊（Installed/Not installed）+
+/// 收藏星标；左下角 = 启停状态条（开关即状态，无开关入口回退只读胶囊）+
+/// 版本 + 兼容门禁；右下角 = 该状态的操作按钮。目录缺位（已装但目录没有）
+/// 时如实只展示落盘事实
 type CardState =
   | "managed"
   | "removing"
@@ -530,6 +643,24 @@ function FilterBtn({
   );
 }
 
+/// 状态胶囊（圆点 + 词）：安装事实（卡片右上角）与启停状态（状态条）共用
+/// 同一视觉语言——绿点主色底 / 灰点灰底
+function StateBadge({ tone, label }: { tone: "ok" | "muted"; label: string }) {
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-medium ${
+        tone === "ok" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"
+      }`}
+    >
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${tone === "ok" ? "bg-emerald-500" : "bg-muted-foreground"}`}
+        aria-hidden="true"
+      />
+      {label}
+    </span>
+  );
+}
+
 function MarketCard({
   plugin,
   installed,
@@ -541,11 +672,15 @@ function MarketCard({
   removing = null,
   installLog = null,
   installError = null,
+  compat = null,
   favorited,
   onToggleFavorite,
   onInstall,
   onUpdate,
+  onNotes,
+  onCancelInstall,
   onRemove,
+  onSetEnabled,
 }: {
   /** 目录条目；已装但目录没有（如 file: 手动装）为 null */
   plugin: MarketPlugin | null;
@@ -562,23 +697,38 @@ function MarketCard({
   installLog?: { specifier: string; lines: string[] } | null;
   /** 最近一次安装失败（specifier 锚定卡片；重试/关闭时清除） */
   installError?: { specifier: string; message: string } | null;
+  /** 发现期兼容性事实（G4，npm 包名键）：确认不兼容时红字明示要求 */
+  compat?: DiscoveryCompat | null;
   favorited: boolean;
   onToggleFavorite: () => void;
   onInstall?: () => void;
-  /** 更新/重装共用：正常以 name@latest 重跑安装，latest 在 pnpm
+  /** 重装（无更新态）：以 name@latest 重跑安装，latest 在 pnpm
       minimumReleaseAge 窗口内时先弹供应链确认框、确认后钉版本（见
       updateSpecifierFor）；同一命令通道。已装页必传，发现/收藏页不传
       （永不渲染对应分支） */
   onUpdate?: () => void;
+  /** 更新（有更新态）：先弹更新说明对话框（G5），确认后走既有更新管线。
+      缺省时 Update 回退 onUpdate（不弹说明） */
+  onNotes?: () => void;
+  /** 取消当前安装/更新（G2）：后端置位取消令牌杀子进程，幂等。已装/
+      更新中的长操作按钮旁渲染 */
+  onCancelInstall?: () => void;
   onRemove?: () => void;
+  /** 翻转下次启动启用状态（disabled 覆盖行，重启生效）。已装页对非受管
+      插件传入；受管插件由修复流程管理，不出开关 */
+  onSetEnabled?: (enabled: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
   const dismissMarketInstallError = useAppStore((s) => s.dismissMarketInstallError);
+  const toast = useAppStore((s) => s.toast);
   const name = plugin?.name ?? installed?.name ?? "";
   const url = plugin?.url ?? null;
   const description = plugin?.description ? localizedDescription(plugin.description, locale) : null;
-  const current = info?.installedVersion ?? null;
+  // 版本号读已装列表的磁盘事实（installed.version），更新成功后随
+  // refreshMarketInstalled 即时正确；info（registry 比对）只负责更新判定，
+  // 不再是版本号的来源
+  const current = installed?.version ?? null;
   const latest = info?.latestVersion ?? null;
   // 卡片的安装身份：未装卡片是目录安装标识；已装卡片是更新重装标识
   // （与 updateMarketPlugin 共用 updateSpecifierFor——specifier 是
@@ -606,6 +756,8 @@ function MarketCard({
     : null;
   // meta 行尾部：装前关心谁家的仓库（owner），装后关心落盘 spec
   const metaTail = installed ? installed.spec : (plugin?.fullName.split("/")[0] ?? null);
+  // 终端/CLI 类插件警示（G6）：确认态如实告知风险，不拦截安装
+  const terminalWarning = plugin !== null && looksTerminal(name, description);
 
   const removeBtn = onRemove && (
     <button
@@ -614,8 +766,29 @@ function MarketCard({
       onClick={onRemove}
       aria-label={`${t("Remove")} ${name}`}
     >
-      {state === "removing" ? t("Working…") : t("Remove")}
+      {state === "removing" ? t("Removing…") : t("Remove")}
     </button>
+  );
+
+  // 启停开关（带状态文字的胶囊开关 text-switch，样式同 codex-pro-max
+  // 配置看守参数行）：写入是本地文件操作（瞬时，无 busy 态；重复点击幂等——
+  // 判定核内容未变化即免写盘）。移除中禁用——翻转启停与移除后的孤儿行
+  // 清理写同一 patch 文件，二者并发会互相覆盖。开关置于状态条左下角、
+  // 胶囊文字即启停状态（Enabled/Disabled）；安装/更新/移除等操作在右下
+  // 角操作区
+  const toggleEnabledBtn = onSetEnabled && installed && !installed.managed && (
+    <input
+      type="checkbox"
+      className="text-switch"
+      role="switch"
+      data-state-text={installed.enabled ? t("Enabled") : t("Disabled")}
+      checked={installed.enabled}
+      disabled={state === "removing"}
+      onChange={() => onSetEnabled(!installed.enabled)}
+      aria-checked={installed.enabled}
+      aria-label={`${installed.enabled ? t("Disable") : t("Enable")} ${name}`}
+      title={t("Takes effect after dsh web restarts.")}
+    />
   );
 
   const statusLeft: ReactNode =
@@ -624,7 +797,14 @@ function MarketCard({
     ) : state === "manual" ? (
       <span className="text-xs opacity-50">{t("Manual install only")}</span>
     ) : state === "confirm" ? (
-      <span className="text-xs opacity-70">{t("Install this plugin?")}</span>
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-xs opacity-70">{t("Install this plugin?")}</span>
+        {terminalWarning && (
+          <span className="text-[11px] text-amber-700 dark:text-amber-400">
+            {t("Looks like a terminal/CLI plugin — it will run shell commands in your environment.")}
+          </span>
+        )}
+      </span>
     ) : state === "installing" ? (
       <span className="text-xs">{t("Installing…")}</span>
     ) : state === "installFailed" ? (
@@ -635,25 +815,33 @@ function MarketCard({
         {t("Install failed: {{error}}", { error: installError?.message ?? "" })}
       </span>
     ) : installed ? (
-      // 安装事实用徽章呈现（与卡内 deprecated/managed 徽章同一语言），
-      // 网格扫读时绿=已装、灰=未装一眼分层；版本号 mono 跟在徽章右侧
+      // 左下角启停状态条：有开关入口（已安装页）时开关即状态呈现；发现/
+      // 收藏页的已装匹配卡无开关入口，回退只读状态胶囊。安装事实胶囊在
+      // 右上角。更新目标声明了更高 dsh 最低版本（engines.dsh 门禁判 false）
+      // 时红字明示要求，更新按钮同时禁用
       <span className="flex min-w-0 items-center gap-1.5 text-xs">
-        <span className="inline-flex shrink-0 items-center gap-1.5 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
-          {t("Installed")}
-        </span>
+        {toggleEnabledBtn ?? (
+          <StateBadge tone={installed.enabled ? "ok" : "muted"} label={t(installed.enabled ? "Enabled" : "Disabled")} />
+        )}
         {current && (
           <span className="font-mono">
             v{current}
             {outdated && <span className="ml-1 text-emerald-600 dark:text-emerald-400">→ v{latest}</span>}
           </span>
         )}
+        {outdated && info?.compatible === false && info?.requiresDsh && (
+          <span className="shrink-0 text-red-600 dark:text-red-400">
+            {t("dsh {{version}} required", { version: info.requiresDsh })}
+          </span>
+        )}
       </span>
-    ) : (
-      <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-        {t("Not installed")}
+    ) : compat?.compatible === false && compat.requiresDsh ? (
+      // 发现期兼容门禁（G4）：目录卡片在安装前就明示 dsh 版本要求（安装/更新
+      // 期的 fail-closed 门禁另有判定，这里只是把"点了才发现"提前）
+      <span className="shrink-0 text-xs text-red-600 dark:text-red-400">
+        {t("dsh {{version}} required", { version: compat.requiresDsh })}
       </span>
-    );
+    ) : null;
 
   const actions: ReactNode =
     state === "idle" ? (
@@ -677,13 +865,29 @@ function MarketCard({
         </button>
       </>
     ) : state === "installing" ? (
-      <button className={BTN_PRIMARY} disabled>
-        {t("Installing…")}
-      </button>
+      <>
+        <button className={BTN_PRIMARY} disabled>
+          {t("Installing…")}
+        </button>
+        {/* 用户取消（G2）：后端置位取消令牌杀子进程，取消走失败路径（幂等） */}
+        {onCancelInstall && (
+          <button className={BTN_SM} onClick={onCancelInstall}>
+            {t("Cancel")}
+          </button>
+        )}
+      </>
     ) : state === "installFailed" ? (
       <>
         <button className={BTN_PRIMARY} onClick={onInstall ?? onUpdate}>
           {t("Retry")}
+        </button>
+        {/* 复制修复上下文：把目标/错误/输出组装成自包含文本贴给任意 agent；
+            状态机保证此分支 installError 非空，守卫只为类型收窄 */}
+        <button
+          className={BTN_SM}
+          onClick={() => installError && void copyInstallContext(installError, installLog, toast)}
+        >
+          {t("Copy error")}
         </button>
         <button className={BTN_SM} onClick={dismissMarketInstallError}>
           {t("Dismiss")}
@@ -701,19 +905,40 @@ function MarketCard({
       )
     ) : outdated || state === "updating" ? (
       <>
-        {onUpdate && (
+        {(onNotes ?? onUpdate) && (
           <button
             className={BTN_PRIMARY}
-            disabled={updating !== null}
-            onClick={onUpdate}
+            disabled={updating !== null || info?.compatible === false}
+            onClick={onNotes ?? onUpdate}
             aria-label={`${t("Update")} ${name}`}
+            title={
+              info?.compatible === false && info?.requiresDsh
+                ? t("Requires dsh {{version}} or newer.", { version: info.requiresDsh })
+                : undefined
+            }
           >
             {state === "updating" ? t("Working…") : t("Update")}
           </button>
         )}
+        {/* 更新中的用户取消（G2）：与安装共用同一取消通道 */}
+        {state === "updating" && onCancelInstall && (
+          <button className={BTN_SM} onClick={onCancelInstall}>
+            {t("Cancel")}
+          </button>
+        )}
         {removeBtn}
       </>
-    ) : state === "installed" || state === "removing" ? (
+    ) : state === "removing" ? (
+      <>
+        {removeBtn}
+        {/* 移除中的用户取消（G2）：与安装/更新共用同一取消通道 */}
+        {onCancelInstall && (
+          <button className={BTN_SM} onClick={onCancelInstall}>
+            {t("Cancel")}
+          </button>
+        )}
+      </>
+    ) : state === "installed" ? (
       <>
         {current && latest !== null && <span className="text-xs opacity-50">{t("Up to date")}</span>}
         {/* 无更新时提供重装：与 Update 同一回调（onUpdate = name@latest 重跑安装），
@@ -765,33 +990,37 @@ function MarketCard({
             </span>
           )}
         </div>
-        {/* 收藏星标：已收藏 amber 实心，未收藏随整卡悬浮/键盘聚焦显现；
+        {/* 右上角：收藏星标 + 安装事实胶囊（绿 Installed / 灰 Not installed，
+            与状态条的启停状态分家）。星标未悬浮时藏起，胶囊恒显；
             内层 span 以 favorited 为 key，切换时重挂载重播 pop 动画，按钮本体
             不重挂载、焦点保留。纯落盘卡片（目录缺位）无星标 */}
-        {plugin && (
-          <button
-            type="button"
-            className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
-              favorited ? "text-amber-500" : "text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-            }`}
-            onClick={onToggleFavorite}
-            aria-pressed={favorited}
-            aria-label={`${favorited ? t("Remove from favorites") : t("Add to favorites")} ${name}`}
-            title={favorited ? t("Remove from favorites") : t("Add to favorites")}
-          >
-            <span key={favorited ? "on" : "off"} className="star-pop flex">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-                <path
-                  d="M12 2.5l2.9 5.9 6.5.95-4.7 4.6 1.1 6.5L12 17.4l-5.8 3.05 1.1-6.5-4.7-4.6 6.5-.95z"
-                  fill={favorited ? "currentColor" : "none"}
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </span>
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {plugin && (
+            <button
+              type="button"
+              className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+                favorited ? "text-amber-500" : "text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              }`}
+              onClick={onToggleFavorite}
+              aria-pressed={favorited}
+              aria-label={`${favorited ? t("Remove from favorites") : t("Add to favorites")} ${name}`}
+              title={favorited ? t("Remove from favorites") : t("Add to favorites")}
+            >
+              <span key={favorited ? "on" : "off"} className="star-pop flex">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                  <path
+                    d="M12 2.5l2.9 5.9 6.5.95-4.7 4.6 1.1 6.5L12 17.4l-5.8 3.05 1.1-6.5-4.7-4.6 6.5-.95z"
+                    fill={favorited ? "currentColor" : "none"}
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
+            </button>
+          )}
+          {installed ? <StateBadge tone="ok" label={t("Installed")} /> : <StateBadge tone="muted" label={t("Not installed")} />}
+        </div>
       </div>
       {metaParts.length > 0 && (
         <p className="truncate text-xs opacity-60">
@@ -818,10 +1047,13 @@ function MarketCard({
       {(state === "installing" || state === "updating" || state === "installFailed") && installLog && (
         <InstallLogView log={installLog} failed={state === "installFailed"} />
       )}
-      {/* 状态条：mt-auto + 上边线，grid 拉伸行内所有卡片状态条底对齐 */}
-      <div className="mt-auto flex items-center justify-between gap-2 border-t border-border pt-2.5">
+      {/* 状态条：mt-auto + 上边线，grid 拉伸行内所有卡片状态条底对齐。
+          操作区用 ml-auto 而非容器 justify-between：未装卡的状态条左侧为空
+          （安装事实胶囊在右上角），justify-between 会让仅剩的操作区落到
+          左端——安装按钮必须恒在右下角 */}
+      <div className="mt-auto flex items-center gap-2 border-t border-border pt-2.5">
         {statusLeft}
-        <div className="flex items-center gap-1.5">{actions}</div>
+        <div className="ml-auto flex items-center gap-1.5">{actions}</div>
       </div>
     </article>
   );
@@ -1011,6 +1243,7 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
   const installError = useAppStore((s) => s.marketInstallError);
   const pendingApproval = useAppStore((s) => s.marketPendingApproval);
   const dismissError = useAppStore((s) => s.dismissMarketInstallError);
+  const toast = useAppStore((s) => s.toast);
 
   const candidate = useMemo(() => normalizeCustomSpecifier(address), [address]);
   const invalid = address.trim() !== "" && candidate === null;
@@ -1101,7 +1334,13 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
             )}
             <InstallLogView log={installLog} failed={phase === "failed"} />
             {phase === "failed" && (
-              <div className="mt-2 flex justify-end">
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  className={BTN_OUTLINE}
+                  onClick={() => installError && void copyInstallContext(installError, installLog, toast)}
+                >
+                  {t("Copy error")}
+                </button>
                 <button
                   className={BTN_PRIMARY}
                   disabled={installing !== null}
@@ -1133,3 +1372,203 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+/// 更新说明对话框（G5）：更新前展示目录侧探针的 release 正文与最近提交，
+/// 用户知情后确认走既有更新管线（可能再弹供应链窗口确认框）。数据缺失
+/// （探针未覆盖/查询失败）如实显示"暂无说明"，不阻塞更新。焦点落取消
+/// （安全默认），Esc 等价取消
+function UpdateNotesDialog() {
+  const { t } = useTranslation();
+  const pending = useAppStore((s) => s.marketReleaseNotes);
+  const updating = useAppStore((s) => s.marketUpdating);
+  const updates = useAppStore((s) => s.marketUpdates);
+  const confirm = useAppStore((s) => s.confirmMarketReleaseNotesUpdate);
+  const dismiss = useAppStore((s) => s.dismissMarketReleaseNotes);
+  if (!pending) return null;
+  const busy = updating === pending.name;
+  const info = updates?.[pending.name] ?? null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      role="dialog"
+      aria-modal="true"
+      id="update-notes-dialog"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) dismiss();
+      }}
+    >
+      <div className="w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-lg">
+        <h3 className="text-sm font-semibold">{t("Update notes")}</h3>
+        <div className="mt-2 rounded bg-muted px-3 py-2 font-mono text-xs">
+          {info?.installedVersion ? (
+            <>
+              {info.installedVersion} <span className="opacity-50">→</span> {info.latestVersion ?? "?"}
+            </>
+          ) : (
+            (info?.latestVersion ?? pending.name)
+          )}
+        </div>
+        {pending.busy ? (
+          <p className="mt-3 text-xs opacity-60">{t("Loading notes…")}</p>
+        ) : pending.notes?.release ? (
+          <div className="mt-3 max-h-64 overflow-y-auto rounded border border-border bg-muted/40 px-3 py-2">
+            <p className="text-xs font-medium">
+              {pending.notes.release.name ?? pending.notes.release.tag ?? pending.name}
+            </p>
+            <pre className="mt-1 whitespace-pre-wrap break-words text-xs opacity-80">
+              {pending.notes.release.body}
+            </pre>
+          </div>
+        ) : (
+          <p className="mt-3 text-xs opacity-60">{t("No release notes for this plugin.")}</p>
+        )}
+        {!pending.busy && pending.notes !== null && pending.notes.commits.length > 0 && (
+          <div className="mt-2">
+            <p className="text-xs font-medium opacity-70">{t("Recent commits")}</p>
+            <ul className="mt-1 max-h-32 overflow-y-auto text-xs opacity-70">
+              {pending.notes.commits.map((c) => (
+                <li key={c.sha} className="truncate">
+                  <span className="font-mono opacity-60">{c.sha.slice(0, 7)}</span> {c.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="mt-4 flex justify-end gap-2">
+          <button className={BTN_OUTLINE} disabled={busy} onClick={dismiss} id="update-notes-cancel" autoFocus>
+            {t("Cancel")}
+          </button>
+          <button className={BTN_PRIMARY} disabled={busy} onClick={() => void confirm()} id="update-notes-confirm">
+            {busy ? t("Working…") : t("Update")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/// 诊断页（G7）：组合事实读 dsh --dump-config 的自有输出（重复入口 id /
+/// 孤儿 patch 行 / 禁用计数），零组合语义复刻——随上游升级零漂移。进入
+/// 页面自动跑一次；诊断失败原样上报（组合跑不起来正是要暴露的事实）。
+/// 复制出口（D2 同一哲学）组装自包含修复上下文
+function DiagnosticsPane() {
+  const { t } = useTranslation();
+  const [diag, setDiag] = useState<MarketDiagnostics | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const toast = useAppStore((s) => s.toast);
+
+  useEffect(() => {
+    let alive = true;
+    setBusy(true);
+    cmd.marketDiagnostics()
+      .then((d) => {
+        if (alive) setDiag(d);
+      })
+      .catch((e) => {
+        if (alive) setError(String(e));
+      })
+      .finally(() => {
+        if (alive) setBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const rerun = () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    cmd.marketDiagnostics()
+      .then((d) => setDiag(d))
+      .catch((e) => setError(String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  const copyDiagnostics = () => {
+    if (!diag) return;
+    const lines = [
+      "Plugin profile diagnostics — repair context",
+      "Entries: " + diag.entries + " (" + diag.disabled + " disabled)",
+      ...(diag.duplicates.length > 0
+        ? ["Duplicate entry ids:", ...diag.duplicates.map((d) => "- " + d.id + " x" + d.count + " (" + d.layers.join(", ") + ")")]
+        : []),
+      ...(diag.orphans.length > 0 ? ["Orphan patch rows:", ...diag.orphans.map((o) => "- " + o)] : []),
+    ];
+    navigator.clipboard
+      .writeText(lines.join("\n"))
+      .then(() => toast(i18n.t("Diagnostics copied"), "info"))
+      .catch((e) => toast(i18n.t("Failed to copy: {{error}}", { error: String(e) }), "error"));
+  };
+
+  return (
+    <div className="flex-1 overflow-y-auto p-6" id="market-diagnostics">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">{t("Diagnostics")}</h2>
+          <p className="text-xs opacity-60">{t("Composition facts read from dsh --dump-config.")}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {diag && (
+            <button className={BTN} onClick={() => copyDiagnostics()} id="market-diagnostics-copy">
+              {t("Copy diagnostics")}
+            </button>
+          )}
+          <button className={BTN} disabled={busy} onClick={() => rerun()} id="market-diagnostics-rerun">
+            {busy ? t("Working…") : t("Rerun")}
+          </button>
+        </div>
+      </div>
+
+      {busy && <p className="text-sm opacity-60">{t("Working…")}</p>}
+      {error && (
+        <p className="text-xs text-red-600 dark:text-red-400" title={error}>
+          {t("Diagnostics failed: {{error}}", { error: tErr(error) })}
+        </p>
+      )}
+      {diag && (
+        <>
+          <p className="text-sm">
+            {t("{{count}} entries", { count: diag.entries })}
+            <span className="mx-1.5 opacity-40">·</span>
+            {t("{{count}} disabled", { count: diag.disabled })}
+          </p>
+          {diag.duplicates.length === 0 && diag.orphans.length === 0 && (
+            <p className="mt-3 text-sm opacity-60">{t("No problems found.")}</p>
+          )}
+          {diag.duplicates.length > 0 && (
+            <section className="mt-4">
+              <h3 className="text-sm font-semibold text-red-600 dark:text-red-400">{t("Duplicate entry ids")}</h3>
+              <p className="mt-1 text-xs opacity-60">{t("The next dsh boot will fail until these are resolved.")}</p>
+              <ul className="mt-2 space-y-1">
+                {diag.duplicates.map((d) => (
+                  <li key={d.id} className="rounded border border-border px-3 py-2 font-mono text-xs">
+                    {d.id}
+                    <span className="ml-2 opacity-60">×{d.count}</span>
+                    <span className="ml-2 opacity-60">{d.layers.join(" · ")}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {diag.orphans.length > 0 && (
+            <section className="mt-4">
+              <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400">{t("Orphan patch rows")}</h3>
+              <ul className="mt-2 space-y-1">
+                {diag.orphans.map((o) => (
+                  <li key={o} className="rounded border border-border px-3 py-2 text-xs">
+                    <span className="font-mono">{o}</span>
+                    <span className="ml-2 opacity-60">
+                      {t("Referenced by a patch row but missing — remove the override row from cordis.patch.yml.")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

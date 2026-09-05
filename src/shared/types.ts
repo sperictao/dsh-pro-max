@@ -17,9 +17,14 @@ export type { MarketPlugin } from "./bindings/MarketPlugin";
 export type { MarketCatalog } from "./bindings/MarketCatalog";
 export type { InstalledPlugin } from "./bindings/InstalledPlugin";
 export type { InstallReceipt } from "./bindings/InstallReceipt";
+export type { InstallNotice } from "./bindings/InstallNotice";
 export type { InstallOutcome } from "./bindings/InstallOutcome";
 export type { MarketInstallLogEvent } from "./bindings/MarketInstallLogEvent";
 export type { PluginUpdateInfo } from "./bindings/PluginUpdateInfo";
+export type { DiscoveryCompat } from "./bindings/DiscoveryCompat";
+export type { MarketDiagnostics } from "./bindings/MarketDiagnostics";
+export type { DiagnosticDuplicate } from "./bindings/DiagnosticDuplicate";
+export type { PluginReleaseNotes } from "./bindings/PluginReleaseNotes";
 
 // 别名：bindings 按 Rust 结构名导出，消费方沿用的前端名在此一次映射
 export type { StepEvent as DshStepEvent } from "./bindings/StepEvent";

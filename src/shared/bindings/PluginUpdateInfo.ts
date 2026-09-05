@@ -32,4 +32,15 @@ latestInReleaseAgeWindow: boolean,
  * 多久了"——新鲜度是用户"等窗口过期还是现在就装"决策的核心事实；
  * packument 不可得（网络失败等）为 None，前端回退"刚发布"模糊文案
  */
-latestPublishTime: string | null, updateAvailable: boolean, };
+latestPublishTime: string | null, 
+/**
+ * 目标包最新版 manifest 声明的 dsh 最低版本（包 manifest 的
+ * `dsh.engines.dsh`，回退顶层 `engines.dsh`；未声明为 None）
+ */
+requiresDsh: string | null, 
+/**
+ * 宿主 dsh 是否满足 requiresDsh。未声明为 None；声明后宿主版本不可得、
+ * 声明形态不支持或任一侧解析失败一律 false——声明了的最低版本不能
+ * 装作满足（fail closed）
+ */
+compatible: boolean | null, updateAvailable: boolean, };

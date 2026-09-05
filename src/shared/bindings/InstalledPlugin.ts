@@ -10,6 +10,18 @@ name: string,
  */
 spec: string, 
 /**
+ * 实际安装版本：磁盘事实（node_modules/<name>/package.json）优先，
+ * spec 精确版本次之；协议形态（github:/file: 等，版本多为 0.0.0 占位）
+ * 与两者均不可得为 None。更新检测复用同一事实（check_updates_once 不再
+ * 自算），前端卡片版本号即时显示靠它
+ */
+version: string | null, 
+/**
  * Launcher 自管授权插件：不出移除按钮，由 Launcher 的修复/卸载流程管理
  */
-managed: boolean, };
+managed: boolean, 
+/**
+ * 下次启动启用状态（profile cordis.patch.yml 的 disabled 覆盖行判定，
+ * 缺席 = 启用）。翻转对运行中的 dsh 无影响，重启后生效
+ */
+enabled: boolean, };

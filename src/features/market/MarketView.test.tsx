@@ -14,11 +14,19 @@ interface SpecifierVectors {
 const vectors = vectorsJson as SpecifierVectors;
 import {
   MarketView,
+  looksTerminal,
   normalizeCustomSpecifier,
   packageNameFromSpecifier,
   protocolInstalledMatch,
+  repairContextText,
   specifierToCatalogName,
 } from "./MarketView";
+import { MarketErrorBoundary } from "./MarketErrorBoundary";
+import { restartDshWeb } from "@/features/integration/dshActions";
+
+// 重启入口复用 Shell 域一键重启：市场侧只验证「调用发生了」，流程本体由
+// dshActions 自身测试覆盖
+vi.mock("@/features/integration/dshActions", () => ({ restartDshWeb: vi.fn() }));
 
 const catalog: MarketCatalog = {
   updated: "2026-08-30",
@@ -52,8 +60,8 @@ const catalog: MarketCatalog = {
 };
 
 const installed: InstalledPlugin[] = [
-  { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", managed: false },
-  { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", managed: true },
+  { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+  { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, managed: true, enabled: true },
 ];
 
 // vitest globals: false，jsdom 的 localStorage 不保证就绪：收藏持久化断言用测试桩（DshCard.test 同款）
@@ -95,14 +103,24 @@ beforeEach(() => {
     marketRemoving: null,
     marketPendingApproval: null,
     marketReleaseAgeConfirm: null,
+    // 更新检测态一并重置：挂起的检测 promise 会把 busy 卡在 true，泄漏到
+    // 后续测试会让所有重检被 busy 守卫拦掉（卡片永远等不到 outdated 数据）
+    marketUpdates: null,
+    marketUpdatesBusy: false,
     marketFavorites: [],
+    marketCompat: {},
+    marketReleaseNotes: null,
     toasts: [],
   });
   vi.spyOn(cmd, "marketFetch").mockResolvedValue(catalog);
   vi.spyOn(cmd, "marketSnapshot").mockResolvedValue(null);
   vi.spyOn(cmd, "marketInstalled").mockResolvedValue(installed);
-  vi.spyOn(cmd, "marketApproveBuilds").mockResolvedValue(null);
+  vi.spyOn(cmd, "marketApproveBuilds").mockResolvedValue({ status: "installed", receipt: null, notices: [] });
   vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([]);
+  // G 块新增通道的默认桩：兼容性空、说明未覆盖、取消幂等
+  vi.spyOn(cmd, "marketDiscoveryCompat").mockResolvedValue([]);
+  vi.spyOn(cmd, "marketReleaseNotes").mockResolvedValue(null);
+  vi.spyOn(cmd, "marketCancel").mockResolvedValue(false);
 });
 
 // 语义定义只有一份：specifier_cases.json（Rust 侧同名解析器由同一向量表驱动，
@@ -123,8 +141,8 @@ describe("specifier parsers match the shared test vectors", () => {
 describe("protocolInstalledMatch", () => {
   it("matches a github-installed plugin whose key differs from the catalog name", () => {
     const list: InstalledPlugin[] = [
-      { name: "dsh-api-relay-audit", spec: "github:toby-bridges/api-relay-audit", managed: false },
-      { name: "dsh-at-file", spec: "git+https://github.com/omdsh-dev/dsh-at-file.git", managed: false },
+      { name: "dsh-api-relay-audit", spec: "github:toby-bridges/api-relay-audit", version: null, managed: false, enabled: true },
+      { name: "dsh-at-file", spec: "git+https://github.com/omdsh-dev/dsh-at-file.git", version: null, managed: false, enabled: true },
     ];
     const hit = protocolInstalledMatch("github:toby-bridges/api-relay-audit", "api-relay-audit", list);
     expect(hit?.name).toBe("dsh-api-relay-audit");
@@ -132,7 +150,7 @@ describe("protocolInstalledMatch", () => {
 
   it("matches a specifier with a trailing ref on disk (#sha/#path:)", () => {
     const list: InstalledPlugin[] = [
-      { name: "dsh-api-relay-audit", spec: "github:toby-bridges/api-relay-audit#c0ffee", managed: false },
+      { name: "dsh-api-relay-audit", spec: "github:toby-bridges/api-relay-audit#c0ffee", version: null, managed: false, enabled: true },
     ];
     const hit = protocolInstalledMatch("github:toby-bridges/api-relay-audit", "api-relay-audit", list);
     expect(hit?.name).toBe("dsh-api-relay-audit");
@@ -140,8 +158,8 @@ describe("protocolInstalledMatch", () => {
 
   it("refuses ambiguous prefix hits (dsh vs dsh-relay)", () => {
     const list: InstalledPlugin[] = [
-      { name: "dsh", spec: "github:owner/dsh", managed: false },
-      { name: "dsh-relay", spec: "github:owner/dsh-relay", managed: false },
+      { name: "dsh", spec: "github:owner/dsh", version: null, managed: false, enabled: true },
+      { name: "dsh-relay", spec: "github:owner/dsh-relay", version: null, managed: false, enabled: true },
     ];
     expect(protocolInstalledMatch("github:owner/dsh", "dsh", list)).toBeNull();
   });
@@ -214,8 +232,8 @@ describe("MarketView", () => {
   it("installed tab renders catalog-consistent cards and marks available updates", async () => {
     // npm 包名大小写敏感：目录名与已装键精确一致才能补全描述/星标
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", managed: false },
-      { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", managed: true },
+      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, managed: true, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -226,6 +244,8 @@ describe("MarketView", () => {
         latestVersion: "2.0.0",
         latestInReleaseAgeWindow: false,
         latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
         updateAvailable: true,
       },
       {
@@ -236,6 +256,8 @@ describe("MarketView", () => {
         latestVersion: null,
         latestInReleaseAgeWindow: false,
         latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
         updateAvailable: false,
       },
     ]);
@@ -255,6 +277,92 @@ describe("MarketView", () => {
     expect(screen.queryByRole("button", { name: /@dsh-external/ })).not.toBeInTheDocument();
   });
 
+  it("disables Update and shows the requirement when the latest version needs a newer dsh", async () => {
+    // engines.dsh 兼容门禁：目标包声明了更高 dsh 最低版本（compatible=false）
+    // → 更新按钮禁用 + 红字要求；不满足时不出现在批量计数里
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
+      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+    ]);
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "DSH-better-sidebar",
+        spec: "dsh-better-sidebar@1.0.0",
+        managed: false,
+        installedVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
+        requiresDsh: ">=0.2.0",
+        compatible: false,
+        updateAvailable: true,
+      },
+    ]);
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    const update = await screen.findByRole("button", { name: "Update DSH-better-sidebar" });
+    expect(update).toBeDisabled();
+    expect(screen.getByText("dsh >=0.2.0 required")).toBeInTheDocument();
+    // 批量更新同样排除（无 Update all 按钮）
+    expect(screen.queryByRole("button", { name: /Update all/ })).not.toBeInTheDocument();
+  });
+
+  it("toggles plugin enablement from the installed tab and refreshes the list", async () => {
+    // disabled 覆盖行走 market_set_plugin_enabled（重启 dsh web 生效）；受管
+    // 插件不出开关
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, managed: true, enabled: true },
+    ]);
+    const setEnabled = vi
+      .spyOn(cmd, "marketSetPluginEnabled")
+      .mockResolvedValue({ name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: false });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    // 启停是带状态文字的胶囊开关（role=switch）：可访问名沿用 Enable/Disable
+    // + 插件名，胶囊文字呈现启停状态
+    const toggle = await screen.findByRole("switch", { name: "Disable dsh-better-sidebar" });
+    expect(toggle).toHaveAttribute("data-state-text", "Enabled");
+    await user.click(toggle);
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledWith("dsh-better-sidebar", false));
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.map((x) => x.message)).toContainEqual(
+        "Plugin dsh-better-sidebar will be disabled at the next dsh web start.",
+      ),
+    );
+    // 受管插件只有受管标记，无启停开关（已装列表唯一的 switch 属非受管插件）
+    expect(screen.getAllByRole("switch")).toHaveLength(1);
+    expect(screen.queryByRole("switch", { name: /@dsh-external/ })).not.toBeInTheDocument();
+  });
+
+  it("repeated toggle that changes nothing toasts a no-op instead of a change", async () => {
+    // 回执 enabled 与请求一致 = 内容未变化的空操作（后端免写盘）：如实提示
+    // 没改，不谎称「将于下次启动停用」
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+    ]);
+    vi.spyOn(cmd, "marketSetPluginEnabled").mockResolvedValue({
+      name: "dsh-better-sidebar",
+      spec: "npm:dsh-better-sidebar@1.0.0",
+      version: "1.0.0",
+      managed: false,
+      enabled: true,
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    await user.click(await screen.findByRole("switch", { name: "Disable dsh-better-sidebar" }));
+    await waitFor(() =>
+      expect(useAppStore.getState().toasts.map((x) => x.message)).toContainEqual(
+        "No change needed: the toggle is already in that state.",
+      ),
+    );
+  });
+
   it("update all installs every outdated plugin via name@latest and toasts the summary", async () => {
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -265,12 +373,15 @@ describe("MarketView", () => {
         latestVersion: "2.0.0",
         latestInReleaseAgeWindow: false,
         latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
         updateAvailable: true,
       },
     ]);
     const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
       status: "installed",
       receipt: { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@2.0.0" },
+      notices: [],
     });
     const user = userEvent.setup();
     render(createElement(MarketView));
@@ -296,12 +407,15 @@ describe("MarketView", () => {
         latestVersion: "2.0.0",
         latestInReleaseAgeWindow: false,
         latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
         updateAvailable: true,
       },
     ]);
     const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
       status: "installed",
       receipt: { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@2.0.0" },
+      notices: [],
     });
     const user = userEvent.setup();
     render(createElement(MarketView));
@@ -309,6 +423,9 @@ describe("MarketView", () => {
 
     await user.click(screen.getByRole("button", { name: "Installed" }));
     await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
+    // G5：更新先过说明框（本 fixture 探针未覆盖 → "暂无说明"不阻塞），框内
+    // 确认后走既有更新管线
+    await user.click(await screen.findByRole("button", { name: "Update" }));
     await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual(
@@ -316,6 +433,59 @@ describe("MarketView", () => {
       ),
     );
     expect(checkSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("update success flips the card immediately without waiting for the re-check", async () => {
+    // 更新检测挂起不返回：卡片的即时翻转只准依赖回执与磁盘刷新（乐观收敛），
+    // 不准依赖 registry 重检（秒级到十秒级的慢路径，busy 丢弃或网络失败时
+    // 还会更久）。重检挂起恰好复现 busy 场景：乐观置位不被覆盖
+    vi.spyOn(cmd, "marketCheckUpdates").mockImplementation(() => new Promise(() => {}));
+    useAppStore.setState({
+      marketUpdates: {
+        "dsh-better-sidebar": {
+          name: "dsh-better-sidebar",
+          spec: "npm:dsh-better-sidebar@1.0.0",
+          managed: false,
+          installedVersion: "1.0.0",
+          latestVersion: "2.0.0",
+          latestInReleaseAgeWindow: false,
+          latestPublishTime: null,
+          requiresDsh: null,
+          compatible: null,
+          updateAvailable: true,
+        },
+      },
+    });
+    vi.spyOn(cmd, "marketInstalled")
+      .mockResolvedValueOnce([
+        { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      ])
+      .mockResolvedValue([
+        { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@2.0.0", version: "2.0.0", managed: false, enabled: true },
+      ]);
+    vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "installed",
+      receipt: { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@2.0.0" },
+      notices: [],
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
+    // 说明框内确认后走既有更新管线（与单卡更新测试同一流程）
+    await user.click(await screen.findByRole("button", { name: "Update" }));
+
+    // 回执落地即翻转：乐观收敛清掉"有更新"，版本号随磁盘刷新换新，
+    // "Up to date" 立即可见，全程不依赖挂起中的重检
+    await waitFor(() =>
+      expect(useAppStore.getState().marketUpdates?.["dsh-better-sidebar"]?.updateAvailable).toBe(false),
+    );
+    expect(await screen.findByRole("button", { name: "Reinstall dsh-better-sidebar" })).toBeInTheDocument();
+    expect(screen.getByText("v2.0.0")).toBeInTheDocument();
+    expect(screen.getByText("Up to date")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update dsh-better-sidebar" })).not.toBeInTheDocument();
   });
 
   it("reinstall button reruns install at latest and pauses on build approval", async () => {
@@ -345,7 +515,7 @@ describe("MarketView", () => {
 
   it("outdated card offers Update instead of Reinstall", async () => {
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", managed: false },
+      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -356,6 +526,8 @@ describe("MarketView", () => {
         latestVersion: "2.0.0",
         latestInReleaseAgeWindow: false,
         latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
         updateAvailable: true,
       },
     ]);
@@ -381,12 +553,15 @@ describe("MarketView", () => {
         latestVersion: "2.0.0",
         latestInReleaseAgeWindow: true,
         latestPublishTime: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
+        requiresDsh: null,
+        compatible: null,
         updateAvailable: true,
       },
     ]);
     const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
       status: "installed",
       receipt: { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@2.0.0" },
+      notices: [],
     });
     const user = userEvent.setup();
     render(createElement(MarketView));
@@ -394,7 +569,8 @@ describe("MarketView", () => {
 
     await user.click(screen.getByRole("button", { name: "Installed" }));
     await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
-    // 点 Update 不直接安装，先出供应链确认框；框内展示版本过渡与发布时长
+    // G5：先过说明框；确认后才出供应链确认框（框内展示版本过渡与发布时长）
+    await user.click(await screen.findByRole("button", { name: "Update" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain("1.0.0 → 2.0.0");
     expect(dialog.textContent).toContain("5 hours ago");
@@ -420,6 +596,8 @@ describe("MarketView", () => {
         latestVersion: "2.0.0",
         latestInReleaseAgeWindow: true,
         latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
         updateAvailable: true,
       },
     ]);
@@ -430,6 +608,7 @@ describe("MarketView", () => {
 
     await user.click(screen.getByRole("button", { name: "Installed" }));
     await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
+    await user.click(await screen.findByRole("button", { name: "Update" }));
     await user.click(await screen.findByRole("button", { name: "Keep current version" }));
     expect(installSpy).not.toHaveBeenCalled();
     expect(useAppStore.getState().marketReleaseAgeConfirm).toBeNull();
@@ -446,6 +625,8 @@ describe("MarketView", () => {
         latestVersion: "2.0.0",
         latestInReleaseAgeWindow: true,
         latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
         updateAvailable: true,
       },
     ]);
@@ -456,6 +637,7 @@ describe("MarketView", () => {
 
     await user.click(screen.getByRole("button", { name: "Installed" }));
     await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
+    await user.click(await screen.findByRole("button", { name: "Update" }));
     await screen.findByRole("dialog");
     // 焦点默认落在取消（安全默认）；Esc 等价取消：不安装、挂起清空
     expect(screen.getByRole("button", { name: "Keep current version" })).toHaveFocus();
@@ -466,8 +648,8 @@ describe("MarketView", () => {
 
   it("update all pauses at a release-age-windowed plugin and resumes it pinned after confirm", async () => {
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", managed: false },
-      { name: "dsh-context", spec: "npm:dsh-context@0.41.0", managed: false },
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      { name: "dsh-context", spec: "npm:dsh-context@0.41.0", version: "0.41.0", managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -478,6 +660,8 @@ describe("MarketView", () => {
         latestVersion: "2.0.0",
         latestInReleaseAgeWindow: false,
         latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
         updateAvailable: true,
       },
       {
@@ -488,13 +672,21 @@ describe("MarketView", () => {
         latestVersion: "0.41.3",
         latestInReleaseAgeWindow: true,
         latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
         updateAvailable: true,
       },
     ]);
-    const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
-      status: "installed",
-      receipt: { name: "dsh-context", spec: "npm:dsh-context@0.41.3" },
-    });
+    // 回执按 specifier 如实派发：批量第一项（dsh-better-sidebar）的回执名
+    // 不能再静态写成 dsh-context——乐观收敛按回执名清"有更新"标志，清错包
+    // 会让窗口确认框不再弹出
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockImplementation((specifier) =>
+      Promise.resolve({
+        status: "installed",
+        receipt: { name: specifier.split("@")[0], spec: specifier },
+        notices: [],
+      }),
+    );
     const user = userEvent.setup();
     render(createElement(MarketView));
     await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
@@ -624,6 +816,7 @@ describe("MarketView", () => {
     vi.spyOn(cmd, "marketInstall").mockResolvedValue({
       status: "installed",
       receipt: { name: "dsh-better-sidebar", spec: "dsh-better-sidebar@1.2.3" },
+      notices: [],
     });
     const user = userEvent.setup();
     render(createElement(MarketView));
@@ -663,7 +856,7 @@ describe("MarketView", () => {
   it("approving writes the allowlist via marketApproveBuilds and toasts the receipt", async () => {
     const approveSpy = vi
       .spyOn(cmd, "marketApproveBuilds")
-      .mockResolvedValue({ name: "dsh-better-sidebar", spec: "dsh-better-sidebar@1.2.3" });
+      .mockResolvedValue({ status: "installed", receipt: { name: "dsh-better-sidebar", spec: "dsh-better-sidebar@1.2.3" }, notices: [] });
     useAppStore.setState({
       marketPendingApproval: {
         specifier: "dsh-better-sidebar@latest",
@@ -798,7 +991,7 @@ describe("MarketView", () => {
     expect(busy).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
 
-    resolveInstall({ status: "installed", receipt: { name: "dsh-better-sidebar", spec: "dsh-better-sidebar@1.2.3" } });
+    resolveInstall({ status: "installed", receipt: { name: "dsh-better-sidebar", spec: "dsh-better-sidebar@1.2.3" }, notices: [] });
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual(
         "Plugin installed: dsh-better-sidebar (dsh-better-sidebar@1.2.3)",
@@ -873,7 +1066,7 @@ describe("MarketView", () => {
     // 全局单飞：安装挂起期间对话框按钮 Working… 且禁用
     expect(within(dialog).getByRole("button", { name: "Working…" })).toBeDisabled();
 
-    resolveInstall({ status: "installed", receipt: { name: "dsh-repo", spec: "github:owner/repo" } });
+    resolveInstall({ status: "installed", receipt: { name: "dsh-repo", spec: "github:owner/repo" }, notices: [] });
     expect(await within(dialog).findByText("Installed")).toBeInTheDocument();
     expect(within(dialog).getByText("github:owner/repo")).toBeInTheDocument();
   });
@@ -902,7 +1095,7 @@ describe("MarketView", () => {
     const installSpy = vi
       .spyOn(cmd, "marketInstall")
       .mockRejectedValueOnce(new Error("network down"))
-      .mockResolvedValueOnce({ status: "installed", receipt: { name: "dsh-repo", spec: "github:owner/repo" } });
+      .mockResolvedValueOnce({ status: "installed", receipt: { name: "dsh-repo", spec: "github:owner/repo" }, notices: [] });
     const user = userEvent.setup();
     render(createElement(MarketView));
     await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
@@ -920,5 +1113,292 @@ describe("MarketView", () => {
     await user.click(within(dialog).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(installSpy).toHaveBeenNthCalledWith(2, "github:owner/repo"));
     expect(await within(dialog).findByText("Installed")).toBeInTheDocument();
+  });
+});
+
+describe("repairContextText", () => {
+  it("assembles a self-contained context from target, error and output", () => {
+    const text = repairContextText("dsh-x@1.0", "Failed to install plugin: boom", [
+      "$ dsh plugin --profile web add dsh-x@1.0",
+      "ERR_PNPM_BUILD",
+    ]);
+    expect(text).toContain("Target: dsh-x@1.0");
+    expect(text).toContain("Error: Failed to install plugin: boom");
+    expect(text).toContain("Command output:");
+    expect(text).toContain("$ dsh plugin --profile web add dsh-x@1.0");
+    expect(text).toContain("ERR_PNPM_BUILD");
+  });
+
+  it("stays usable when no output was captured", () => {
+    expect(repairContextText("pkg@1.0", "boom", [])).toContain("(no output captured)");
+  });
+});
+
+describe("failed install affordances", () => {
+  // jsdom 没有剪贴板实现，打桩断言写入内容。注意 userEvent.setup() 会挂它
+  // 自己的 clipboard 桩（供其 copy/paste API）盖掉既有桩——各用例必须在
+  // setup() 之后重挂（见下）
+  const writeText = vi.fn();
+  beforeEach(() => {
+    writeText.mockReset();
+    writeText.mockResolvedValue(undefined);
+  });
+
+  it("copies the repair context from the failed card", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    useAppStore.setState({ marketInstalled: [] });
+    vi.spyOn(cmd, "marketInstall").mockRejectedValue(new Error("boom"));
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Install" }));
+    await user.click(await screen.findByText("Confirm"));
+    // 失败后留存日志照常可进明细；复制要带上 specifier / 错误 / 已捕获输出
+    useAppStore
+      .getState()
+      .appendMarketInstallLog({ specifier: "dsh-better-sidebar@latest", line: "$ dsh plugin --profile web add dsh-better-sidebar@latest" });
+    await user.click(await screen.findByRole("button", { name: "Copy error" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const text = writeText.mock.calls[0][0] as string;
+    expect(text).toContain("Target: dsh-better-sidebar@latest");
+    expect(text).toContain("boom");
+    expect(text).toContain("$ dsh plugin --profile web add dsh-better-sidebar@latest");
+    expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual("Install details copied");
+  });
+
+  it("copies the repair context from the custom install dialog failure", async () => {
+    vi.spyOn(cmd, "marketInstall").mockRejectedValue(new Error("network down"));
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Custom install" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(screen.getByPlaceholderText("e.g. github:owner/repo or pkg@1.2.3"), "owner/repo");
+    await user.click(within(dialog).getByRole("button", { name: "Install" }));
+    await within(dialog).findByText("Retry");
+    await user.click(within(dialog).getByRole("button", { name: "Copy error" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(writeText.mock.calls[0][0] as string).toContain("Target: github:owner/repo");
+  });
+
+  it("restarts dsh web from the installed tab through the shared shell action", async () => {
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    const btn = await screen.findByRole("button", { name: "Restart dsh web" });
+    expect(btn).toBeEnabled();
+    await user.click(btn);
+    expect(vi.mocked(restartDshWeb)).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ============ G 块：取消 / 兼容性 / 更新说明 / 终端警示 / 崩溃恢复 ============
+
+describe("looksTerminal (G6)", () => {
+  it("flags terminal-ish names and descriptions in both languages", () => {
+    expect(looksTerminal("dsh-shell-runner", "A tool for dsh")).toBe(true);
+    expect(looksTerminal("some-plugin", "Interact with your terminal from dsh")).toBe(true);
+    expect(looksTerminal("some-plugin", "在 dsh 里使用命令行工具")).toBe(true);
+  });
+
+  it("skips negated clauses and ordinary plugins", () => {
+    // 否定从句剔除："不是 TUI"/"no terminal" 不该命中
+    expect(looksTerminal("some-plugin", "This is not a TUI plugin")).toBe(false);
+    expect(looksTerminal("some-plugin", "一个纯网页界面，不是终端应用")).toBe(false);
+    expect(looksTerminal("dsh-better-sidebar", "Sidebar toolkit")).toBe(false);
+  });
+});
+
+describe("install cancel (G2)", () => {
+  it("busy card offers cancel and the backend cancel command fires", async () => {
+    const cancelSpy = vi.spyOn(cmd, "marketCancel").mockResolvedValue(true);
+    // 已装列表置空：已装匹配会让卡片走 outdated 分支，安装中态就看不到了
+    // （必须覆盖 mock——挂载刷新会用夹具重新填充）
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    useAppStore.setState({
+      marketInstalling: "dsh-better-sidebar@latest",
+      marketInstallLog: { specifier: "dsh-better-sidebar@latest", lines: ["$ dsh plugin --profile web add dsh-better-sidebar@latest"] },
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    const cancel = await screen.findByRole("button", { name: "Cancel" });
+    await user.click(cancel);
+    expect(cancelSpy).toHaveBeenCalled();
+  });
+
+  it("no cancel button when idle", async () => {
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
+  });
+
+  it("removing card offers cancel through the same channel and locks the enable toggle", async () => {
+    const cancelSpy = vi.spyOn(cmd, "marketCancel").mockResolvedValue(true);
+    // 移除态由 store 的 marketRemoving 驱动（按包名锚定卡片）；后端 remove
+    // 挂起期间 token 注册在全局槽，market_cancel 置位即杀
+    useAppStore.setState({ marketRemoving: "dsh-better-sidebar" });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    // 移除中：Remove 变 Removing… 禁用，同卡出 Cancel（与安装同一通道）
+    const removeBtn = await screen.findByRole("button", { name: "Remove dsh-better-sidebar" });
+    expect(removeBtn).toBeDisabled();
+    expect(removeBtn).toHaveTextContent("Removing…");
+    // 启停开关在移除中禁用：翻转启停与移除后的孤儿行清理写同一 patch 文件
+    const toggle = await screen.findByRole("switch");
+    expect(toggle).toBeDisabled();
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(cancelSpy).toHaveBeenCalled();
+  });
+});
+
+describe("discovery compatibility (G4)", () => {
+  const compatUpdate = {
+    name: "dsh-better-sidebar",
+    spec: "npm:dsh-better-sidebar@1.0.0",
+    managed: false,
+    installedVersion: "1.0.0",
+    latestVersion: "2.0.0",
+    latestInReleaseAgeWindow: false,
+    latestPublishTime: null,
+    requiresDsh: ">=99.0.0",
+    compatible: false,
+    updateAvailable: true,
+  };
+
+  it("fetches compat for visible npm entries and badges confirmed-incompatible cards", async () => {
+    // 已装列表置空：徽章在未安装卡的发现期状态条上，已装卡吃更新检测的
+    // compatible 字段（另一条门禁）
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    const compatSpy = vi.spyOn(cmd, "marketDiscoveryCompat").mockResolvedValue([
+      { name: "dsh-better-sidebar", requiresDsh: ">=99.0.0", compatible: false },
+    ]);
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    // 可见卡片的 npm 包名自动进批量查询
+    await waitFor(() => expect(compatSpy).toHaveBeenCalledWith(["dsh-better-sidebar"]));
+    // 确认不兼容：卡片红字明示要求（安装前就能看到，不用点了才知道）
+    expect(await screen.findByText("dsh >=99.0.0 required")).toBeInTheDocument();
+  });
+
+  it("the compatible-only filter hides confirmed-incompatible entries only", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    vi.spyOn(cmd, "marketDiscoveryCompat").mockResolvedValue([
+      { name: "dsh-better-sidebar", requiresDsh: ">=99.0.0", compatible: false },
+    ]);
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await screen.findByText("dsh >=99.0.0 required");
+    await user.click(screen.getByRole("button", { name: "Compatible only" }));
+    // 确认不兼容的被隐藏；计数回落（"one" 无 installSpecifier，未知保持可见）
+    expect(screen.queryByText("DSH-better-sidebar")).not.toBeInTheDocument();
+    expect(screen.getByText("one")).toBeInTheDocument();
+    // 兼容门禁判 false 的更新同样不进批量（安装页事实，回归守卫）
+    expect(compatUpdate.compatible).toBe(false);
+  });
+});
+
+describe("release notes dialog (G5)", () => {
+  it("update shows release notes and installs after confirm", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+    ]);
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "dsh-better-sidebar",
+        spec: "npm:dsh-better-sidebar@1.0.0",
+        managed: false,
+        installedVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
+        updateAvailable: true,
+      },
+    ]);
+    // 仓库标识从目录条目 url 派生；探针覆盖 → 展示 release 正文与提交
+    vi.spyOn(cmd, "marketReleaseNotes").mockResolvedValue({
+      release: { tag: "v2.0.0", name: "v2.0.0", publishedAt: null, url: null, body: "## What changed" },
+      commits: [{ sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", message: "feat: x", date: null }],
+    });
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "installed",
+      receipt: { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@2.0.0" },
+      notices: [],
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("1.0.0 → 2.0.0");
+    expect(dialog.textContent).toContain("## What changed");
+    expect(dialog.textContent).toContain("feat: x");
+    expect(installSpy).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Update" }));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
+  });
+
+  it("uncovered plugins show an honest no-notes state and still update", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+    ]);
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "dsh-better-sidebar",
+        spec: "npm:dsh-better-sidebar@1.0.0",
+        managed: false,
+        installedVersion: "1.0.0",
+        latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
+        updateAvailable: true,
+      },
+    ]);
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "installed",
+      receipt: { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@2.0.0" },
+      notices: [],
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
+    expect(await screen.findByText("No release notes for this plugin.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Update" }));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
+  });
+});
+
+describe("market error boundary (G3)", () => {
+  function Bomb(): never {
+    throw new Error("boom");
+  }
+
+  it("crashing children render the recovery panel, not a blank screen", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup();
+    const { rerender } = render(createElement(MarketErrorBoundary, null, createElement(Bomb)));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy error" })).toBeInTheDocument();
+    // 原始错误 details 展开可见
+    expect(screen.getByText("Error details")).toBeInTheDocument();
+    // 重载重置边界：换回不炸的子树后恢复渲染
+    rerender(createElement(MarketErrorBoundary, null, createElement("div", null, "fine")));
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+    expect(screen.getByText("fine")).toBeInTheDocument();
+    errSpy.mockRestore();
   });
 });
