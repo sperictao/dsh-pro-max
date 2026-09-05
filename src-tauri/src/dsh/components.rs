@@ -1,14 +1,16 @@
 //! 组件定位与安装：node/npm/dsh/tailscale 二进制定位、版本闸门、内置授权插件 tarball 装入 web profile。
 
-use super::{AUTH_PLUGIN_PACKAGE, AUTH_PLUGIN_TARBALL, CONNECTION_PLUGIN_PACKAGE, CONNECTION_PLUGIN_TARBALL, DSH_PACKAGE, SUPPORTED_DSH_VERSION};
-use super::process::{run_capture, which};
-use super::update::{ensure_web_profile_compat_patch, rewrite_web_profile_patch};
+use super::process::{run_capture, run_capture_lines, which};
+use super::update::clear_web_profile_compat_entry;
+use super::{
+    AUTH_PLUGIN_PACKAGE, AUTH_PLUGIN_TARBALL, CONNECTION_PLUGIN_PACKAGE, CONNECTION_PLUGIN_TARBALL,
+    DSH_PACKAGE, SUPPORTED_DSH_VERSION,
+};
 use crate::version::parse_version;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-
-use tauri::{Manager};
+use tauri::Manager;
 
 use crate::config;
 use crate::i18n::keyf;
@@ -55,15 +57,22 @@ pub(crate) fn verify_bundled_tarball(path: &Path, filename: &str) -> Result<(), 
     })?;
     let actual = sha256_hex(path)?;
     if actual != expected.trim() {
-        log::error!("[dsh 插件] 内置插件校验和不符: {filename} 期望 {} 实得 {actual}", expected.trim());
+        log::error!(
+            "[dsh 插件] 内置插件校验和不符: {filename} 期望 {} 实得 {actual}",
+            expected.trim()
+        );
         return Err(keyf(
-            "Bundled dsh plugin failed checksum verification: {plugin}", &[("plugin", filename.to_string())],
+            "Bundled dsh plugin failed checksum verification: {plugin}",
+            &[("plugin", filename.to_string())],
         ));
     }
     Ok(())
 }
 
-pub(crate) fn bundled_plugin_tarball(app: &tauri::AppHandle, filename: &str) -> Result<PathBuf, String> {
+pub(crate) fn bundled_plugin_tarball(
+    app: &tauri::AppHandle,
+    filename: &str,
+) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     if let Ok(resources) = app.path().resource_dir() {
         candidates.push(resources.join("dsh-plugins").join(filename));
@@ -82,7 +91,8 @@ pub(crate) fn bundled_plugin_tarball(app: &tauri::AppHandle, filename: &str) -> 
         .ok_or_else(|| {
             log::error!("[dsh 插件] 内置插件 tarball 缺失: {}", filename);
             keyf(
-                "Bundled dsh plugin is missing: {plugin}", &[("plugin", filename.to_string())],
+                "Bundled dsh plugin is missing: {plugin}",
+                &[("plugin", filename.to_string())],
             )
         })?;
     verify_bundled_tarball(&path, filename)?;
@@ -100,7 +110,11 @@ pub(crate) fn web_profile_package_path() -> Result<PathBuf, String> {
     Ok(dsh_dir()?.join("profiles").join("web").join("package.json"))
 }
 
-pub(crate) fn plugin_profile_is_current(contents: &str, connection_spec: &str, auth_spec: &str) -> bool {
+pub(crate) fn plugin_profile_is_current(
+    contents: &str,
+    connection_spec: &str,
+    auth_spec: &str,
+) -> bool {
     let Ok(package) = serde_json::from_str::<serde_json::Value>(contents) else {
         return false;
     };
@@ -176,12 +190,12 @@ pub(crate) fn install_auth_plugins(app: &tauri::AppHandle) -> Result<DshPluginSp
     // 有效信息（实机回归：「pnpm failed in profile directory」无详情）。
     // remove 是幂等的（无残留时 pnpm 直接成功），清理后 add 走干净路径
     match run_plugin_add(&dsh, &specs) {
-        Ok(()) => {
-            ensure_web_profile_compat_patch()?;
-            Ok(specs)
-        }
+        Ok(()) => Ok(specs),
         Err(first_err) => {
-            log::warn!("[dsh 插件] 首次安装失败，清理 profile 后重试: {}", first_err);
+            log::warn!(
+                "[dsh 插件] 首次安装失败，清理 profile 后重试: {}",
+                first_err
+            );
             let _ = run_capture(
                 &dsh,
                 &[
@@ -194,7 +208,6 @@ pub(crate) fn install_auth_plugins(app: &tauri::AppHandle) -> Result<DshPluginSp
                 ],
             );
             run_plugin_add(&dsh, &specs)?;
-            ensure_web_profile_compat_patch()?;
             Ok(specs)
         }
     }
@@ -216,14 +229,16 @@ pub(crate) fn run_plugin_add(dsh: &str, specs: &DshPluginSpecs) -> Result<(), St
         Ok((_, _, true)) if auth_plugins_installed(specs) => Ok(()),
         Ok((_, err, true)) => {
             let e = keyf(
-                "dsh plugin install completed but the web profile is incomplete: {error}", &[("error", err)],
+                "dsh plugin install completed but the web profile is incomplete: {error}",
+                &[("error", err)],
             );
             log::error!("[dsh 插件] profile 不完整: {}", e);
             Err(e)
         }
         Ok((_, err, false)) => {
             let e = keyf(
-                "Failed to install dsh auth plugins: {error}", &[(
+                "Failed to install dsh auth plugins: {error}",
+                &[(
                     "error",
                     if err.is_empty() {
                         "dsh plugin add failed".to_string()
@@ -245,7 +260,8 @@ pub(crate) fn run_plugin_add(dsh: &str, specs: &DshPluginSpecs) -> Result<(), St
 /// 定位 node 可执行（绝对路径，供自启脚本嵌入）
 pub(crate) fn resolve_node_bin() -> Result<String, String> {
     which("node").ok_or_else(|| {
-        let err = "Node.js is not available; please install Node.js 18+ and restart this app".to_string();
+        let err =
+            "Node.js is not available; please install Node.js 18+ and restart this app".to_string();
         log::error!("[dsh] 定位 node 失败: {}", err);
         err
     })
@@ -270,15 +286,28 @@ pub(crate) fn normalize_version(raw: &str) -> String {
     t.to_string()
 }
 
-/// dsh --version 输出（经 normalize_version 规范化）；未安装返回 None
+/// dsh --version 输出（经 normalize_version 规范化）；未安装返回 None。
+/// 10s 硬超时：dsh 偶发挂起（锁等待被外部干扰等）不能挂死版本胶囊与
+/// 更新检测——超时按 None 处理，兼容门禁侧本就 fail closed
 pub(crate) fn dsh_version() -> Option<String> {
     let bin = which("dsh")?;
-    let (out, _, ok) = run_capture(&bin, &["--version"]).ok()?;
-    if !ok {
+    let (out, _, ok, timed_out) = run_capture_lines(
+        &bin,
+        &["--version"],
+        |_| {},
+        Some(std::time::Duration::from_secs(10)),
+        None,
+    )
+    .ok()?;
+    if !ok || timed_out {
         return None;
     }
     let v = normalize_version(&out);
-    if v.is_empty() { None } else { Some(v) }
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 /// 版本闸门：actual 不低于锁定版本，且与锁定版本同一条 x.y.z 演进线。
@@ -338,7 +367,8 @@ pub(crate) fn install_supported_dsh() -> Result<String, String> {
     // 旧下限会拒绝刚装上的新线版本（setup 的 install 步骤先于 plugin add）
     if version != SUPPORTED_DSH_VERSION {
         let err = keyf(
-            "Installed dsh version {actual}, but this Launcher requires {expected}", &[
+            "Installed dsh version {actual}, but this Launcher requires {expected}",
+            &[
                 ("actual", version.clone()),
                 ("expected", SUPPORTED_DSH_VERSION.to_string()),
             ],
@@ -346,12 +376,9 @@ pub(crate) fn install_supported_dsh() -> Result<String, String> {
         log::error!("[dsh 安装] 版本不匹配: {}", err);
         return Err(err);
     }
-    // 仅在版本校验成功后写 profile patch，避免失败安装留下持久残留。
-    // authz 插件的依赖范围（^rc.8）不覆盖 dsh 下一个 rc 的 peer（^rc.9），
-    // 装新版本后需要让 profile 的插件依赖也跟着滚。
-    if let Err(error) = rewrite_web_profile_patch(&version) {
-        log::warn!("[dsh 安装] 重写 web profile patch 失败: {}", error);
-    }
+    // 历史版本写入的 compat 条目从未生效且触发孤儿 patch 警告
+    // （见 update::WEB_PROFILE_COMPAT_ID_LINE），装新版本后顺手清理存量
+    clear_web_profile_compat_entry();
     Ok(version)
 }
 
@@ -379,7 +406,8 @@ pub(crate) fn resolve_dsh_bin() -> Result<PathBuf, String> {
         }
     }
     Err({
-        let err = "Cannot locate the dsh CLI; install it with npm install -g @deepseek-ai/dsh".to_string();
+        let err = "Cannot locate the dsh CLI; install it with npm install -g @deepseek-ai/dsh"
+            .to_string();
         log::error!("[dsh] 定位 dsh CLI 失败: {}", err);
         err
     })
@@ -411,8 +439,12 @@ pub(crate) fn magic_dns_info(ts: &str) -> (bool, Option<String>) {
         .lines()
         .any(|l| l.to_lowercase().contains("magicdns: enabled"));
     let suffix = out.lines().find_map(|l| {
-        l.find("suffix = ")
-            .map(|i| l[i + "suffix = ".len()..].trim_end_matches(')').trim().to_string())
+        l.find("suffix = ").map(|i| {
+            l[i + "suffix = ".len()..]
+                .trim_end_matches(')')
+                .trim()
+                .to_string()
+        })
     });
     (enabled, suffix)
 }
@@ -447,7 +479,10 @@ pub(crate) fn resolve_host_and_url() -> (Option<String>, Option<String>) {
                 if !host.is_empty() {
                     let (_, suffix) = magic_dns_info(&ts);
                     if let Some(sfx) = suffix {
-                        return (Some(host.clone()), Some(format!("https://{}.{}", host, sfx)));
+                        return (
+                            Some(host.clone()),
+                            Some(format!("https://{}.{}", host, sfx)),
+                        );
                     }
                     return (Some(host), None);
                 }

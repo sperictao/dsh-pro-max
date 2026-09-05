@@ -1,19 +1,23 @@
-//! 更新与版本管理：dsh 升级/卸载插件、web profile 兼容补丁、npm dist-tag 查询与版本安装。
+//! 更新与版本管理：dsh 升级/卸载插件、web profile 兼容补丁存量清理、npm dist-tag 查询与版本安装。
 
-use serde::Serialize;
-use super::{AUTH_PLUGIN_PACKAGE, CONNECTION_PLUGIN_PACKAGE, LOCAL_ONLY_LOGIN, SUPPORTED_DSH_VERSION, WEB_PORT};
 use super::auth::{resolve_auth_config, resolve_fqdn, resolve_tailscale_login};
-use super::components::{dsh_dir, dsh_version, dsh_version_is_compatible, install_auth_plugins, install_supported_dsh, npm_bin, resolve_dsh_bin, resolve_node_bin, tailscale_path, web_profile_has_auth_plugins};
+use super::components::{
+    dsh_dir, dsh_version, dsh_version_is_compatible, install_auth_plugins, install_supported_dsh,
+    npm_bin, resolve_dsh_bin, resolve_node_bin, tailscale_path, web_profile_has_auth_plugins,
+};
 use super::process::{port_listening, run_capture};
-use super::setup::{restart_dsh_web};
+use super::setup::restart_dsh_web;
+use super::{
+    AUTH_PLUGIN_PACKAGE, CONNECTION_PLUGIN_PACKAGE, LOCAL_ONLY_LOGIN, SUPPORTED_DSH_VERSION,
+    WEB_PORT,
+};
 use crate::version::parse_version;
+use serde::Serialize;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path};
 
 use std::time::Duration;
-
 
 use crate::i18n::keyf;
 
@@ -37,16 +41,14 @@ pub async fn dsh_update(app: tauri::AppHandle) -> Result<String, String> {
 
 fn dsh_update_once(app: &tauri::AppHandle) -> Result<String, String> {
     let was_running = port_listening(WEB_PORT);
-    let version = install_supported_dsh()
-        .map_err(|error| {
-            log::error!("[dsh 修复] 安装 dsh 失败: {}", error);
-            keyf("Repair failed: {error}", &[("error", error)])
-        })?;
-    install_auth_plugins(app)
-        .map_err(|error| {
-            log::error!("[dsh 修复] 安装授权插件失败: {}", error);
-            keyf("Repair failed: {error}", &[("error", error)])
-        })?;
+    let version = install_supported_dsh().map_err(|error| {
+        log::error!("[dsh 修复] 安装 dsh 失败: {}", error);
+        keyf("Repair failed: {error}", &[("error", error)])
+    })?;
+    install_auth_plugins(app).map_err(|error| {
+        log::error!("[dsh 修复] 安装授权插件失败: {}", error);
+        keyf("Repair failed: {error}", &[("error", error)])
+    })?;
     if was_running {
         let (login, fqdn) = runtime_auth_context();
         let auth = resolve_auth_config()?;
@@ -55,66 +57,19 @@ fn dsh_update_once(app: &tauri::AppHandle) -> Result<String, String> {
     Ok(version)
 }
 
-
-/// 安装新版 dsh 后重写 web profile 的 cordis.patch.yml：让 dsh CLI 自己
-/// 把 profile 里的 dsh-* 依赖滚到与新 CLI 兼容的版本。authz 插件的依赖
-/// 范围（如 ^0.1.2-alpha.2）不覆盖 dsh 下一条 x.y.z 预发布线，
-/// 不重写则 boot 时 pnpm 解出旧版 attachment 崩（rc.6→rc.8 的教训）。
+/// 历史版本（v0.3.5 起）写入 web profile cordis.patch.yml 的 compat 条目锚点行。
+/// 该条目想让 dsh 在 boot 时把 profile 的 dsh-* 依赖滚到与新 CLI 兼容的版本，
+/// 但上游 loader 的补丁方言里 id+name 行是覆盖而非插入（插入须用 `- insert:`），
+/// 从未生效，只留下 `patch: entry "dsh-pro-max-compat" not found` 孤儿警告；
+/// 依赖滚动实际由授权插件重装（pnpm 重解析）完成。机制已删除，锚点保留供存量清理。
 pub(crate) const WEB_PROFILE_COMPAT_ID_LINE: &str = "- id: dsh-pro-max-compat";
 
-pub(crate) fn insert_web_profile_compat_entry(contents: &str, installed_version: &str) -> String {
-    let newline = if contents.contains("\r\n") { "\r\n" } else { "\n" };
-    let mut lines: Vec<String> = contents.lines().map(str::to_string).collect();
-    let compat_index = lines
-        .iter()
-        .position(|line| line == WEB_PROFILE_COMPAT_ID_LINE);
-
-    if let Some(compat_index) = compat_index {
-        let mut comment_index = None;
-        let mut end = compat_index + 1;
-        while end < lines.len() {
-            let line = &lines[end];
-            if line.is_empty() || line.starts_with([' ', '\t']) {
-                if line.starts_with("  # Launcher managed: installed dsh CLI is ") {
-                    comment_index = Some(end);
-                }
-                end += 1;
-            } else {
-                break;
-            }
-        }
-        if let Some(comment_index) = comment_index {
-            lines[comment_index] = format!("  # Launcher managed: installed dsh CLI is {installed_version}");
-        }
-        // 修复旧实现可能留下的 `[]` + list item 非法组合。
-        if let Some(empty_index) = lines[..compat_index]
-            .iter()
-            .rposition(|line| line == "[]")
-        {
-            lines.remove(empty_index);
-        }
-    } else {
-        let entry = [
-            WEB_PROFILE_COMPAT_ID_LINE.to_string(),
-            "  name: '@deepseek-ai/dsh-attachment'".to_string(),
-            "  config: {}".to_string(),
-            format!("  # Launcher managed: installed dsh CLI is {installed_version}"),
-        ];
-        if let Some(empty_index) = lines.iter().position(|line| line == "[]") {
-            lines.splice(empty_index..=empty_index, entry);
-        } else {
-            while lines.last().is_some_and(|line| line.is_empty()) {
-                lines.pop();
-            }
-            lines.extend(entry);
-        }
-    }
-
-    format!("{}{newline}", lines.join(newline))
-}
-
 pub(crate) fn remove_web_profile_compat_entry(contents: &str) -> String {
-    let newline = if contents.contains("\r\n") { "\r\n" } else { "\n" };
+    let newline = if contents.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
     let mut lines: Vec<String> = contents.lines().map(str::to_string).collect();
     let Some(start) = lines
         .iter()
@@ -135,79 +90,29 @@ pub(crate) fn remove_web_profile_compat_entry(contents: &str) -> String {
     while lines.last().is_some_and(|line| line.is_empty()) {
         lines.pop();
     }
-    if !lines.iter().any(|line| line.starts_with("- "))
-        && !lines.iter().any(|line| line == "[]")
-    {
+    if !lines.iter().any(|line| line.starts_with("- ")) && !lines.iter().any(|line| line == "[]") {
         lines.push("[]".to_string());
     }
     format!("{}{newline}", lines.join(newline))
 }
 
-pub(crate) fn ensure_web_profile_compat_patch() -> Result<(), String> {
-    let version =
-        dsh_version().ok_or_else(|| "dsh installed but cannot be located in PATH".to_string())?;
-    rewrite_web_profile_patch(&version)
-}
-
-pub(crate) fn rewrite_web_profile_patch(installed_version: &str) -> Result<(), String> {
-    let patch_path = dsh_dir()?
-        .join("profiles")
-        .join("web")
-        .join("cordis.patch.yml");
-    rewrite_web_profile_patch_at(&patch_path, installed_version)
-}
-
-pub(crate) fn rewrite_web_profile_patch_at(
-    patch_path: &Path,
-    installed_version: &str,
-) -> Result<(), String> {
-    let contents = match fs::read_to_string(patch_path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "[]\n".to_string(),
-        Err(error) => {
-            return Err(keyf(
-                "Failed to read {path}: {error}", &[
-                    ("path", patch_path.display().to_string()),
-                    ("error", error.to_string()),
-                ],
-            ))
-        }
-    };
-    let updated = insert_web_profile_compat_entry(&contents, installed_version);
-    if updated == contents {
-        return Ok(());
-    }
-    if let Some(parent) = patch_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            keyf(
-                "Failed to create directory: {error}", &[("error", error.to_string())],
-            )
-        })?;
-    }
-    fs::write(patch_path, updated).map_err(|error| {
-        keyf(
-            "Failed to write {path}: {error}", &[
-                ("path", patch_path.display().to_string()),
-                ("error", error.to_string()),
-            ],
-        )
-    })
-}
-
-/// 清掉 patch 里的 compat 条目（用户显式安装旧版 dsh 后调用，让下次
-/// install_supported_dsh 重新写入）。幂等：无条目或文件不存在直接返回。
+/// 清掉 patch 里的历史 compat 条目（锚点见 WEB_PROFILE_COMPAT_ID_LINE）：
+/// 启动、修复与版本安装路径都会调用，存量安装随下一次动作自动完成清理。
+/// 幂等：无条目或文件不存在直接返回；写失败只记日志不打断调用方。
 pub(crate) fn clear_web_profile_compat_entry() {
     let patch_path = match dsh_dir() {
         Ok(d) => d.join("profiles").join("web").join("cordis.patch.yml"),
         Err(_) => return,
     };
-    let Ok(contents) = fs::read_to_string(&patch_path) else { return };
+    let Ok(contents) = fs::read_to_string(&patch_path) else {
+        return;
+    };
     let updated = remove_web_profile_compat_entry(&contents);
     if updated == contents {
         return;
     }
     if let Err(e) = fs::write(&patch_path, updated) {
-        log::warn!("[dsh 安装] 清理 web profile patch compat 条目失败: {}", e);
+        log::warn!("[dsh patch] 清理 web profile compat 条目失败: {}", e);
     }
 }
 
@@ -241,14 +146,16 @@ fn dsh_remove_plugins_once() -> Result<(), String> {
         Ok((_, _, true)) if !web_profile_has_auth_plugins() => {}
         Ok((_, err, true)) => {
             let e = keyf(
-                "dsh plugin remove completed but auth plugins remain in the web profile: {error}", &[("error", err)],
+                "dsh plugin remove completed but auth plugins remain in the web profile: {error}",
+                &[("error", err)],
             );
             log::error!("[dsh 插件] 卸载后残留: {}", e);
             return Err(e);
         }
         Ok((_, err, false)) => {
             let e = keyf(
-                "Failed to remove dsh auth plugins: {error}", &[(
+                "Failed to remove dsh auth plugins: {error}",
+                &[(
                     "error",
                     if err.is_empty() {
                         "dsh plugin remove failed".to_string()
@@ -322,13 +229,17 @@ fn dsh_check_latest_once() -> Result<DshLatestInfo, String> {
     let installed = dsh_version();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let result = run_capture(&npm_bin(), &["view", "@deepseek-ai/dsh", "dist-tags", "time", "--json"]);
+        let result = run_capture(
+            &npm_bin(),
+            &["view", "@deepseek-ai/dsh", "dist-tags", "time", "--json"],
+        );
         let _ = tx.send(result);
     });
     let queried = match rx.recv_timeout(Duration::from_secs(15)) {
         Ok(Ok((out, _, true))) => parse_dist_tag_query(&out),
         Ok(Ok((_, err, false))) => Err(keyf(
-            "npm query failed: {error}", &[(
+            "npm query failed: {error}",
+            &[(
                 "error",
                 if err.is_empty() {
                     "npm view exited non-zero".to_string()
@@ -338,7 +249,9 @@ fn dsh_check_latest_once() -> Result<DshLatestInfo, String> {
             )],
         )),
         Ok(Err(error)) => Err(error),
-        Err(_) => Err("npm query timed out (15s); check your network or npm registry mirror".to_string()),
+        Err(_) => {
+            Err("npm query timed out (15s); check your network or npm registry mirror".to_string())
+        }
     };
     let (mut tag_pairs, publish_times, error) = match queried {
         Ok(q) => (q.tags, q.times, None),
@@ -361,16 +274,16 @@ fn dsh_check_latest_once() -> Result<DshLatestInfo, String> {
         .into_iter()
         .map(|(tag, version)| {
             let parsed = parse_version(&version);
-                DshDistTag {
-                    tag,
-                    is_installed: installed_parsed.is_some() && parsed == installed_parsed,
-                    above_supported: match (&parsed, &supported) {
-                        (Some(v), Some(min)) => v > min,
-                        _ => false,
-                    },
-                    incompatible: !dsh_version_is_compatible(Some(&version)),
-                    version,
-                }
+            DshDistTag {
+                tag,
+                is_installed: installed_parsed.is_some() && parsed == installed_parsed,
+                above_supported: match (&parsed, &supported) {
+                    (Some(v), Some(min)) => v > min,
+                    _ => false,
+                },
+                incompatible: !dsh_version_is_compatible(Some(&version)),
+                version,
+            }
         })
         .collect();
     Ok(DshLatestInfo {
@@ -404,7 +317,8 @@ pub(crate) struct DistTagQuery {
 pub(crate) fn parse_dist_tag_query(out: &str) -> Result<DistTagQuery, String> {
     let cannot_parse = || {
         keyf(
-            "Cannot parse npm dist-tags output: {output}", &[("output", out.chars().take(200).collect())],
+            "Cannot parse npm dist-tags output: {output}",
+            &[("output", out.chars().take(200).collect())],
         )
     };
     let cleaned = out.trim_start_matches('\u{feff}').trim();
@@ -453,7 +367,10 @@ fn parse_npm_time(s: &str) -> Option<time::OffsetDateTime> {
 /// tag 行按版本发布时间新→旧排序（设置页列表最新的在最上）：双方都有时间
 /// 按时间降序；缺时间（registry 未给或解析失败）的一侧垫底；同缺/同刻保持
 /// 解析顺序（sort_by 稳定，serde Map 语义与旧实现一致）
-pub(crate) fn sort_tag_pairs_by_publish_time(tags: &mut [(String, String)], times: &HashMap<String, String>) {
+pub(crate) fn sort_tag_pairs_by_publish_time(
+    tags: &mut [(String, String)],
+    times: &HashMap<String, String>,
+) {
     tags.sort_by(|a, b| {
         let ta = times.get(&a.1).and_then(|s| parse_npm_time(s));
         let tb = times.get(&b.1).and_then(|s| parse_npm_time(s));
@@ -477,7 +394,10 @@ pub async fn dsh_install_version(version: String) -> Result<String, String> {
 
 fn dsh_install_version_once(version: &str) -> Result<String, String> {
     if parse_version(version).is_none() {
-        return Err(keyf("Invalid dsh version: {version}", &[("version", version.to_string())]));
+        return Err(keyf(
+            "Invalid dsh version: {version}",
+            &[("version", version.to_string())],
+        ));
     }
     // 设置页逐版本安装同样过版本闸门：跨线的 dsh 与 vendored 授权栈不
     // 兼容（如 0.1.3-alpha.1 会让本地与远程访问一起失效），装上即坏，直接拒绝
@@ -513,13 +433,13 @@ fn dsh_install_version_once(version: &str) -> Result<String, String> {
     })?;
     if parse_version(&actual) != parse_version(version) {
         let err = keyf(
-            "Installed dsh version {actual}, expected {expected}", &[("actual", actual), ("expected", version.to_string())],
+            "Installed dsh version {actual}, expected {expected}",
+            &[("actual", actual), ("expected", version.to_string())],
         );
         log::error!("[dsh 安装] 版本校验失败: {}", err);
         return Err(err);
     }
-    // 显式安装旧版后 patch 里的 compat 条目已过时，清掉让下次
-    // install_supported_dsh 重新写入（幂等：无条目直接返回）
+    // 显式安装旧版后顺手清理历史 compat 条目（幂等：无条目直接返回）
     clear_web_profile_compat_entry();
     if was_running {
         let (login, fqdn) = runtime_auth_context();

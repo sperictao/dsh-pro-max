@@ -71,6 +71,11 @@ reexport_commands! {
     market::market_approve_builds,
     market::market_remove,
     market::market_check_updates,
+    market::market_set_plugin_enabled,
+    market::market_cancel,
+    market::market_discovery_compat,
+    market::market_release_notes,
+    market::market_diagnostics,
     models::model_config_load,
     models::model_config_save,
 }
@@ -81,7 +86,9 @@ reexport_commands! {
 /// 直接跑在 async runtime 上会饿死执行器、冻结 WebView。统一丢进阻塞线程池，
 /// 命令签名保持 async。market 路径首先落地此形态（pnpm 下载是首个真实痛点），
 /// 现收敛为全模块唯一 adapter
-pub(crate) async fn ipc_blocking<T: Send + 'static>(task: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+pub(crate) async fn ipc_blocking<T: Send + 'static>(
+    task: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(task)
         .await
         .map_err(|e| format!("ipc task failed: {e}"))?
@@ -212,12 +219,23 @@ pub struct StepEvent {
 
 /// 远程一键启动的步骤集（dsh_setup_once 的数组即它）
 pub(crate) const SETUP_STEPS: [&str; 8] = [
-    "node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify",
+    "node",
+    "install",
+    "plugins",
+    "tailscale",
+    "magicdns",
+    "start",
+    "serve",
+    "verify",
 ];
 
 /// 按访问模式的步骤序列（唯一事实来源）：local = start::LOCAL_STEPS，remote = SETUP_STEPS
 pub(crate) fn steps(remote: bool) -> &'static [&'static str] {
-    if remote { &SETUP_STEPS } else { &start::LOCAL_STEPS }
+    if remote {
+        &SETUP_STEPS
+    } else {
+        &start::LOCAL_STEPS
+    }
 }
 
 fn pending_step(index: usize, id: &str) -> StepEvent {

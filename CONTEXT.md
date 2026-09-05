@@ -43,7 +43,7 @@
 
 ## 插件市场（Marketplace）
 
-功能域：浏览社区插件目录，一键安装/移除/更新 web profile 插件。导航项「Plugins」，二级导航「发现 / 已安装」。
+功能域：浏览社区插件目录，一键安装/移除/更新 web profile 插件。导航项「Plugins」，二级导航「发现 / 收藏 / 已安装」；发现与收藏页只管浏览与安装（已装匹配卡只读呈现安装事实与启停状态），更新/移除/启停开关归已安装页。
 
 ### 术语
 
@@ -57,12 +57,15 @@
 - **插件审计台账（Plugin Audit Log）** — 市场视图安装/移除操作的 append-only JSONL（`plugin-audit.jsonl`，app log dir，含时间/动作/标识符/结果/两侧版本号，error 记本地化前的原始错误）；受管授权插件由 Launcher 修复/卸载流程管理，不走市场路径、不入台账；尽力而为写入，失败不回滚操作。
 - **受管插件（Managed Plugin）** — Launcher 自装的授权插件（`@dsh-external/*`），在已装列表中标记但不提供移除按钮，由 Launcher 的修复/卸载流程管理。
 - **已装匹配（Installed Match）** — npm 形态 specifier 的包名部分与 web profile `package.json` dependencies 键比对；带协议前缀的形态（`github:`、`npm:`、`file:` 等）安装后的键名无法从目录预知，不参与匹配。
-- **更新检测（Update Check）** — 已安装页对 npm 形态安装的非受管插件自动比对 registry latest（进入市场页即查，可手动重跑）：当前版本优先读磁盘事实（profile `node_modules/<name>/package.json` 的 version，范围 spec `^ ~` 即靠它参与检测），磁盘不可得回退 spec 精确版本（`pkg@1.2.3` / `npm:pkg@1.0.0` / 裸版本）；协议形态（`github:` `file:` 等）不来自 registry 恒不检。逐包查 `registry.npmjs.org/<name>/latest` 语义版本比对，部分包查询失败不放大为整体失败（如实无 latest、不出按钮），全部可检包都失败才报错。更新动作 = 正常以 `name@latest` 重装；latest 落在 pnpm minimumReleaseAge 保护窗口内（pnpm 11 内置默认 24h，检测侧经 registry packument 发布时间判定并标记 `latestInReleaseAgeWindow`、透传 `latestPublishTime`）时先弹供应链确认框（展示版本过渡与发布新鲜度，Esc/焦点默认取消），用户知情确认后才以钉版本 `name@<latestVersion>` 重装（pnpm 认的知情通道，自动写 `minimumReleaseAgeExclude`）——窗口内 `@latest` 会被静默拦回旧版且退出码仍为 0，不设确认框即假成功。与一键安装同一 dsh 闸门、策略、审计与构建脚本审批路径；批量更新顺序执行（共享同一 profile，pnpm 并发会争锁），中途撞上审批挂起即停，剩余项待放行后重试。
+- **安装护栏（Install Guard）** — 安装 CLI 退出码 0 之后的保护序列：落盘校验（npm 形态键可预知，退出码成功但键未落盘即未生效）→ 重复挂载剥离（CLI 的 bundle 对账把组合树里已由 patch 行挂载的包重新加进 `dsh.profile.bundles`，只剥「本次新增且已由 patch 行挂载」的条目并透传 notice）→ 重复入口 id 回滚（新包 claimed 的入口 id 撞上既有占用时经官方 remove 路径回滚新包，绝不写共享 disabled 行）→ `--dump-config` 启动预检（组合失败且输出牵连新包才回滚，无关失败如实报告不动任何东西）。协议形态重装无法唯一定位回滚目标，只校验与预检、不自动回滚——回滚目标可能正是用户既有插件。
+- **启停开关（Enable Toggle）** — 翻转插件的下次启动启用状态：在 profile `cordis.patch.yml` 写/删 `{id, name, disabled: true}` bare 覆盖行（判定范围 = 各包自带 bundle patch 声明的入口 id，无 bundle patch 的普通插件以包名自claim）。写入走行级编辑——serde_yaml 会静默剥掉 loader 依赖的 `!!js` 表达式标签，行级只增删覆盖行、其余字节原样保留。对运行中的 dsh 无影响，重启后生效；已安装页提供「重启 dsh web」一键入口（复用 Shell 域一键重启与其启动时间线，启停后就近生效）；重复启停内容未变化免写盘不记台账。受管插件不走此通道（由修复/卸载流程管理）；移除插件时清理其孤儿停用行（防重装继承停用态）。
+- **更新检测（Update Check）** — 已安装页对 npm 形态安装的非受管插件自动比对 registry latest（进入市场页即查，可手动重跑）：当前版本优先读磁盘事实（profile `node_modules/<name>/package.json` 的 version，范围 spec `^ ~` 即靠它参与检测），磁盘不可得回退 spec 精确版本（`pkg@1.2.3` / `npm:pkg@1.0.0` / 裸版本）；协议形态（`github:` `file:` 等）不来自 registry 恒不检。逐包查 `registry.npmjs.org/<name>/latest` 语义版本比对，部分包查询失败不放大为整体失败（如实无 latest、不出按钮），全部可检包都失败才报错。更新动作 = 正常以 `name@latest` 重装；latest 落在 pnpm minimumReleaseAge 保护窗口内（pnpm 11 内置默认 24h，检测侧经 registry packument 发布时间判定并标记 `latestInReleaseAgeWindow`、透传 `latestPublishTime`）时先弹供应链确认框（展示版本过渡与发布新鲜度，Esc/焦点默认取消），用户知情确认后才以钉版本 `name@<latestVersion>` 重装（pnpm 认的知情通道，自动写 `minimumReleaseAgeExclude`）——窗口内 `@latest` 会被静默拦回旧版且退出码仍为 0，不设确认框即假成功。同一 `/latest` 响应还承载兼容门禁：目标包 manifest 声明了 `dsh.engines.dsh`（回退顶层 `engines.dsh`，仅认 `>=X.Y.Z` 形态）而宿主 dsh 不满足、或声明形态/宿主版本无法核实（fail closed）时，更新按钮禁用并排除出批量更新。与一键安装同一 dsh 闸门、策略、审计与构建脚本审批路径；批量更新顺序执行（共享同一 profile，pnpm 并发会争锁），中途撞上审批挂起即停，剩余项待放行后重试。
 
 ### 语义边界
 
 - 目录是社区数据：Launcher 不做分类/验证/排名的二次加工，只按目录原样展示与执行。弃用标记与安装是两件事——弃用插件同样可一键安装，徽章与替代建议让这一点可见。分类显示名取自目录原生双语表（en/zh），缺失时回退展示分类 id。
 - 安装与移除是长操作（pnpm 下载依赖），UI 以 busy 态呈现，不做后台任务化。
+- profile 的 `cordis.patch.yml` 与 `package.json` 的 `dsh.profile.bundles` 是 dsh CLI 拥有的文件：launcher 只做行级启停编辑与护栏的读取/剥离（备份纪律与字节保留见启停开关术语），不做整体重排、不执行目录 install 命令串之外的任何 patch 改写。
 - identifier 经字符白名单校验（npm/pnpm 合法字符集，拒绝相对路径与 `..`），挡写歪的目录数据与手改 IPC 的误用；安装本就只在 loopback 的 dsh profile 目录内进行。
 - 快照、回执、审计、策略都是本机机制：无云控制面、无集中上报；审计台账与壳日志是两个文件、两种保留策略（日志轮转即删，台账保留全部）。
 

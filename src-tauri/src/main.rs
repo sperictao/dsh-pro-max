@@ -125,13 +125,19 @@ pub fn run() {
                 .max_file_size(2 * 1024 * 1024)
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
                 .targets([
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: None,
+                    }),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                 ])
                 .build(),
         )
         // args 在 macOS 登录项上不生效，mac 自启会显示主窗口而非静默到托盘
-        .plugin(tauri_plugin_autostart::Builder::new().args(["--autostart"]).build())
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args(["--autostart"])
+                .build(),
+        )
         // 不记 VISIBLE：自启静默到托盘不该被持久化成「下次也不显示」
         .plugin(
             tauri_plugin_window_state::Builder::new()
@@ -231,6 +237,11 @@ pub fn run() {
             dsh::market_approve_builds,
             dsh::market_remove,
             dsh::market_check_updates,
+            dsh::market_set_plugin_enabled,
+            dsh::market_cancel,
+            dsh::market_discovery_compat,
+            dsh::market_release_notes,
+            dsh::market_diagnostics,
             dsh::model_config_load,
             dsh::model_config_save,
             updater::get_updater_config_health,

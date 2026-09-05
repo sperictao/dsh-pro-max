@@ -2,15 +2,15 @@
 
 use super::WEB_PORT;
 // AUTOSTART_PREFIX 仅 macOS launchd 分支使用（常量本身 cfg(macos)）
+use super::components::{dsh_dir, tailscale_path};
 #[cfg(target_os = "macos")]
 use super::AUTOSTART_PREFIX;
-use super::components::{dsh_dir, tailscale_path};
+use crate::config;
+use crate::i18n::keyf;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
-use crate::config;
-use crate::i18n::keyf;
 
 // ============ 跨平台 CLI 辅助 ============
 
@@ -114,7 +114,7 @@ pub(crate) fn probe_path() -> String {
 
 /// 跑命令并捕获 (stdout, stderr, 成功)。命令经 probe PATH 执行
 pub(crate) fn run_capture(program: &str, args: &[&str]) -> Result<(String, String, bool), String> {
-    run_capture_lines(program, args, |_| {})
+    run_capture_lines(program, args, |_| {}, None, None).map(|(o, e, ok, _)| (o, e, ok))
 }
 
 /// 把一段流输出切成展示行：`\n` 分段后再按 `\r` 拆（pnpm 进度条用 \r 刷新
@@ -129,34 +129,51 @@ pub(crate) fn stream_chunk_lines(chunk: &str) -> Vec<String> {
         .collect()
 }
 
-/// 读尽一条管道：回调逐行输出（经 stream_chunk_lines 切行），同时返回拼接全文
+/// 读尽一条管道：回调逐行输出（经 stream_chunk_lines 切行），拼接全文写入
+/// 共享缓冲。不返回收集结果——读线程可能阻塞在孙进程持有的管道上，超时路径
+/// 不 join、直接取共享缓冲，因此收集必须挂在可无锁读取的共享态上
 fn collect_pipe_lines(
     pipe: impl std::io::Read + Send + 'static,
     on_line: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
-) -> std::thread::JoinHandle<String> {
+    collected: std::sync::Arc<std::sync::Mutex<String>>,
+) -> std::thread::JoinHandle<()> {
     use std::io::BufRead;
     std::thread::spawn(move || {
-        let mut collected = String::new();
         for chunk in std::io::BufReader::new(pipe).split(b'\n').flatten() {
             for line in stream_chunk_lines(&String::from_utf8_lossy(&chunk)) {
                 on_line(&line);
-                collected.push_str(&line);
-                collected.push('\n');
+                // 容忍毒锁：on_line 回调（前端事件推送）panic 不拖垮取回侧
+                let mut buf = collected.lock().unwrap_or_else(|p| p.into_inner());
+                buf.push_str(&line);
+                buf.push('\n');
             }
         }
-        collected
     })
 }
 
-/// 跑命令并逐行回调输出（stdout/stderr 交错顺序不保证），仍返回与 run_capture
-/// 相同的完整捕获。流式形态与 run_capture 唯一差异是回调：market 安装用它把
-/// dsh/pnpm 输出实时推进前端。stdin 接 null 防子进程等输入（与 output() 一致）；
-/// stdout/stderr 各一个读线程防单读堵塞；读尽再 wait，避免管道写满死锁
+/// 共享缓冲快照（与 collect_pipe_lines 同一套容错）
+fn snapshot_collected(buf: &std::sync::Mutex<String>) -> String {
+    buf.lock().unwrap_or_else(|p| p.into_inner()).clone()
+}
+
+/// 跑命令并逐行回调输出（stdout/stderr 交错顺序不保证），返回
+/// (stdout, stderr, 成功, 是否被杀)。流式形态与 run_capture 唯一差异是
+/// 回调：market 安装用它把 dsh/pnpm 输出实时推进前端。stdin 接 null 防子进程
+/// 等输入（与 output() 一致）；stdout/stderr 各一个读线程防单读堵塞；读尽再
+/// wait，避免管道写满死锁。
+///
+/// timeout 到点、或 cancel 令牌被置位（用户取消，G2），都杀掉子进程并回收
+/// （不留僵尸），返回第四位 true——调用方凭自己持有的令牌区分超时与取消。
+/// 已捕获的部分输出保留。杀掉的直接子进程的管道可能仍被孙进程（pnpm 链）
+/// 持有，读线程无法 EOF——因此被杀路径不 join 读线程，只留一拍收尾后取共享
+/// 缓冲，让「挂死/取消」都不再无限挂住调用方
 pub(crate) fn run_capture_lines(
     program: &str,
     args: &[&str],
     on_line: impl Fn(&str) + Send + Sync + 'static,
-) -> Result<(String, String, bool), String> {
+    timeout: Option<Duration>,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<(String, String, bool, bool), String> {
     let mut child = cli_command(program, args)
         .env("PATH", probe_path())
         .stdin(std::process::Stdio::null())
@@ -164,10 +181,10 @@ pub(crate) fn run_capture_lines(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| {
-            keyf("Cannot execute {program}: {error}", &[
-                ("program", program.to_string()),
-                ("error", e.to_string()),
-            ])
+            keyf(
+                "Cannot execute {program}: {error}",
+                &[("program", program.to_string()), ("error", e.to_string())],
+            )
         })?;
     let on_line = std::sync::Arc::new(on_line);
     let stdout_pipe = child
@@ -178,12 +195,55 @@ pub(crate) fn run_capture_lines(
         .stderr
         .take()
         .expect("stderr is piped, so take() always succeeds");
-    let out_handle = collect_pipe_lines(stdout_pipe, on_line.clone());
-    let err_handle = collect_pipe_lines(stderr_pipe, on_line);
-    let stdout = out_handle.join().unwrap_or_default();
-    let stderr = err_handle.join().unwrap_or_default();
-    let status = child.wait().map_err(|e| e.to_string())?;
-    Ok((stdout.trim().to_string(), stderr.trim().to_string(), status.success()))
+    let collected_out = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let collected_err = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let out_handle = collect_pipe_lines(stdout_pipe, on_line.clone(), collected_out.clone());
+    let err_handle = collect_pipe_lines(stderr_pipe, on_line, collected_err.clone());
+    // 统一 wait 循环：无 timeout 只是永远不到期，不做特殊分支
+    let deadline = timeout.map(|t| std::time::Instant::now() + t);
+    let mut status: Option<std::process::ExitStatus> = None;
+    let mut timed_out = false;
+    while status.is_none() && !timed_out {
+        match child.try_wait() {
+            Ok(Some(s)) => status = Some(s),
+            Ok(None) => {
+                if deadline.is_some_and(|dl| std::time::Instant::now() >= dl)
+                    || cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    timed_out = true;
+                } else {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    if timed_out {
+        // 管道被孙进程持有读线程就收不了尾：不 join（线程随管道关闭自行退出），
+        // 留一拍让无孙进程的常见情形走完 EOF
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let stdout = snapshot_collected(&collected_out);
+        let stderr = snapshot_collected(&collected_err);
+        return Ok((
+            stdout.trim().to_string(),
+            stderr.trim().to_string(),
+            false,
+            true,
+        ));
+    }
+    // 正常退出：join 读线程拿全量捕获（与原语义一致）
+    let _ = out_handle.join();
+    let _ = err_handle.join();
+    let stdout = snapshot_collected(&collected_out);
+    let stderr = snapshot_collected(&collected_err);
+    Ok((
+        stdout.trim().to_string(),
+        stderr.trim().to_string(),
+        status.is_some_and(|s| s.success()),
+        false,
+    ))
 }
 
 pub(crate) fn string_args(args: &[String]) -> Vec<&str> {
@@ -205,7 +265,11 @@ pub(crate) fn which(program: &str) -> Option<String> {
             return None;
         }
         let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if s.is_empty() { None } else { Some(s) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
     }
     #[cfg(windows)]
     {
@@ -257,13 +321,20 @@ pub(crate) fn port_listening(port: u16) -> bool {
 /// 返回子进程 PID，供启动等待期间探活（进程已死则提前失败，不干等超时）。
 /// 说明：dsh web 是常驻服务，不能随启动器退出而被杀，
 /// 这里不持有 Child 句柄，与 ProcessManager 的随窗停服务语义刻意不同
-pub(crate) fn spawn_detached(program: &str, args: &[&str], envs: &[(&str, &str)], log: &Path) -> Result<u32, String> {
+pub(crate) fn spawn_detached(
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    log: &Path,
+) -> Result<u32, String> {
     let dir = log.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(dir)
-        .map_err(|e| {
-            log::error!("[dsh 启动] 创建日志目录失败: {}", e);
-            keyf("Failed to create directory: {error}", &[("error", e.to_string())])
-        })?;
+    fs::create_dir_all(dir).map_err(|e| {
+        log::error!("[dsh 启动] 创建日志目录失败: {}", e);
+        keyf(
+            "Failed to create directory: {error}",
+            &[("error", e.to_string())],
+        )
+    })?;
     let file = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -274,20 +345,20 @@ pub(crate) fn spawn_detached(program: &str, args: &[&str], envs: &[(&str, &str)]
         })?;
     let mut cmd = cli_command(program, args);
     cmd.env("PATH", probe_path())
-        .stdout(std::process::Stdio::from(file.try_clone().map_err(|e| {
-            log::error!("[dsh 启动] 复制日志文件句柄失败: {}", e);
-            e.to_string()
-        })?))
+        .stdout(std::process::Stdio::from(file.try_clone().map_err(
+            |e| {
+                log::error!("[dsh 启动] 复制日志文件句柄失败: {}", e);
+                e.to_string()
+            },
+        )?))
         .stderr(std::process::Stdio::from(file));
     for (k, v) in envs {
         cmd.env(k, v);
     }
-    let child = cmd
-        .spawn()
-        .map_err(|e| {
-            log::error!("[dsh 启动] 启动子进程失败: {}", e);
-            keyf("Cannot start process: {error}", &[("error", e.to_string())])
-        })?;
+    let child = cmd.spawn().map_err(|e| {
+        log::error!("[dsh 启动] 启动子进程失败: {}", e);
+        keyf("Cannot start process: {error}", &[("error", e.to_string())])
+    })?;
     Ok(child.id())
 }
 
@@ -295,7 +366,10 @@ pub(crate) fn spawn_detached(program: &str, args: &[&str], envs: &[(&str, &str)]
 pub(crate) fn process_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
-        unsafe { libc::kill(pid as i32, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) }
+        unsafe {
+            libc::kill(pid as i32, 0) == 0
+                || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        }
     }
     #[cfg(windows)]
     {
@@ -304,7 +378,9 @@ pub(crate) fn process_alive(pid: u32) -> bool {
             GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
         };
         unsafe {
-            let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+            let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+                return false;
+            };
             let mut code = 0u32;
             // STILL_ACTIVE = 259
             let alive = GetExitCodeProcess(h, &mut code).is_ok() && code == 259;
@@ -337,7 +413,9 @@ pub(crate) fn clear_stale_credentials_lock(grace: Duration) {
     let lock = dir.join(".credentials.yaml.lock");
     let deadline = std::time::Instant::now() + grace;
     loop {
-        let Ok(contents) = fs::read_to_string(&lock) else { return };
+        let Ok(contents) = fs::read_to_string(&lock) else {
+            return;
+        };
         if credentials_lock_is_stale(&contents, process_alive) {
             match fs::remove_file(&lock) {
                 Ok(()) => log::info!("[dsh] 清理孤儿 credentials 写锁: {}", lock.display()),
@@ -437,7 +515,12 @@ pub(crate) fn dsh_web_pid() -> Option<u32> {
         if !out.status.success() {
             return None;
         }
-        String::from_utf8_lossy(&out.stdout).lines().next()?.trim().parse().ok()
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .next()?
+            .trim()
+            .parse()
+            .ok()
     }
     #[cfg(windows)]
     {
@@ -480,7 +563,12 @@ pub(crate) fn stop_supervised_services() {
     #[cfg(target_os = "linux")]
     {
         let _ = Command::new("systemctl")
-            .args(["--user", "stop", "dsh-remote-web.service", "dsh-remote-proxy.service"])
+            .args([
+                "--user",
+                "stop",
+                "dsh-remote-web.service",
+                "dsh-remote-proxy.service",
+            ])
             .output();
     }
 }

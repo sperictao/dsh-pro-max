@@ -1,19 +1,28 @@
 //! 远程一键启动（8 步时间轴）：dsh web 拉起、Tailscale serve、失败诊断与重启编排（dsh_setup 命令）。
 
-use super::{StepEvent};
-use super::{DSH_PACKAGE, RemoteRpcAccess, RemoteUrlAccess, SUPPORTED_DSH_VERSION, WEB_PORT};
-use super::auth::{AuthConfig, http_get, http_ok, resolve_auth_config, resolve_fqdn, resolve_tailscale_login, rpc_ok, serve_configured, tailscale_online};
+use super::auth::{
+    http_get, http_ok, resolve_auth_config, resolve_fqdn, resolve_tailscale_login, rpc_ok,
+    serve_configured, tailscale_online, AuthConfig,
+};
 use super::autostart::{autostart_enabled, autostart_impl};
-use super::components::{auth_plugins_installed, bundled_plugin_specs, dsh_dir, dsh_version, dsh_version_is_compatible, install_auth_plugins, install_supported_dsh, magic_dns_info, npm_bin, resolve_dsh_bin, resolve_host_and_url, resolve_node_bin, tailscale_path, web_profile_has_auth_plugins};
+use super::components::{
+    auth_plugins_installed, bundled_plugin_specs, dsh_dir, dsh_version, dsh_version_is_compatible,
+    install_auth_plugins, install_supported_dsh, magic_dns_info, npm_bin, resolve_dsh_bin,
+    resolve_host_and_url, resolve_node_bin, tailscale_path,
+};
 use super::probe::{probe_remote_url, proxy_bypass_host};
-use super::process::{clear_stale_credentials_lock, cli_command, dsh_web_cmd_pattern, dsh_web_pid, kill_by_pattern, port_listening, run_capture, spawn_detached, stop_supervised_services, wait_web_start};
-use super::update::{ensure_web_profile_compat_patch};
+use super::process::{
+    clear_stale_credentials_lock, cli_command, dsh_web_cmd_pattern, dsh_web_pid, kill_by_pattern,
+    port_listening, run_capture, spawn_detached, stop_supervised_services, wait_web_start,
+};
+use super::update::clear_web_profile_compat_entry;
+use super::StepEvent;
+use super::{RemoteRpcAccess, RemoteUrlAccess, DSH_PACKAGE, SUPPORTED_DSH_VERSION, WEB_PORT};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use std::time::Duration;
-use tauri::{Emitter};
-
+use tauri::Emitter;
 
 use crate::i18n::keyf;
 
@@ -50,25 +59,64 @@ pub(crate) struct StepCtx<'a> {
 
 impl StepCtx<'_> {
     pub(crate) fn running(&self, detail: &str) {
-        emit_step(self.app, self.index, self.id, "running", Some(detail.to_string()), None, None);
+        emit_step(
+            self.app,
+            self.index,
+            self.id,
+            "running",
+            Some(detail.to_string()),
+            None,
+            None,
+        );
     }
     pub(crate) fn done(&self, detail: &str) {
-        emit_step(self.app, self.index, self.id, "done", Some(detail.to_string()), None, None);
+        emit_step(
+            self.app,
+            self.index,
+            self.id,
+            "done",
+            Some(detail.to_string()),
+            None,
+            None,
+        );
     }
     /// 失败：发出 failed 节点 + 把后续步骤标记 skipped，再返回 Err（时间轴即展示面）
-    pub(crate) fn fail(&self, problem: &str, solution: &str, remaining: &[(&'static str, usize)]) -> Result<(), String> {
+    pub(crate) fn fail(
+        &self,
+        problem: &str,
+        solution: &str,
+        remaining: &[(&'static str, usize)],
+    ) -> Result<(), String> {
         self.emit_fail(problem, solution, remaining);
         Err(problem.to_string())
     }
     /// 同 fail，但返回 `Result<String, String>`：供返回 `String` 的命令
     /// （如 dsh_start_web 返回本地 URL）直接 `return ctx.fail_err(...)`
-    pub(crate) fn fail_err(&self, problem: &str, solution: &str, remaining: &[(&'static str, usize)]) -> Result<String, String> {
+    pub(crate) fn fail_err(
+        &self,
+        problem: &str,
+        solution: &str,
+        remaining: &[(&'static str, usize)],
+    ) -> Result<String, String> {
         self.emit_fail(problem, solution, remaining);
         Err(problem.to_string())
     }
-    pub(crate) fn emit_fail(&self, problem: &str, solution: &str, remaining: &[(&'static str, usize)]) {
+    pub(crate) fn emit_fail(
+        &self,
+        problem: &str,
+        solution: &str,
+        remaining: &[(&'static str, usize)],
+    ) {
         log::error!("[dsh 一键配置] 步骤 {} 失败: {}", self.id, problem);
-        emit_step(self.app, self.index, self.id, "failed", None, Some(problem.to_string()), Some(solution.to_string()));
+        emit_step(
+            self.app,
+            self.index,
+            self.id,
+            "failed",
+            None,
+            Some(problem.to_string()),
+            Some(solution.to_string()),
+        );
         for (id, idx) in remaining {
             emit_step(self.app, *idx, id, "skipped", None, None, None);
         }
@@ -80,16 +128,16 @@ impl StepCtx<'_> {
 /// PID 供启动等待探活；
 /// 失败返回 (problem, solution) 供时间轴与更新流程分别展示针对性排障提示。
 /// dsh_setup 与 dsh_update 共用
-pub(crate) fn spawn_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) -> Result<u32, (String, String)> {
+pub(crate) fn spawn_dsh_web(
+    login: &str,
+    fqdn: Option<&str>,
+    auth: &AuthConfig,
+) -> Result<u32, (String, String)> {
     // 孤儿 credentials 写锁会让 boot 在锁等待上超时崩溃（持锁进程被强杀后
     // dsh 永不回收）；持锁 PID 已死才清，活锁是真实并发不碰
     clear_stale_credentials_lock(Duration::ZERO);
-    if web_profile_has_auth_plugins() {
-        ensure_web_profile_compat_patch().map_err(|error| {
-            log::error!("[dsh 启动] 修复 web profile patch 失败: {}", error);
-            (error, "Check the log at ~/.dsh/dsh-web.log".to_string())
-        })?;
-    }
+    // 清理历史版本写入的 compat 条目（幂等，无存量时零成本），每次启动顺路过一遍
+    clear_web_profile_compat_entry();
     let dsh_bin = match resolve_dsh_bin() {
         Ok(b) => b,
         Err(e) => {
@@ -133,7 +181,11 @@ pub(crate) fn read_log_tail(path: &Path, max_lines: usize) -> Option<String> {
     let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
     let start = lines.len().saturating_sub(max_lines);
     let tail = lines[start..].join("\n");
-    if tail.trim().is_empty() { None } else { Some(tail) }
+    if tail.trim().is_empty() {
+        None
+    } else {
+        Some(tail)
+    }
 }
 
 /// 解析一行 loader 链 `failed to {stage} loader entry {id} ({name}): {inner}`：
@@ -191,7 +243,9 @@ pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> (String, S
     // 不可移除的内置插件；真实解法是删掉孤儿锁（Launcher 启动路径已自动清理
     // 持锁 PID 已死的锁，走到这里说明持锁者活着或清理失败）
     if let Some(t) = tail {
-        if t.contains("timed out waiting for the writer lock") && t.contains(".credentials.yaml.lock") {
+        if t.contains("timed out waiting for the writer lock")
+            && t.contains(".credentials.yaml.lock")
+        {
             return (
                 "dsh web failed to start: the credentials writer lock ~/.dsh/.credentials.yaml.lock is held by another dsh process or was left behind by a killed one".to_string(),
                 "If no other dsh command is running, delete ~/.dsh/.credentials.yaml.lock, then retry".to_string(),
@@ -212,7 +266,10 @@ pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> (String, S
         Some(t) => {
             // 问题区只取前 8 行，避免长堆栈淹没时间轴
             let short: Vec<&str> = t.lines().take(8).collect();
-            keyf("dsh web failed to start; log says:\n{log}", &[("log", short.join("\n"))])
+            keyf(
+                "dsh web failed to start; log says:\n{log}",
+                &[("log", short.join("\n"))],
+            )
         }
         None => "dsh web failed to start (no log output; port 3899 may be occupied)".to_string(),
     };
@@ -273,8 +330,10 @@ pub(crate) fn serve_command(auth: &AuthConfig) -> Vec<String> {
 pub(crate) fn serve_failure_solution(err: &str) -> String {
     let e = err.to_lowercase();
     if e.contains("accept-app-caps") || e.contains("unknown flag") || e.contains("app cap") {
-        "Tailscale 1.92+ is required to forward App Capabilities; update Tailscale, then retry".to_string()
-    } else if e.contains("tls cert") || e.contains("does not support") || e.contains("certificate") {
+        "Tailscale 1.92+ is required to forward App Capabilities; update Tailscale, then retry"
+            .to_string()
+    } else if e.contains("tls cert") || e.contains("does not support") || e.contains("certificate")
+    {
         "MagicDNS or HTTPS Certificates may not be enabled; open https://login.tailscale.com/admin/dns and enable MagicDNS and HTTPS Certificates, then retry".to_string()
     } else {
         "Open the authorization link in the error output to enable Serve for this tailnet (https://login.tailscale.com/f/serve), then retry".to_string()
@@ -303,16 +362,18 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
     // 授权配置解析（域名/登录名校验）放在最前面，配置非法时立刻在首步失败，
     // 而不是等装好 dsh/Tailscale 之后才报。解析结果贯穿 start / serve 两步。
     let auth = {
-        let ctx = StepCtx { app, index: 0, id: steps[0] };
+        let ctx = StepCtx {
+            app,
+            index: 0,
+            id: steps[0],
+        };
         match resolve_auth_config() {
             Ok(auth) => auth,
-            Err(error) => {
-                return ctx.fail(
-                    &error,
-                    "Fix the remote authorization settings in Settings → DeepSeek Harness, then retry",
-                    &remaining_after(0),
-                )
-            }
+            Err(error) => return ctx.fail(
+                &error,
+                "Fix the remote authorization settings in Settings → DeepSeek Harness, then retry",
+                &remaining_after(0),
+            ),
         }
     };
 
@@ -323,14 +384,15 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
             id: steps[0],
         };
         ctx.running("Checking Node.js & npm…");
-        let node = match resolve_node_bin() {
-            Ok(node) => node,
-            Err(error) => return ctx.fail(
-                &error,
-                "Install Node.js 18+ from https://nodejs.org, then restart this app and retry",
-                &remaining_after(0),
-            ),
-        };
+        let node =
+            match resolve_node_bin() {
+                Ok(node) => node,
+                Err(error) => return ctx.fail(
+                    &error,
+                    "Install Node.js 18+ from https://nodejs.org, then restart this app and retry",
+                    &remaining_after(0),
+                ),
+            };
         let (npm_version, _, npm_ok) = run_capture(&npm_bin(), &["--version"]).unwrap_or_default();
         let node_version = cli_command(&node, &["--version"])
             .output()
@@ -354,11 +416,13 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
             // 显示实际版本而非锁定版本：同线未来 rc/稳定版也可能兼容，
             // 显示 SUPPORTED_DSH_VERSION 会让用户误以为被装回了旧版
             ctx.done(&keyf(
-                "Compatible dsh is installed: {version}", &[("version", current.clone().unwrap_or_default())],
+                "Compatible dsh is installed: {version}",
+                &[("version", current.clone().unwrap_or_default())],
             ));
         } else {
             ctx.running(&keyf(
-                "Installing the pinned dsh ({version})…", &[("version", SUPPORTED_DSH_VERSION.to_string())],
+                "Installing the pinned dsh ({version})…",
+                &[("version", SUPPORTED_DSH_VERSION.to_string())],
             ));
             match install_supported_dsh() {
                 Ok(version) => ctx.done(&keyf("Installed {version}", &[("version", version)])),
@@ -437,7 +501,8 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
             }
         };
         ctx.done(&keyf(
-            "Online · authorized identity: {login}", &[("login", login.clone())],
+            "Online · authorized identity: {login}",
+            &[("login", login.clone())],
         ));
         (ts, login)
     };
@@ -528,7 +593,8 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
                 };
                 return ctx.fail(
                     &keyf(
-                        "Serve is not enabled or failed: {error}", &[("error", error.clone())],
+                        "Serve is not enabled or failed: {error}",
+                        &[("error", error.clone())],
                     ),
                     &serve_failure_solution(&error),
                     &remaining_after(6),
@@ -555,7 +621,8 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
             .clone()
             .unwrap_or_else(|| "https://<hostname>.ts.net".to_string());
         ctx.running(&keyf(
-            "Verifying remote access ({url})…", &[("url", url_text.clone())],
+            "Verifying remote access ({url})…",
+            &[("url", url_text.clone())],
         ));
         let web_ok = http_ok(http_get(WEB_PORT, "127.0.0.1", "/").as_deref());
         let plugins_ok = bundled_plugin_specs(app)
@@ -601,10 +668,12 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
                 .unwrap_or("<hostname>.ts.net");
             return ctx.fail(
                 &keyf(
-                    "The local proxy is intercepting the Tailscale address: {url}", &[("url", url_text)],
+                    "The local proxy is intercepting the Tailscale address: {url}",
+                    &[("url", url_text)],
                 ),
                 &keyf(
-                    "Add {host} to this machine's proxy bypass / skip-proxy list, then retry", &[("host", host.to_string())],
+                    "Add {host} to this machine's proxy bypass / skip-proxy list, then retry",
+                    &[("host", host.to_string())],
                 ),
                 &remaining_after(7),
             );
@@ -625,12 +694,14 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
             }
             if !https_ok {
                 checks.push(keyf(
-                    "HTTPS endpoint is not responding: {url}", &[("url", url_text.clone())],
+                    "HTTPS endpoint is not responding: {url}",
+                    &[("url", url_text.clone())],
                 ));
             }
             if !ws_ok {
                 checks.push(keyf(
-                    "WebSocket handshake failed: {url}/api/remote.mux", &[("url", url_text.clone())],
+                    "WebSocket handshake failed: {url}/api/remote.mux",
+                    &[("url", url_text.clone())],
                 ));
             }
             match remote_use_access {
@@ -666,7 +737,8 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
             }
             if remote_url_access == Some(RemoteUrlAccess::ProxyInterference) {
                 checks.push(keyf(
-                    "The local proxy is intercepting the Tailscale address: {url}", &[("url", url_text.clone())],
+                    "The local proxy is intercepting the Tailscale address: {url}",
+                    &[("url", url_text.clone())],
                 ));
             }
             return ctx.fail(
@@ -693,7 +765,11 @@ pub(crate) fn format_verification_checks(checks: &[String]) -> String {
 
 /// 重启 dsh web，确保新 profile 和授权环境生效。成功返回新进程 PID
 /// （供启动后的就绪验证探活）。
-pub(crate) fn restart_dsh_web(login: &str, fqdn: Option<&str>, auth: &AuthConfig) -> Result<u32, String> {
+pub(crate) fn restart_dsh_web(
+    login: &str,
+    fqdn: Option<&str>,
+    auth: &AuthConfig,
+) -> Result<u32, String> {
     stop_supervised_services();
     kill_by_pattern(dsh_web_cmd_pattern());
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
