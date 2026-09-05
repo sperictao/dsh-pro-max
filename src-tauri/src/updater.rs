@@ -67,11 +67,10 @@ fn lock_pending(state: &PendingUpdateState) -> MutexGuard<'_, Option<Update>> {
 pub fn map_updater_error(err: UpdaterError) -> String {
     match err {
         UpdaterError::EmptyEndpoints => {
-            "Update source not configured; set updater endpoints and pubkey in tauri.conf.json".to_string()
+            "Update source not configured; set updater endpoints and pubkey in tauri.conf.json"
+                .to_string()
         }
-        UpdaterError::InsecureTransportProtocol => {
-            "Update URL must use https".to_string()
-        }
+        UpdaterError::InsecureTransportProtocol => "Update URL must use https".to_string(),
         _ => err.to_string(),
     }
 }
@@ -128,11 +127,21 @@ async fn fetch_remote_update(
         .updater_builder()
         .timeout(UPDATE_CHECK_TIMEOUT)
         .build()
-        .map_err(|e| keyf("Update source not configured or unavailable: {error}", &[("error", map_updater_error(e))]))?;
+        .map_err(|e| {
+            keyf(
+                "Update source not configured or unavailable: {error}",
+                &[("error", map_updater_error(e))],
+            )
+        })?;
     let maybe = updater
         .check()
         .await
-        .map_err(|e| keyf("Failed to check for updates: {error}", &[("error", map_updater_error(e))]))?
+        .map_err(|e| {
+            keyf(
+                "Failed to check for updates: {error}",
+                &[("error", map_updater_error(e))],
+            )
+        })?
         .map(|mut u| {
             u.timeout = Some(UPDATE_DOWNLOAD_TIMEOUT);
             u
@@ -191,10 +200,8 @@ async fn download_with_retry(app: &AppHandle, update: &Update) -> Result<Vec<u8>
         String::new()
     };
     Err(keyf(
-        "Download failed{note}: {error}", &[
-            ("note", note),
-            ("error", last_err.unwrap_or_default()),
-        ],
+        "Download failed{note}: {error}",
+        &[("note", note), ("error", last_err.unwrap_or_default())],
     ))
 }
 
@@ -232,7 +239,10 @@ fn resolve_help_paths() -> Result<(PathBuf, PathBuf), String> {
             }
         }
     }
-    Err("Updater guide files not found; please run this feature from the source repository".to_string())
+    Err(
+        "Updater guide files not found; please run this feature from the source repository"
+            .to_string(),
+    )
 }
 
 #[tauri::command]
@@ -253,7 +263,10 @@ pub fn get_updater_config_health(app: AppHandle) -> UpdaterConfigHealth {
         },
         Err(e) => UpdaterConfigHealth {
             configured: false,
-            message: keyf("Update source not configured or unavailable: {error}", &[("error", map_updater_error(e))]),
+            message: keyf(
+                "Update source not configured or unavailable: {error}",
+                &[("error", map_updater_error(e))],
+            ),
         },
     }
 }
@@ -343,9 +356,12 @@ pub async fn install_update(
     let total = bytes.len() as u64;
     emit_progress(&app, "installing", &update.version, total, Some(total), 1);
     let version = update.version.clone();
-    update
-        .install(bytes)
-        .map_err(|e| keyf("Failed to install update: {error}", &[("error", map_updater_error(e))]))?;
+    update.install(bytes).map_err(|e| {
+        keyf(
+            "Failed to install update: {error}",
+            &[("error", map_updater_error(e))],
+        )
+    })?;
     *lock_pending(state.inner()) = None;
 
     // 安装完成，自动重启
