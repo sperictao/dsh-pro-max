@@ -2039,23 +2039,49 @@ pub(crate) fn install_receipt(
     })
 }
 
+/// GitHub 仓库标识归一：github:owner/repo 与 pnpm 落盘的
+/// git+https://github.com/owner/repo.git 等形态 → "owner/repo"（小写，
+/// GitHub 仓库地址大小写不敏感）；#fragment（#ref/#path:）与 .git 后缀剥离。
+/// 非 GitHub 仓库形态返回 None。只用于匹配，不碰落盘事实（spec 原样展示）。
+/// 前端 githubRepoId 同一套语义，specifier_cases.json 的 githubRepoId 向量组
+/// 两侧共同驱动，改一侧必须同步另一侧
+pub(crate) fn github_repo_id(spec: &str) -> Option<String> {
+    const PREFIXES: &[&str] = &[
+        "github:",
+        "git+https://github.com/",
+        "https://github.com/",
+        "git+ssh://git@github.com/",
+        "ssh://git@github.com/",
+        "git@github.com:",
+    ];
+    let rest = PREFIXES.iter().find_map(|p| spec.strip_prefix(p))?;
+    let body = match rest.split_once('#') {
+        Some((head, _)) => head,
+        None => rest,
+    };
+    let body = body.strip_suffix(".git").unwrap_or(body);
+    let (owner, repo) = body.split_once('/')?;
+    if owner.is_empty() || repo.is_empty() || repo.contains('/') {
+        return None;
+    }
+    Some(format!("{owner}/{repo}").to_lowercase())
+}
+
 /// 协议形态安装的已装匹配（前端 protocolInstalledMatch 同一套语义，改一侧
-/// 必须同步另一侧）：spec 的仓库标识是 specifier 前缀、边界在 # / / ? - 或
-/// 结尾（git+https://... 与 github:owner/repo 同属仓库族；- 覆盖 dsh-relay
-/// 这类连字符前缀兄弟的误撞），且目录名在 spec 中出现；命中数量唯一才采信
+/// 必须同步另一侧）：specifier 与落盘 spec 各自归一出 GitHub 仓库标识
+/// （owner/repo，见 github_repo_id）等值命中——pnpm 会把无 fragment 的
+/// github:owner/repo 落盘规范化为 git+https://github.com/owner/repo.git，
+/// 字符串前缀认不出（dsh-at-file 卡片恒显未安装即此因）；等值比较同时消灭
+/// 了前缀族的边界特判（dsh-relay 兄弟误撞）。再要求目录名在 spec 中出现
+/// （specifier 与落盘键名不一致的唯一信号）双条件判定；命中数量唯一才采信
 pub(crate) fn protocol_installed_match<'a>(
     specifier: &str,
     catalog_name: &str,
     list: &'a [InstalledPlugin],
 ) -> Option<&'a InstalledPlugin> {
+    let repo = github_repo_id(specifier)?;
     let mut hits = list.iter().filter(|p| {
-        (p.spec == specifier
-            || (p.spec.starts_with(specifier)
-                && p.spec[specifier.len()..]
-                    .chars()
-                    .next()
-                    .is_some_and(|c| matches!(c, '#' | '/' | '?' | '-'))))
-            && p.spec.contains(catalog_name)
+        github_repo_id(&p.spec).as_deref() == Some(repo.as_str()) && p.spec.contains(catalog_name)
     });
     let first = hits.next()?;
     if hits.next().is_some() {

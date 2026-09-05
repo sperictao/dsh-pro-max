@@ -10,10 +10,12 @@ import vectorsJson from "../../../src-tauri/src/dsh/specifier_cases.json";
 interface SpecifierVectors {
   packageNameFromSpecifier: [string, string | null][];
   specifierToCatalogName: [string, string][];
+  githubRepoId: [string, string | null][];
 }
 const vectors = vectorsJson as SpecifierVectors;
 import {
   MarketView,
+  githubRepoId,
   looksTerminal,
   normalizeCustomSpecifier,
   packageNameFromSpecifier,
@@ -136,6 +138,11 @@ describe("specifier parsers match the shared test vectors", () => {
       expect(specifierToCatalogName(input)).toBe(expectName);
     }
   });
+  it("githubRepoId matches every vector", () => {
+    for (const [input, expectRepo] of vectors.githubRepoId) {
+      expect(githubRepoId(input)).toBe(expectRepo);
+    }
+  });
 });
 
 describe("protocolInstalledMatch", () => {
@@ -156,12 +163,23 @@ describe("protocolInstalledMatch", () => {
     expect(hit?.name).toBe("dsh-api-relay-audit");
   });
 
-  it("refuses ambiguous prefix hits (dsh vs dsh-relay)", () => {
+  // dsh-at-file 复现：pnpm 把无 fragment 的 github:owner/repo 落盘规范化为
+  // git+https://github.com/owner/repo.git，前缀判定认不出 → 卡片恒显未安装
+  it("matches a git+https disk spec against the github: catalog specifier (pnpm normalization)", () => {
+    const list: InstalledPlugin[] = [
+      { name: "dsh-at-file", spec: "git+https://github.com/omdsh-dev/dsh-at-file.git", version: null, managed: false, enabled: true },
+    ];
+    const hit = protocolInstalledMatch("github:omdsh-dev/dsh-at-file", "dsh-at-file", list);
+    expect(hit?.name).toBe("dsh-at-file");
+  });
+
+  it("matches each sibling repo exactly (repo id equality, no prefix ambiguity)", () => {
     const list: InstalledPlugin[] = [
       { name: "dsh", spec: "github:owner/dsh", version: null, managed: false, enabled: true },
       { name: "dsh-relay", spec: "github:owner/dsh-relay", version: null, managed: false, enabled: true },
     ];
-    expect(protocolInstalledMatch("github:owner/dsh", "dsh", list)).toBeNull();
+    expect(protocolInstalledMatch("github:owner/dsh", "dsh", list)?.name).toBe("dsh");
+    expect(protocolInstalledMatch("github:owner/dsh-relay", "dsh-relay", list)?.name).toBe("dsh-relay");
   });
 
   it("refuses a zero hit", () => {

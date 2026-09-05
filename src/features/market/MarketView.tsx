@@ -99,21 +99,51 @@ export function normalizeCustomSpecifier(input: string): string | null {
   return candidate.includes(":") ? null : candidate;
 }
 
-/// 协议形态安装的已装匹配：specifier 非 npm 形态时按"spec 的仓库标识是
-/// specifier 前缀、边界在 # / / ? - 或结尾"（git+https://... 与
-/// github:owner/repo 同属仓库族；- 覆盖 dsh-relay 这类连字符前缀兄弟的
-/// 误撞）再要求目录名在 spec 中出现（specifier 与落盘键名不一致的唯一
-/// 信号）双条件判定；命中数量唯一才采信，如实不落猜。命中为 0 或 ≥2 → null
+/// GitHub 仓库标识归一：github:owner/repo 与 pnpm 落盘的
+/// git+https://github.com/owner/repo.git 等形态 → "owner/repo"（小写，
+/// GitHub 仓库地址大小写不敏感）；#fragment（#ref/#path:）与 .git 后缀剥离。
+/// 非 GitHub 仓库形态返回 null。只用于匹配，不碰落盘事实（spec 原样展示）。
+/// Rust 侧 github_repo_id 同一套语义，specifier_cases.json 的 githubRepoId
+/// 向量组两侧共同驱动，改一侧必须同步另一侧
+export function githubRepoId(spec: string): string | null {
+  const prefixes = [
+    "github:",
+    "git+https://github.com/",
+    "https://github.com/",
+    "git+ssh://git@github.com/",
+    "ssh://git@github.com/",
+    "git@github.com:",
+  ];
+  const rest = prefixes.find((p) => spec.startsWith(p));
+  if (rest === undefined) return null;
+  const body = spec
+    .slice(rest.length)
+    .split("#")[0]
+    .replace(/\.git$/, "");
+  const slash = body.indexOf("/");
+  if (slash <= 0) return null;
+  const owner = body.slice(0, slash);
+  const repo = body.slice(slash + 1);
+  if (!owner || !repo || repo.includes("/")) return null;
+  return `${owner}/${repo}`.toLowerCase();
+}
+
+/// 协议形态安装的已装匹配：specifier 与落盘 spec 各自归一出 GitHub 仓库
+/// 标识（owner/repo，见 githubRepoId）等值命中——pnpm 会把无 fragment 的
+/// github:owner/repo 落盘规范化为 git+https://github.com/owner/repo.git，
+/// 字符串前缀认不出（dsh-at-file 卡片恒显未安装即此因）；等值比较同时消灭
+/// 了前缀族的边界特判（dsh-relay 兄弟误撞）。再要求目录名在 spec 中出现
+/// （specifier 与落盘键名不一致的唯一信号）双条件判定；命中数量唯一才采信，
+/// 如实不落猜。命中为 0 或 ≥2 → null
 export function protocolInstalledMatch(
   specifier: string,
   catalogName: string,
   installed: InstalledPlugin[],
 ): InstalledPlugin | null {
+  const repo = githubRepoId(specifier);
+  if (repo === null) return null;
   const hits = installed.filter(
-    (p) =>
-      (p.spec === specifier ||
-        (p.spec.startsWith(specifier) && ["#", "/", "?", "-"].includes(p.spec.charAt(specifier.length)))) &&
-      p.spec.includes(catalogName),
+    (p) => githubRepoId(p.spec) === repo && p.spec.includes(catalogName),
   );
   return hits.length === 1 ? hits[0] : null;
 }

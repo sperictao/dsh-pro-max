@@ -2027,9 +2027,9 @@ use super::components::verify_bundled_tarball;
 use super::market::{
     audit_line, blocked_build_packages, catalog_from_raw, catalog_snapshot_decision,
     install_failure_message, install_receipt, load_catalog_snapshot_file, merge_allow_builds,
-    package_name_from_specifier, policy_allows, policy_entries_from_raw, resolve_catalog_url,
-    specifier_to_catalog_name, write_catalog_snapshot_file, CatalogLoadError, InstallOutcome,
-    InstalledPlugin,
+    package_name_from_specifier, policy_allows, policy_entries_from_raw, protocol_installed_match,
+    resolve_catalog_url, specifier_to_catalog_name, write_catalog_snapshot_file, github_repo_id,
+    CatalogLoadError, InstallOutcome, InstalledPlugin,
 };
 
 #[test]
@@ -2465,7 +2465,7 @@ fn install_receipt_protocol_reinstall_locates_existing_key() {
     )
     .unwrap();
     assert_eq!(r.name, "dsh-api-relay-audit");
-    // 多命中（dsh 前缀兄弟）→ None
+    // 兄弟仓（dsh vs dsh-relay）按仓库标识各自精确命中，无前缀歧义
     let list = vec![
         InstalledPlugin {
             name: "dsh".into(),
@@ -2482,7 +2482,57 @@ fn install_receipt_protocol_reinstall_locates_existing_key() {
             enabled: true,
         },
     ];
-    assert!(install_receipt("github:owner/dsh", Some(vec![]), &list, Some("dsh")).is_none());
+    let r = install_receipt("github:owner/dsh", Some(vec![]), &list, Some("dsh")).unwrap();
+    assert_eq!(r.name, "dsh");
+}
+
+#[test]
+fn install_receipt_matches_git_https_disk_spec() {
+    // dsh-at-file 场景：pnpm 把无 fragment 的 github:owner/repo 落盘规范化为
+    // git+https://github.com/owner/repo.git，前缀判定认不出 → 卡片恒显未安装、
+    // 重装回执恒 None。重装（before 已含该键，added 差集为空）走
+    // protocol_installed_match，按仓库标识归一后必须命中
+    let list = vec![InstalledPlugin {
+        name: "dsh-at-file".into(),
+        spec: "git+https://github.com/omdsh-dev/dsh-at-file.git".into(),
+        version: None,
+        managed: false,
+        enabled: true,
+    }];
+    let r = install_receipt(
+        "github:omdsh-dev/dsh-at-file",
+        Some(vec!["dsh-at-file".into()]),
+        &list,
+        Some(&specifier_to_catalog_name("github:omdsh-dev/dsh-at-file")),
+    )
+    .expect("receipt");
+    assert_eq!(r.name, "dsh-at-file");
+    assert_eq!(r.spec, "git+https://github.com/omdsh-dev/dsh-at-file.git");
+}
+
+#[test]
+fn protocol_installed_match_hits_each_sibling_repo_exactly() {
+    // 仓库标识等值后无前缀歧义：dsh 与 dsh-relay 各自精确命中
+    let list = vec![
+        InstalledPlugin {
+            name: "dsh".into(),
+            spec: "github:owner/dsh".into(),
+            version: None,
+            managed: false,
+            enabled: true,
+        },
+        InstalledPlugin {
+            name: "dsh-relay".into(),
+            spec: "github:owner/dsh-relay".into(),
+            version: None,
+            managed: false,
+            enabled: true,
+        },
+    ];
+    let hit = protocol_installed_match("github:owner/dsh", "dsh", &list).expect("hit dsh");
+    assert_eq!(hit.name, "dsh");
+    let hit = protocol_installed_match("github:owner/dsh-relay", "dsh-relay", &list).expect("hit dsh-relay");
+    assert_eq!(hit.name, "dsh-relay");
 }
 
 #[test]
@@ -2988,6 +3038,15 @@ fn specifier_parsers_match_shared_test_vectors() {
             specifier_to_catalog_name(input),
             expect,
             "specifierToCatalogName({input:?})"
+        );
+    }
+    for case in table("githubRepoId") {
+        let input = case[0].as_str().unwrap();
+        let expect = case[1].as_str();
+        assert_eq!(
+            github_repo_id(input).as_deref(),
+            expect,
+            "githubRepoId({input:?})"
         );
     }
 }

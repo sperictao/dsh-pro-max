@@ -14,5 +14,23 @@
     ["@scope/pkg@1.0", "pkg"],
     ["dsh-context", "dsh-context"],
     ["dsh-context@1.2.3", "dsh-context"]
+  ],
+  "githubRepoId": [
+    ["github:owner/repo", "owner/repo"],
+    ["github:omdsh-dev/dsh-at-file", "omdsh-dev/dsh-at-file"],
+    ["github:SIMON-WORLD/dsh-toolkit#path:/packages/dsh-at-file", "simon-world/dsh-toolkit"],
+    ["github:owner/repo#c0ffee", "owner/repo"],
+    ["git+https://github.com/omdsh-dev/dsh-at-file.git", "omdsh-dev/dsh-at-file"],
+    ["git+https://github.com/omdsh-dev/dsh-at-file.git#main", "omdsh-dev/dsh-at-file"],
+    ["https://github.com/Owner/Repo", "owner/repo"],
+    ["git+ssh://git@github.com/owner/repo.git", "owner/repo"],
+    ["ssh://git@github.com/owner/repo.git", "owner/repo"],
+    ["git@github.com:owner/repo.git", "owner/repo"],
+    ["github:owner", null],
+    ["github:owner/repo/extra", null],
+    ["npm:pkg@latest", null],
+    ["pkg@1.0.0", null],
+    ["file:/x/y.tgz", null],
+    ["https://gitlab.com/owner/repo", null]
   ]
 }
