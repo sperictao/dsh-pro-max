@@ -149,7 +149,6 @@ export const en = {
   "Mode": "Mode",
   "Theme": "Theme",
   "About": "About",
-  "System Behavior": "System Behavior",
   "Minimize to tray when closing window": "Minimize to tray when closing window",
   "When enabled, the close button hides the window and the app keeps running in the system tray.": "When enabled, the close button hides the window and the app keeps running in the system tray.",
   "Launch at login": "Launch at login",
@@ -188,6 +187,9 @@ export const en = {
   "Last checked {{at}}": "Last checked {{at}}",
   "Open in Browser": "Open in Browser",
   "Save Settings": "Save Settings",
+  "You have unsaved changes": "You have unsaved changes",
+  "Discard": "Discard",
+  "Must start with https:// or http://": "Must start with https:// or http://",
   "Ready": "Ready",
 
   // —— Skill 视图 ——
@@ -343,7 +345,6 @@ export const en = {
   "Empty = remote management (settings/credentials) stays unavailable": "Empty = remote management (settings/credentials) stays unavailable",
   "Empty = plain remote access still needs identity allowlist and tailnet TCP 443": "Empty = plain remote access still needs identity allowlist and tailnet TCP 443",
   "Comma-separated; the current user on this machine is always allowed": "Comma-separated; the current user on this machine is always allowed",
-  "Remote authorization saved": "Remote authorization saved",
   "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.": "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.",
   "Every remote identity needs TCP 443 in tailnet grants. If you configure capabilities, include both ip and app in the same grant.": "Every remote identity needs TCP 443 in tailnet grants. If you configure capabilities, include both ip and app in the same grant.",
 

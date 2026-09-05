@@ -1,4 +1,5 @@
-// 通用分区：语言、系统行为（托盘/自启）、插件目录源、日志入口
+// 通用分区：语言、系统行为（托盘/自启）、插件目录源、日志入口。
+// 语言/应用自启即时生效；托盘/目录源走全局草稿，由设置页保存条统一保存。
 
 import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
@@ -6,6 +7,8 @@ import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { SelectCard } from "@/shared/components/SelectCard";
 import { BTN, INPUT_MONO, TOGGLE } from "@/shared/lib/ui";
+import { SettingsCard, SettingField, SettingRow } from "./SettingRow";
+import { isValidCatalogUrl } from "./validation";
 
 const LANG_OPTIONS = [
   { id: "system", labelKey: "Follow System" },
@@ -31,78 +34,77 @@ export function GeneralSection() {
     }
   };
 
+  const catalogUrl = config?.market_catalog_url ?? "";
+
   return (
     <section className="settings-section" id="section-general">
       <h2 className="mb-4 text-base font-semibold">{t("General")}</h2>
 
-      <div className="flex items-start gap-4 border-b border-border py-4">
-        <label className="w-36 shrink-0 pt-1 text-sm font-medium">{t("Language")}</label>
-        <div className="flex flex-1 gap-3">
-          {LANG_OPTIONS.map((opt) => (
-            <SelectCard key={opt.id} selected={languageSetting === opt.id} onClick={() => void setLanguageSetting(opt.id)}>
-              <span className="text-sm">{t(opt.labelKey)}</span>
-            </SelectCard>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex items-start gap-4 border-b border-border py-4">
-        <label className="w-36 shrink-0 pt-1 text-sm font-medium">{t("System Behavior")}</label>
-        <div className="flex flex-1 flex-col gap-2">
-          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-border p-3">
-            <span className="flex flex-col gap-0.5">
-              <span className="text-sm">{t("Minimize to tray when closing window")}</span>
-              <span className="text-xs opacity-60">
-                {t("When enabled, the close button hides the window and the app keeps running in the system tray.")}
-              </span>
-            </span>
-            <input type="checkbox" className={TOGGLE} id="toggle-tray"
-              checked={config?.minimize_to_tray_on_close ?? false}
-              onChange={(e) => setConfigField({ minimize_to_tray_on_close: e.target.checked })} />
-          </label>
-          <label className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-border p-3">
-            <span className="flex flex-col gap-0.5">
-              <span className="text-sm">{t("Launch at login")}</span>
-              <span className="text-xs opacity-60">
-                {t("When enabled, the app starts silently in the system tray when you log in.")}
-              </span>
-            </span>
-            <input type="checkbox" className={TOGGLE} id="toggle-autostart"
-              checked={autostart} onChange={() => void toggleAutostart()} />
-          </label>
-        </div>
-      </div>
-
-      <div className="flex items-start gap-4 border-b border-border py-4">
-        <label className="w-36 shrink-0 pt-1 text-sm font-medium">{t("Plugin catalog")}</label>
-        <div className="flex flex-1 flex-col gap-1 rounded-lg border border-border p-3">
-          <input
-            type="text"
-            className={INPUT_MONO}
-            id="config-catalog-url"
-            placeholder="https://mirror.example.com/catalog.json"
-            value={config?.market_catalog_url ?? ""}
-            onChange={(e) => setConfigField({ market_catalog_url: e.target.value })}
+      <div className="flex max-w-2xl flex-col gap-4">
+        <SettingsCard>
+          <SettingRow
+            label={t("Language")}
+            control={
+              <div className="flex gap-2">
+                {LANG_OPTIONS.map((opt) => (
+                  <SelectCard key={opt.id} selected={languageSetting === opt.id} onClick={() => void setLanguageSetting(opt.id)}>
+                    <span className="text-sm">{t(opt.labelKey)}</span>
+                  </SelectCard>
+                ))}
+              </div>
+            }
           />
-          <span className="text-xs opacity-60">
-            {t(
+        </SettingsCard>
+
+        <SettingsCard>
+          <SettingRow
+            label={t("Minimize to tray when closing window")}
+            description={t("When enabled, the close button hides the window and the app keeps running in the system tray.")}
+            htmlFor="toggle-tray"
+            control={
+              <input type="checkbox" className={TOGGLE} id="toggle-tray"
+                checked={config?.minimize_to_tray_on_close ?? false}
+                onChange={(e) => setConfigField({ minimize_to_tray_on_close: e.target.checked })} />
+            }
+          />
+          <SettingRow
+            label={t("Launch at login")}
+            description={t("When enabled, the app starts silently in the system tray when you log in.")}
+            htmlFor="toggle-autostart"
+            control={
+              <input type="checkbox" className={TOGGLE} id="toggle-autostart"
+                checked={autostart} onChange={() => void toggleAutostart()} />
+            }
+          />
+        </SettingsCard>
+
+        <SettingsCard>
+          <SettingField
+            label={t("Plugin catalog")}
+            description={t(
               "Optional https:// or http:// mirror serving the same catalog JSON. Empty = built-in awesome-dsh-plugin.com source; applied on next refresh.",
             )}
-          </span>
-        </div>
-      </div>
+            htmlFor="config-catalog-url"
+            error={isValidCatalogUrl(catalogUrl) ? undefined : t("Must start with https:// or http://")}
+          >
+            <input
+              type="text"
+              className={INPUT_MONO}
+              id="config-catalog-url"
+              placeholder="https://mirror.example.com/catalog.json"
+              value={catalogUrl}
+              onChange={(e) => setConfigField({ market_catalog_url: e.target.value })}
+            />
+          </SettingField>
+        </SettingsCard>
 
-      <div className="flex items-start gap-4 py-4">
-        <label className="w-36 shrink-0 pt-1 text-sm font-medium">{t("Logs")}</label>
-        <div className="flex flex-1 items-center justify-between gap-4 rounded-lg border border-border p-3">
-          <span className="flex flex-col gap-0.5">
-            <span className="text-sm">{t("Open log folder")}</span>
-            <span className="text-xs opacity-60">
-              {t("Logs are written to files only; open the folder when something goes wrong.")}
-            </span>
-          </span>
-          <button className={BTN} onClick={() => void openLogDir()}>{t("Open")}</button>
-        </div>
+        <SettingsCard>
+          <SettingRow
+            label={t("Open log folder")}
+            description={t("Logs are written to files only; open the folder when something goes wrong.")}
+            control={<button className={BTN} onClick={() => void openLogDir()}>{t("Open")}</button>}
+          />
+        </SettingsCard>
       </div>
     </section>
   );

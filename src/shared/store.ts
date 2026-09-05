@@ -12,6 +12,7 @@ import { createMarketSlice, type MarketSlice } from "./store/slices/market";
 import { createModelSlice, type ModelSlice } from "./store/slices/models";
 
 export type { View, SettingsSection, ToastType, ToastItem } from "./store/slices/ui";
+export { isConfigDirty } from "./store/slices/config";
 
 export interface AppStore
   extends UiSlice,

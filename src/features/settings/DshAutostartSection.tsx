@@ -6,6 +6,7 @@ import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { TOGGLE } from "@/shared/lib/ui";
 import { tErr } from "@/shared/i18n/error";
+import { SettingsCard, SettingRow } from "./SettingRow";
 
 export function DshAutostartSection() {
   const { t } = useTranslation();
@@ -48,27 +49,22 @@ export function DshAutostartSection() {
         {t("Keeps remote access available without opening this app. Tailscale serve is managed by the Tailscale app itself.")}
       </p>
 
-      <div className="flex max-w-2xl flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
-        <label
-          className="flex flex-1 cursor-pointer items-center justify-between gap-4"
-          id="dsh-autostart-row"
-        >
-          <span className="flex flex-col gap-0.5">
-            <span className="text-sm">{t("Auto-start the authorized dsh web service in the background at login")}</span>
-            <span className="text-xs opacity-60">
-              {t("Keeps remote access available without opening this app. Tailscale serve is managed by the Tailscale app itself.")}
-            </span>
-          </span>
-          <input
-            type="checkbox"
-            className={TOGGLE}
-            id="toggle-dsh-autostart"
-            checked={autostart ?? false}
-            disabled={autostart === null || autostartBusy}
-            onChange={() => void toggleAutostart()}
-          />
-        </label>
-      </div>
+      <SettingsCard>
+        <SettingRow
+          label={t("Auto-start the authorized dsh web service in the background at login")}
+          htmlFor="toggle-dsh-autostart"
+          control={
+            <input
+              type="checkbox"
+              className={TOGGLE}
+              id="toggle-dsh-autostart"
+              checked={autostart ?? false}
+              disabled={autostart === null || autostartBusy}
+              onChange={() => void toggleAutostart()}
+            />
+          }
+        />
+      </SettingsCard>
     </section>
   );
 }

@@ -53,6 +53,7 @@ const MOCK = {
     dsh_admin_cap_domain: "",
     dsh_use_cap_domain: "",
     dsh_extra_allowed_logins: "",
+    market_catalog_url: "",
   },  dshStatus: {
     nodeAvailable: false,
     dshInstalled: false,
@@ -221,7 +222,12 @@ async function main() {
       await page.getByRole("button", { name: "Settings" }).click();
       await expectVisible(page.locator("#settings-view"));
       await expectVisible(page.locator("#section-general"));
-      await expectVisible(page.getByRole("button", { name: "Save Settings" }));
+      // 干净草稿无保存条；制造脏状态后出现，Discard 回滚后再次隐藏
+      assert.equal(await page.locator("#settings-footer").count(), 0, "save bar should be hidden while clean");
+      await page.locator("#toggle-tray").click();
+      await expectVisible(page.locator("#settings-footer"));
+      await page.locator("#btn-discard-config").click();
+      assert.equal(await page.locator("#settings-footer").count(), 0, "save bar should hide after discard");
     });
 
     await step("settings: About shows app version", async () => {

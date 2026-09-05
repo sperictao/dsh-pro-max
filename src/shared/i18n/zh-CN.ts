@@ -151,7 +151,6 @@ export const zhCN: Record<I18nKey, string> = {
   "Mode": "模式",
   "Theme": "主题",
   "About": "关于",
-  "System Behavior": "系统行为",
   "Minimize to tray when closing window": "关闭窗口时最小化到托盘",
   "When enabled, the close button hides the window and the app keeps running in the system tray.": "启用后点击关闭按钮会隐藏窗口，应用继续驻留系统托盘。",
   "Launch at login": "登录时启动",
@@ -190,6 +189,9 @@ export const zhCN: Record<I18nKey, string> = {
   "Last checked {{at}}": "上次检查 {{at}}",
   "Open in Browser": "在浏览器中打开",
   "Save Settings": "保存配置",
+  "You have unsaved changes": "有未保存的修改",
+  "Discard": "放弃修改",
+  "Must start with https:// or http://": "必须以 https:// 或 http:// 开头",
   "Ready": "已就绪",
 
   // —— Skill 视图 ——
@@ -347,7 +349,6 @@ export const zhCN: Record<I18nKey, string> = {
   "Empty = remote management (settings/credentials) stays unavailable": "留空 = 远程管理（settings/credentials）不可用",
   "Empty = plain remote access still needs identity allowlist and tailnet TCP 443": "留空 = 普通远程访问仍需身份 allowlist 与 tailnet TCP 443 授权",
   "Comma-separated; the current user on this machine is always allowed": "逗号分隔；本机当前用户始终允许",
-  "Remote authorization saved": "远程授权已保存",
   "After changing remote authorization, run one-click start again to apply it; stop dsh web first if it is running.": "修改远程授权后，请重新一键启动以应用；若 dsh Web 正在运行，请先关闭。",
   "Every remote identity needs TCP 443 in tailnet grants. If you configure capabilities, include both ip and app in the same grant.": "每个远程身份都需要在 tailnet grants 中获准访问 TCP 443；若配置了 capability，必须把 ip 与 app 放在同一条 grant 中。",
 

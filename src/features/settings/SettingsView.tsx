@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useAppStore, type SettingsSection } from "@/shared/store";
-import { BTN_PRIMARY } from "@/shared/lib/ui";
+import { useAppStore, isConfigDirty, type SettingsSection } from "@/shared/store";
+import { BTN, BTN_PRIMARY } from "@/shared/lib/ui";
+import { isValidCatalogUrl } from "./validation";
 import { GeneralSection } from "./GeneralSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { DshVersionSection } from "./DshVersionSection";
@@ -69,9 +70,10 @@ export function SettingsView() {
   const { t } = useTranslation();
   const section = useAppStore((s) => s.settingsSection);
   const setSettingsSection = useAppStore((s) => s.setSettingsSection);
+  const dirty = useAppStore(isConfigDirty);
+  const saveBlocked = useAppStore((s) => !isValidCatalogUrl(s.config?.market_catalog_url ?? ""));
   const saveConfig = useAppStore((s) => s.saveConfig);
-  // 保存 footer 在外观/dsh 子页/关于分区隐藏（dsh 子页各有独立操作/保存入口，不依赖全局保存）
-  const footerHidden = section === "about" || section === "appearance" || section.startsWith("dsh");
+  const discardConfigDraft = useAppStore((s) => s.discardConfigDraft);
 
   return (
     <main className="min-h-0 flex-1" id="settings-view">
@@ -96,16 +98,32 @@ export function SettingsView() {
           ))}
         </nav>
 
-        <div className="flex-1 overflow-y-auto p-6">
-          {section === "general" && <GeneralSection />}
-          {section === "appearance" && <AppearanceSection />}
-          {section === "dsh-version" && <DshVersionSection />}
-          {section === "dsh-autostart" && <DshAutostartSection />}
-          {section === "dsh-auth" && <RemoteAuthSection />}
-          {section === "about" && <AboutSection />}
-          {!footerHidden && (
-            <div className="mt-4 flex justify-end border-t border-border pt-4" id="settings-footer">
-              <button className={BTN_PRIMARY} id="btn-save-config" onClick={() => void saveConfig()}>
+        {/* key 随分区切换重挂载：滚动位置归位 */}
+        <div key={section} className="flex flex-1 flex-col overflow-y-auto">
+          <div className="flex-1 p-6">
+            {section === "general" && <GeneralSection />}
+            {section === "appearance" && <AppearanceSection />}
+            {section === "dsh-version" && <DshVersionSection />}
+            {section === "dsh-autostart" && <DshAutostartSection />}
+            {section === "dsh-auth" && <RemoteAuthSection />}
+            {section === "about" && <AboutSection />}
+          </div>
+          {/* 全局脏状态保存条：有未落盘修改才出现，与所在分区无关 */}
+          {dirty && (
+            <div
+              className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-background/95 px-6 py-3 backdrop-blur"
+              id="settings-footer"
+            >
+              <span className="mr-auto text-xs opacity-70">{t("You have unsaved changes")}</span>
+              <button className={BTN} id="btn-discard-config" onClick={discardConfigDraft}>
+                {t("Discard")}
+              </button>
+              <button
+                className={BTN_PRIMARY}
+                id="btn-save-config"
+                disabled={saveBlocked}
+                onClick={() => void saveConfig()}
+              >
                 {t("Save Settings")}
               </button>
             </div>
