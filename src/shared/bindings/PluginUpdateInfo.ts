@@ -13,11 +13,12 @@ export type PluginUpdateInfo = { name: string,
 spec: string, managed: boolean, 
 /**
  * 实际安装版本：磁盘事实（node_modules/<name>/package.json）优先，
- * spec 精确版本次之；协议形态与两者均不可得时为 None
+ * spec 精确版本次之；npm 形态按此，GitHub 仓库形态只有磁盘事实一途，
+ * file: 等其余协议形态恒 None
  */
 installedVersion: string | null, 
 /**
- * registry latest；该包查询失败为 None
+ * registry /latest 或 GitHub 默认分支 manifest 的最新版；该包查询失败为 None
  */
 latestVersion: string | null, 
 /**

@@ -837,12 +837,37 @@ fn installed_version_for_update_prefers_disk_over_spec() {
         installed_version_for_update(Some(&dir), "absent", "1.0.0").as_deref(),
         Some("1.0.0")
     );
-    // 协议形态不检：不来自 registry，其版本号多为 0.0.0 占位，
-    // 误检会诱导 name@latest 重装覆盖掉 git 源
+    // git-hosted（GitHub 仓库）参与检测：版本来自磁盘事实，检测比对远端
+    // 默认分支的 manifest，更新动作按原仓重装——不再有 name@latest 覆盖
+    // git 源的歧途。修复前这里恒 None（shadow-mind 检不出新版本即此因）
+    std::fs::create_dir_all(nm.join("@whutzefengxie-ops").join("dsh-shadow-mind")).unwrap();
+    std::fs::write(
+        nm.join("@whutzefengxie-ops")
+            .join("dsh-shadow-mind")
+            .join("package.json"),
+        r#"{"version":"0.2.1"}"#,
+    )
+    .unwrap();
     assert_eq!(
-        installed_version_for_update(Some(&dir), "dsh-context", "github:owner/repo#main"),
-        None
+        installed_version_for_update(
+            Some(&dir),
+            "@whutzefengxie-ops/dsh-shadow-mind",
+            "github:whutzefengxie-ops/dsh-shadow-mind"
+        )
+        .as_deref(),
+        Some("0.2.1")
     );
+    // pnpm 落盘的规范化形态（github: → git+https://...git）同样命中
+    assert_eq!(
+        installed_version_for_update(
+            Some(&dir),
+            "@whutzefengxie-ops/dsh-shadow-mind",
+            "git+https://github.com/whutzefengxie-ops/dsh-shadow-mind.git"
+        )
+        .as_deref(),
+        Some("0.2.1")
+    );
+    // file:/非 GitHub git 形态不检：没有可比的远端版本事实
     assert_eq!(
         installed_version_for_update(Some(&dir), "dsh-context", "file:/x/y.tgz"),
         None

@@ -443,9 +443,10 @@ pub struct PluginUpdateInfo {
     pub spec: String,
     pub managed: bool,
     /// 实际安装版本：磁盘事实（node_modules/<name>/package.json）优先，
-    /// spec 精确版本次之；协议形态与两者均不可得时为 None
+    /// spec 精确版本次之；npm 形态按此，GitHub 仓库形态只有磁盘事实一途，
+    /// file: 等其余协议形态恒 None
     pub installed_version: Option<String>,
-    /// registry latest；该包查询失败为 None
+    /// registry /latest 或 GitHub 默认分支 manifest 的最新版；该包查询失败为 None
     pub latest_version: Option<String>,
     /// latest 是否落在 pnpm minimumReleaseAge 保护窗口内（pnpm 11 内置默认
     /// 24h）：窗口内 @latest 会被静默解析回旧版、退出码仍为 0（假成功），
@@ -531,17 +532,18 @@ pub(crate) fn installed_version_from_disk(
 
 /// 单包实际版本判定（纯函数，check_updates_once 的版本决策抽出来以便测试）：
 /// 可检形态（去掉 `npm:` 前缀后不含协议 `:`，与 installed_version_from_spec
-/// 判据一致）先读磁盘事实、磁盘不可得回退 spec 精确版本；协议形态
-/// （github:/file:/git+https: 等）不来自 registry，恒 None——其版本号多为
-/// 0.0.0 占位，误检会诱导按 registry 名重装覆盖掉 git 源。profile_dir 不可得
-/// （极端环境）时按 None 传入，整体回退纯 spec 解析的现状行为
+/// 判据一致）先读磁盘事实、磁盘不可得回退 spec 精确版本；GitHub 仓库形态
+/// （github:/git+https: 等，github_repo_id 认得）同样磁盘事实优先——检测比对
+/// 远端默认分支 manifest 的版本，更新动作按原仓重装，不存在按 registry 名
+/// 重装覆盖 git 源的路径；其余协议形态（file: 等）无远端可比，恒 None。
+/// profile_dir 不可得（极端环境）时按 None 传入，整体回退纯 spec 解析的现状行为
 pub(crate) fn installed_version_for_update(
     profile_dir: Option<&std::path::Path>,
     name: &str,
     spec: &str,
 ) -> Option<String> {
     let rest = spec.strip_prefix("npm:").unwrap_or(spec);
-    if rest.contains(':') {
+    if rest.contains(':') && github_repo_id(spec).is_none() {
         return None;
     }
     profile_dir
@@ -549,13 +551,14 @@ pub(crate) fn installed_version_for_update(
         .or_else(|| installed_version_from_spec(spec))
 }
 
-/// registry /latest 响应的解析产物：latest 版本 + 声明的 dsh 最低版本
+/// registry /latest 与 GitHub raw HEAD 两种 manifest 的共用解析产物：latest
+/// 版本 + 声明的 dsh 最低版本
 pub(crate) struct RegistryLatest {
     pub version: String,
     pub requires_dsh: Option<String>,
 }
 
-/// registry manifest → 声明的 dsh 最低版本：包 manifest 的 `dsh.engines.dsh`
+/// 包 manifest → 声明的 dsh 最低版本：包 manifest 的 `dsh.engines.dsh`
 /// 优先，顶层 `engines.dsh` 回退；空串与非字符串按未声明处理
 pub(crate) fn dsh_requirement_from_manifest(body: &serde_json::Value) -> Option<String> {
     let dsh_engines = body.get("dsh").and_then(|d| d.get("engines"));
@@ -597,14 +600,6 @@ pub(crate) fn registry_latest_from_json(raw: &str) -> Option<RegistryLatest> {
     })
 }
 
-/// 单包 registry latest 查询：GET {registry}/{name}/latest → version 字段与
-/// dsh/engines 兼容性元数据（同一请求，零额外 HTTP）。与目录拉取同一
-/// reqwest blocking 模式（npm CLI 要起 node 进程且无超时，不取）
-fn registry_latest(name: &str) -> Result<RegistryLatest, String> {
-    let client = update_http_client()?;
-    registry_latest_with(&client, name)
-}
-
 /// 更新检测/兼容性查询共用的 HTTP 客户端（同超时同 UA；批量拉取共享一个
 /// 连接池，避免逐包重建 TLS 会话）
 fn update_http_client() -> Result<reqwest::blocking::Client, String> {
@@ -627,8 +622,34 @@ fn registry_latest_with(
     let raw = resp.text().map_err(|e| e.to_string())?;
     registry_latest_from_json(&raw).ok_or_else(|| {
         keyf(
-            "Cannot parse npm registry response for {name}",
+            "Cannot parse package manifest for {name}",
             &[("name", name.to_string())],
+        )
+    })
+}
+
+/// 单包 GitHub 最新版本查询：GET raw.githubusercontent.com/{repo}/HEAD/package.json
+/// → version 字段与 dsh/engines 兼容性元数据（HEAD 即默认分支，免先探
+/// default_branch；解析与 registry 路径共用 registry_latest_from_json）。repo
+/// 出自 github_repo_id，拼 URL 前仍过 valid_repo_id 白名单；404（仓库删除/
+/// 转私有）按单包失败处理，同 registry 路径语义
+fn git_latest_with(
+    client: &reqwest::blocking::Client,
+    repo: &str,
+) -> Result<RegistryLatest, String> {
+    if !valid_repo_id(repo) {
+        return Err("Invalid repository identifier".to_string());
+    }
+    let url = format!("https://raw.githubusercontent.com/{repo}/HEAD/package.json");
+    let resp = client.get(&url).send().map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status().as_u16()));
+    }
+    let raw = resp.text().map_err(|e| e.to_string())?;
+    registry_latest_from_json(&raw).ok_or_else(|| {
+        keyf(
+            "Cannot parse package manifest for {name}",
+            &[("name", repo.to_string())],
         )
     })
 }
@@ -733,14 +754,17 @@ fn release_age_policy() -> (u64, Vec<String>) {
         .unwrap_or_else(|| (DEFAULT_MINIMUM_RELEASE_AGE_MINUTES, Vec::new()))
 }
 
-/// 更新检测执行体（market_check_updates 的阻塞部分）：逐包串行查 registry
-/// （已装列表是个位数，并发无收益）。实际版本复用已装列表的磁盘事实
-/// （InstalledPlugin.version，installed_list_from_profile 统一判定——协议
-/// 形态为 None，天然不参与检测）；latest 落在 pnpm minimumReleaseAge 窗口内
-/// 的额外标记 latest_in_release_age_window 并携带 latest_publish_time（窗口内
-/// @latest 会被静默拦回旧版，前端据此先弹确认框并展示发布新鲜度）。部分
-/// 包查询失败不放大为整体失败（如实无 latest、不出更新
-/// 按钮）；全部可检包都失败才报错——那是网络问题的信号
+/// 更新检测执行体（market_check_updates 的阻塞部分）：逐包串行查询
+/// （已装列表是个位数，并发无收益），npm 形态查 registry /latest，GitHub
+/// 仓库形态（github:/git+https: 落盘形态）查 raw.githubusercontent 默认分支
+/// manifest——版本来自磁盘事实，比对远端 HEAD 的 package.json。实际版本复用
+/// 已装列表的磁盘事实（InstalledPlugin.version，installed_list_from_profile
+/// 统一判定）；latest 落在 pnpm minimumReleaseAge 窗口内的额外标记
+/// latest_in_release_age_window 并携带 latest_publish_time（窗口内 @latest
+/// 会被静默拦回旧版，前端据此先弹确认框并展示发布新鲜度；发布时间只有
+/// registry 有，git 形态不适用——其更新动作是原仓重装，不经 @latest）。
+/// 部分包查询失败不放大为整体失败（如实无 latest、不出更新按钮）；全部
+/// 可检包都失败才报错——那是网络问题的信号
 fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
     let list = installed_plugins()?;
     let mut infos: Vec<PluginUpdateInfo> = list
@@ -763,6 +787,7 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
     let (age_minutes, age_excludes) = release_age_policy();
     let dsh_host = super::components::dsh_version();
     let now = time::OffsetDateTime::now_utc();
+    let client = update_http_client()?;
     let mut checked = 0usize;
     let mut failed = 0usize;
     let mut first_error: Option<String> = None;
@@ -771,7 +796,12 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
         .filter(|i| !i.managed && i.installed_version.is_some())
     {
         checked += 1;
-        match registry_latest(&info.name) {
+        let git_repo = github_repo_id(&info.spec);
+        let latest = match git_repo.as_deref() {
+            Some(repo) => git_latest_with(&client, repo),
+            None => registry_latest_with(&client, &info.name),
+        };
+        match latest {
             Ok(latest) => {
                 info.update_available = is_newer(
                     &latest.version,
@@ -783,7 +813,7 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
                     .requires_dsh
                     .as_ref()
                     .map(|req| meets_dsh_minimum(dsh_host.as_deref(), req));
-                if info.update_available {
+                if info.update_available && git_repo.is_none() {
                     let publish = registry_publish_time(&info.name, &latest.version);
                     info.latest_in_release_age_window = in_release_age_window(
                         publish.as_deref(),

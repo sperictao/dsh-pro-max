@@ -14,6 +14,7 @@ import type {
   PluginUpdateInfo,
 } from "../../types";
 import { readStored, type Slice } from "./shared";
+import { githubRepoId } from "../../lib/specifier";
 
 // 插件收藏：localStorage 是用户选择的记忆，store 是渲染镜像；
 // 值为目录条目 fullName（目录内唯一）列表，顺序即收藏顺序
@@ -35,11 +36,21 @@ function installNoticeText(notices: InstallNotice[]): string {
     .join(" ");
 }
 
-/// 更新/重装的安装标识拼装：latest 在 pnpm minimumReleaseAge 保护窗口内时
-/// 钉版本（窗口内 @latest 会被静默拦回旧版、退出码仍为 0 造成假成功，
-/// 钉版本是 pnpm 认的知情通道），否则 @latest。store 发起与卡片锚定
-/// installError 共用此规则，两侧不得漂移
-export function updateSpecifierFor(name: string, info: PluginUpdateInfo | null | undefined): string {
+/// 更新/重装的安装标识拼装：GitHub 仓库形态（github:/git+https: 落盘形态，
+/// githubRepoId 认全）按 github:owner/repo 重装——pnpm 重新解析默认分支
+/// HEAD，即"更到远端最新"；这些包多半不在 npm registry（或 registry 上只是
+/// 占位），name@latest 要么 404 要么把 git 源覆盖成 registry 包。npm 形态
+/// 维持原规则：latest 在 pnpm minimumReleaseAge 保护窗口内时钉版本（窗口内
+/// @latest 会被静默拦回旧版、退出码仍为 0 造成假成功，钉版本是 pnpm 认的
+/// 知情通道），否则 @latest。store 发起与卡片锚定 installError 共用此规则，
+/// 两侧不得漂移
+export function updateSpecifierFor(
+  name: string,
+  spec: string | null | undefined,
+  info: PluginUpdateInfo | null | undefined,
+): string {
+  const repo = githubRepoId(spec ?? "");
+  if (repo) return `github:${repo}`;
   return info?.updateAvailable && info.latestInReleaseAgeWindow && info.latestVersion
     ? `${name}@${info.latestVersion}`
     : `${name}@latest`;
@@ -323,14 +334,16 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
     }
   },
 
-  // 更新单个插件 = 以 name@latest 重装：与安装同一 dsh 闸门、审计与审批路径，
-  // 落盘 spec 形态也与市场安装一致（过程明细同通道进卡片）。例外：latest 落在
-  // pnpm minimumReleaseAge 保护窗口内时，@latest 会被静默解析回旧版（退出码
-  // 仍为 0 的假成功）——挂起弹供应链确认框（marketReleaseAgeConfirm），用户
-  // 知情确认后经 releaseAgePin 钉版本重装（pnpm 认的知情通道，自动写
-  // minimumReleaseAgeExclude）。silent 供批量更新跳过逐条成功/失败 toast；
-  // 撞上 pnpm 构建脚本拦截时挂起审批对话框并提示（批量由调用方中止后续）。
-  // 更新失败维持 toast，明细不驻留
+  // 更新单个插件 = 重跑安装：npm 形态以 name@latest（latest 落在 pnpm
+  // minimumReleaseAge 保护窗口内时 @latest 会被静默解析回旧版（退出码仍为 0
+  // 的假成功）——挂起弹供应链确认框（marketReleaseAgeConfirm），用户知情确认
+  // 后经 releaseAgePin 钉版本重装（pnpm 认的知情通道，自动写
+  // minimumReleaseAgeExclude））；GitHub 仓库形态按原仓 github:owner/repo
+  // 重装（pnpm 重新解析默认分支 HEAD，见 updateSpecifierFor）。与安装同一
+  // dsh 闸门、审计与审批路径，落盘 spec 形态也与市场安装一致（过程明细同
+  // 通道进卡片）。silent 供批量更新跳过逐条成功/失败 toast；撞上 pnpm 构建
+  // 脚本拦截时挂起审批对话框并提示（批量由调用方中止后续）。更新失败维持
+  // toast，明细不驻留
   updateMarketPlugin: async (name, opts) => {
     const silent = opts?.silent ?? false;
     if (get().marketUpdating) return false;
@@ -346,7 +359,9 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       });
       return false;
     }
-    const specifier = opts?.releaseAgePin ? `${name}@${opts.releaseAgePin}` : `${name}@latest`;
+    const spec = get().marketInstalled.find((p) => p.name === name)?.spec ?? null;
+    const specifier =
+      opts?.releaseAgePin ? `${name}@${opts.releaseAgePin}` : updateSpecifierFor(name, spec, info);
     set({ marketUpdating: name, marketInstallLog: { specifier, lines: [] } });
     try {
       const outcome = await cmd.marketInstall(specifier);

@@ -13,9 +13,9 @@ interface SpecifierVectors {
   githubRepoId: [string, string | null][];
 }
 const vectors = vectorsJson as SpecifierVectors;
+import { githubRepoId } from "@/shared/lib/specifier";
 import {
   MarketView,
-  githubRepoId,
   looksTerminal,
   normalizeCustomSpecifier,
   packageNameFromSpecifier,
@@ -23,6 +23,7 @@ import {
   repairContextText,
   specifierToCatalogName,
 } from "./MarketView";
+import { updateSpecifierFor } from "@/shared/store/slices/market";
 import { MarketErrorBoundary } from "./MarketErrorBoundary";
 import { restartDshWeb } from "@/features/integration/dshActions";
 
@@ -184,6 +185,46 @@ describe("protocolInstalledMatch", () => {
 
   it("refuses a zero hit", () => {
     expect(protocolInstalledMatch("github:owner/missing", "missing", [])).toBeNull();
+  });
+});
+
+// git-hosted 插件的更新/重装标识：按原仓 github:owner/repo 重装（pnpm 重新
+// 解析默认分支 HEAD），而非 name@latest——这类包不在 npm registry，@latest
+// 要么 404 要么把 git 源覆盖成 registry 包（shadow-mind 检不出新版本即此因）
+describe("updateSpecifierFor", () => {
+  it("reinstalls GitHub-hosted plugins by repo, whatever the disk spec form", () => {
+    expect(
+      updateSpecifierFor("@w/dsh-shadow-mind", "github:whutzefengxie-ops/dsh-shadow-mind", null),
+    ).toBe("github:whutzefengxie-ops/dsh-shadow-mind");
+    expect(
+      updateSpecifierFor(
+        "dsh-at-file",
+        "git+https://github.com/omdsh-dev/dsh-at-file.git",
+        null,
+      ),
+    ).toBe("github:omdsh-dev/dsh-at-file");
+    // #ref 钉住的安装同样回到 HEAD：重装/更新的语义就是"到远端最新"
+    expect(updateSpecifierFor("pkg", "github:owner/pkg#v1.0.0", null)).toBe("github:owner/pkg");
+  });
+
+  it("keeps npm semantics for npm-shaped specs (release-age pin / @latest)", () => {
+    expect(updateSpecifierFor("dsh-context", "^0.43.0", null)).toBe("dsh-context@latest");
+    expect(
+      updateSpecifierFor("dsh-context", "^0.43.0", {
+        name: "dsh-context",
+        spec: "^0.43.0",
+        managed: false,
+        installedVersion: "0.43.0",
+        latestVersion: "0.44.0",
+        latestInReleaseAgeWindow: true,
+        latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
+        updateAvailable: true,
+      }),
+    ).toBe("dsh-context@0.44.0");
+    // spec 不可得（已装列表缺失等极端情况）回退 npm 规则，不抛错
+    expect(updateSpecifierFor("dsh-context", null, null)).toBe("dsh-context@latest");
   });
 });
 

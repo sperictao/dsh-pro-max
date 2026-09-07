@@ -498,7 +498,7 @@ export const en = {
   "Failed to parse web profile: {{error}}": "Failed to parse web profile: {{error}}",
   "Web profile has no dependencies": "Web profile has no dependencies",
   "Invalid plugin identifier": "Invalid plugin identifier",
-  "Cannot parse npm registry response for {{name}}": "Cannot parse npm registry response for {{name}}",
+  "Cannot parse package manifest for {{name}}": "Cannot parse package manifest for {{name}}",
   "Unrecognized plugin catalog format; update the app or fix the catalog mirror": "Unrecognized plugin catalog format; update the app or fix the catalog mirror",
   "Invalid plugin catalog URL: {{url}}; it must start with https:// or http://": "Invalid plugin catalog URL: {{url}}; it must start with https:// or http://",
   "Failed to read catalog snapshot: {{error}}": "Failed to read catalog snapshot: {{error}}",

@@ -502,7 +502,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Failed to parse web profile: {{error}}": "解析 web profile 失败: {{error}}",
   "Web profile has no dependencies": "web profile 没有依赖条目",
   "Invalid plugin identifier": "插件标识不合法",
-  "Cannot parse npm registry response for {{name}}": "无法解析 npm registry 响应: {{name}}",
+  "Cannot parse package manifest for {{name}}": "无法解析包 manifest: {{name}}",
   "Unrecognized plugin catalog format; update the app or fix the catalog mirror": "插件目录格式无法识别；请升级应用或修正目录镜像",
   "Invalid plugin catalog URL: {{url}}; it must start with https:// or http://": "插件目录地址不合法: {{url}}；必须以 https:// 或 http:// 开头",
   "Failed to read catalog snapshot: {{error}}": "读取目录快照失败: {{error}}",

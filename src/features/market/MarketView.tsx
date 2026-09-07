@@ -17,6 +17,7 @@ import {
   INPUT,
   INPUT_MONO,
 } from "@/shared/lib/ui";
+import { githubRepoId } from "@/shared/lib/specifier";
 import type {
   DiscoveryCompat,
   InstalledPlugin,
@@ -97,35 +98,6 @@ export function normalizeCustomSpecifier(input: string): string | null {
   if (candidate.startsWith("npm:")) return candidate.slice(4) ? candidate : null;
   // 其余带协议的形态不支持（白名单能过的只剩 npm 裸形态）
   return candidate.includes(":") ? null : candidate;
-}
-
-/// GitHub 仓库标识归一：github:owner/repo 与 pnpm 落盘的
-/// git+https://github.com/owner/repo.git 等形态 → "owner/repo"（小写，
-/// GitHub 仓库地址大小写不敏感）；#fragment（#ref/#path:）与 .git 后缀剥离。
-/// 非 GitHub 仓库形态返回 null。只用于匹配，不碰落盘事实（spec 原样展示）。
-/// Rust 侧 github_repo_id 同一套语义，specifier_cases.json 的 githubRepoId
-/// 向量组两侧共同驱动，改一侧必须同步另一侧
-export function githubRepoId(spec: string): string | null {
-  const prefixes = [
-    "github:",
-    "git+https://github.com/",
-    "https://github.com/",
-    "git+ssh://git@github.com/",
-    "ssh://git@github.com/",
-    "git@github.com:",
-  ];
-  const rest = prefixes.find((p) => spec.startsWith(p));
-  if (rest === undefined) return null;
-  const body = spec
-    .slice(rest.length)
-    .split("#")[0]
-    .replace(/\.git$/, "");
-  const slash = body.indexOf("/");
-  if (slash <= 0) return null;
-  const owner = body.slice(0, slash);
-  const repo = body.slice(slash + 1);
-  if (!owner || !repo || repo.includes("/")) return null;
-  return `${owner}/${repo}`.toLowerCase();
 }
 
 /// 协议形态安装的已装匹配：specifier 与落盘 spec 各自归一出 GitHub 仓库
@@ -408,9 +380,6 @@ function DiscoverPane() {
           <p className="text-xs opacity-60">{t("Curated catalog by awesome-dsh-plugin.com.")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button className={BTN} id="btn-market-custom-install" onClick={() => setCustomOpen(true)}>
-            {t("Custom install")}
-          </button>
           <button
             className={BTN}
             id="btn-market-refresh"
@@ -732,10 +701,10 @@ function MarketCard({
   favorited: boolean;
   onToggleFavorite: () => void;
   onInstall?: () => void;
-  /** 重装（无更新态）：以 name@latest 重跑安装，latest 在 pnpm
-      minimumReleaseAge 窗口内时先弹供应链确认框、确认后钉版本（见
-      updateSpecifierFor）；同一命令通道。已装页必传，发现/收藏页不传
-      （永不渲染对应分支） */
+  /** 重装（无更新态）：重跑安装——npm 形态 name@latest（latest 在 pnpm
+      minimumReleaseAge 窗口内时先弹供应链确认框、确认后钉版本），GitHub
+      仓库形态按原仓重装到默认分支 HEAD（见 updateSpecifierFor）；同一命令
+      通道。已装页必传，发现/收藏页不传（永不渲染对应分支） */
   onUpdate?: () => void;
   /** 更新（有更新态）：先弹更新说明对话框（G5），确认后走既有更新管线。
       缺省时 Update 回退 onUpdate（不弹说明） */
@@ -763,7 +732,9 @@ function MarketCard({
   // 卡片的安装身份：未装卡片是目录安装标识；已装卡片是更新重装标识
   // （与 updateMarketPlugin 共用 updateSpecifierFor——specifier 是
   // installError/installLog 锚回本卡的键，两处必须一致）
-  const ownSpecifier = installed ? updateSpecifierFor(installed.name, info) : (plugin?.installSpecifier ?? null);
+  const ownSpecifier = installed
+    ? updateSpecifierFor(installed.name, installed.spec, info)
+    : (plugin?.installSpecifier ?? null);
 
   // 状态推导（自上而下首个命中）：受管 > 移除中 > 更新中 > 安装失败 > 已装
   // （比对更新）> 安装中 > 仅手动 > 确认中 > 可装。失败优先于已装/未装：
@@ -971,7 +942,8 @@ function MarketCard({
     ) : state === "installed" ? (
       <>
         {current && latest !== null && <span className="text-xs opacity-50">{t("Up to date")}</span>}
-        {/* 无更新时提供重装：与 Update 同一回调（onUpdate = name@latest 重跑安装），
+        {/* 无更新时提供重装：与 Update 同一回调（onUpdate 重跑安装：npm 形态
+            name@latest、GitHub 仓库形态原仓重装到 HEAD，见 updateSpecifierFor），
             覆盖终端手动 add 被拦构建脚本留下的半成品（依赖已写入但构建未跑）；
             与 Update 所在 outdated 分支互斥，永不共存 */}
         {state === "installed" && onUpdate && (
