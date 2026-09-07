@@ -1254,6 +1254,24 @@ describe("failed install affordances", () => {
   });
 });
 
+describe("discover header buttons", () => {
+  // 页头顺序：Refresh 在 Custom install 左侧，Restart dsh web 在最右（与已装页同行惯例一致）
+  it("orders Refresh < Custom install < Restart dsh web and restarts via the shared action", async () => {
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    const refresh = screen.getByRole("button", { name: "Refresh" });
+    const custom = screen.getByRole("button", { name: "Custom install" });
+    const restart = screen.getByRole("button", { name: "Restart dsh web" });
+    // compareDocumentPosition：目标在当前节点之后时含 FOLLOWING 位
+    expect(refresh.compareDocumentPosition(custom) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(custom.compareDocumentPosition(restart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(restart).toBeEnabled();
+    await user.click(restart);
+    expect(vi.mocked(restartDshWeb)).toHaveBeenCalledTimes(1);
+  });
+});
+
 // ============ G 块：取消 / 兼容性 / 更新说明 / 终端警示 / 崩溃恢复 ============
 
 describe("looksTerminal (G6)", () => {

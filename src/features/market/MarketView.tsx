@@ -293,6 +293,11 @@ function DiscoverPane() {
   const catalog = useAppStore((s) => s.marketCatalog);
   const catalogBusy = useAppStore((s) => s.marketCatalogBusy);
   const refreshCatalog = useAppStore((s) => s.refreshMarketCatalog);
+  // 重启 dsh web（页头就近入口）：复用 Shell 域一键重启，busy 镜像与已装页同一套
+  const dshStartBusy = useAppStore((s) => s.dshStartBusy);
+  const dshStopBusy = useAppStore((s) => s.dshStopBusy);
+  const dshRestartBusy = useAppStore((s) => s.dshRestartBusy);
+  const dshRecheckBusy = useAppStore((s) => s.dshRecheckBusy);
 
   // 发现期兼容性（G4）：可见卡片的 npm 包名按需批量查询；"仅看兼容"过滤
   // 只隐藏确认不兼容的条目（未声明/未查询保持可见，避免误判）
@@ -380,9 +385,6 @@ function DiscoverPane() {
           <p className="text-xs opacity-60">{t("Curated catalog by awesome-dsh-plugin.com.")}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button className={BTN} id="btn-market-custom-install" onClick={() => setCustomOpen(true)}>
-            {t("Custom install")}
-          </button>
           <button
             className={BTN}
             id="btn-market-refresh"
@@ -390,6 +392,19 @@ function DiscoverPane() {
             onClick={() => void refreshCatalog(true)}
           >
             {catalogBusy ? t("Working…") : t("Refresh")}
+          </button>
+          <button className={BTN} id="btn-market-custom-install" onClick={() => setCustomOpen(true)}>
+            {t("Custom install")}
+          </button>
+          {/* 装完/启停后重启生效的就近入口，与已装页同一按钮：复用 Shell 域
+              一键重启（先关后启 + 启动时间线 + busy 守卫都在 dshActions） */}
+          <button
+            className={BTN}
+            disabled={dshStartBusy || dshStopBusy || dshRestartBusy || dshRecheckBusy}
+            onClick={() => void restartDshWeb()}
+            id="btn-market-restart-dsh"
+          >
+            {dshRestartBusy ? t("Restarting...") : t("Restart dsh web")}
           </button>
         </div>
       </div>
