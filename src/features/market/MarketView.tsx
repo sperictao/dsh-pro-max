@@ -380,6 +380,9 @@ function DiscoverPane() {
           <p className="text-xs opacity-60">{t("Curated catalog by awesome-dsh-plugin.com.")}</p>
         </div>
         <div className="flex items-center gap-2">
+          <button className={BTN} id="btn-market-custom-install" onClick={() => setCustomOpen(true)}>
+            {t("Custom install")}
+          </button>
           <button
             className={BTN}
             id="btn-market-refresh"
