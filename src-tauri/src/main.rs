@@ -237,6 +237,7 @@ pub fn run() {
             dsh::market_approve_builds,
             dsh::market_remove,
             dsh::market_check_updates,
+            dsh::market_prefetch,
             dsh::market_set_plugin_enabled,
             dsh::market_cancel,
             dsh::market_discovery_compat,

@@ -272,6 +272,13 @@ pub(crate) fn npm_bin() -> String {
     which("npm").unwrap_or_else(|| "npm".to_string())
 }
 
+/// 定位 pnpm（probe PATH 内；失败返回裸 "pnpm" 让错误自然暴露）。市场更新
+/// 预下载（pnpm store add 预热）用它直接驱动 pnpm，与 dsh plugin 的内部
+/// pnpm 转发共用同一二进制
+pub(crate) fn pnpm_bin() -> String {
+    which("pnpm").unwrap_or_else(|| "pnpm".to_string())
+}
+
 /// 从 dsh --version 原始输出中提取可解析的版本号：容忍 "dsh 0.1.0"、"v0.1.0-rc.6"、
 /// 尾部构建信息等前缀/杂质，保证版本胶囊显示与 semver 比较（version::is_newer）
 /// 使用同一份干净版本号。提取失败回退原串（比较侧解析失败会安全降级为无更新）

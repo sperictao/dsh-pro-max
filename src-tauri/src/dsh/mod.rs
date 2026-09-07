@@ -71,6 +71,7 @@ reexport_commands! {
     market::market_approve_builds,
     market::market_remove,
     market::market_check_updates,
+    market::market_prefetch,
     market::market_set_plugin_enabled,
     market::market_cancel,
     market::market_discovery_compat,

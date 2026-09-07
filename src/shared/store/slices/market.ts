@@ -4,6 +4,7 @@
 import { i18n } from "../../i18n";
 import { tErr } from "../../i18n/error";
 import * as cmd from "../../commands";
+import type { StoreApi } from "zustand";
 import type {
   DiscoveryCompat,
   InstalledPlugin,
@@ -15,6 +16,7 @@ import type {
 } from "../../types";
 import { readStored, type Slice } from "./shared";
 import { githubRepoId } from "../../lib/specifier";
+import type { AppStore } from "../../store";
 
 // 插件收藏：localStorage 是用户选择的记忆，store 是渲染镜像；
 // 值为目录条目 fullName（目录内唯一）列表，顺序即收藏顺序
@@ -54,6 +56,30 @@ export function updateSpecifierFor(
   return info?.updateAvailable && info.latestInReleaseAgeWindow && info.latestVersion
     ? `${name}@${info.latestVersion}`
     : `${name}@latest`;
+}
+
+/// 批量更新收尾（唯一出口）：清中继态，汇总 toast（成功/部分失败），刷已装
+/// 列表与更新检测。队列耗尽（含最后一项经 confirm/dismiss 弹空）时调用，保证
+/// 无论从驱动、窗口确认、窗口放弃哪个路径收尾，结果一致、无残留中继态
+function settleUpdateAll(
+  set: StoreApi<AppStore>["setState"],
+  get: StoreApi<AppStore>["getState"],
+) {
+  const ok = get().marketUpdateAllOk;
+  const failed = get().marketUpdateAllFailed;
+  set({
+    marketUpdateAllQueue: null,
+    marketUpdateAllOk: 0,
+    marketUpdateAllFailed: 0,
+    marketUpdateAllPrefetching: false,
+  });
+  if (failed === 0 && ok > 0) {
+    get().toast(i18n.t("Updated {{count}} plugins", { count: ok }), "success");
+  } else if (failed > 0) {
+    get().toast(i18n.t("Updated {{ok}} plugins, {{failed}} failed", { ok, failed }), "error");
+  }
+  void get().refreshMarketInstalled();
+  void get().refreshMarketUpdates();
 }
 
 /// 目录条目 url（https://github.com/<owner>/<repo>）→ "owner/repo"（G5 更新
@@ -100,6 +126,15 @@ export interface MarketSlice {
   marketUpdatesBusy: boolean;
   // 正在更新插件的 name（单次或批量中的当前项），与安装 busy 分开计
   marketUpdating: string | null;
+  // 批量更新中继态：剩余待处理候选（含当前撞上窗口/审批而挂起的队首项）+ 已
+  // 成功/失败累计。null = 无批量进行。窗口项/审批项遇之挂起，confirm/dismiss
+  // 后 queue 弹项续传下一个——批量绝不因单个需要确认的项而中断抛弃后续
+  marketUpdateAllQueue: string[] | null;
+  marketUpdateAllOk: number;
+  marketUpdateAllFailed: number;
+  // 批量更新预下载（store 预热）进行中：串行安装尚未开始、marketUpdating 仍为
+  // null，用此标志禁用「Update all」按钮防二次点击；预热完成或批量收尾即清零
+  marketUpdateAllPrefetching: boolean;
   // 收藏的目录条目 fullName（localStorage 事实来源的渲染镜像）
   marketFavorites: string[];
   // 发现页兼容性（G4）：npm 包名 → 事实。缺键 = 未查询或查询失败（前端按
@@ -122,6 +157,7 @@ export interface MarketSlice {
   confirmMarketReleaseAge: () => Promise<void>;
   dismissMarketReleaseAge: () => void;
   updateAllMarketPlugins: () => Promise<void>;
+  resumeMarketUpdateAll: () => Promise<void>;
   toggleMarketFavorite: (fullName: string) => void;
   fetchMarketCompat: (names: string[]) => Promise<void>;
   cancelMarketInstall: () => void;
@@ -144,6 +180,10 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   marketUpdates: null,
   marketUpdatesBusy: false,
   marketUpdating: null,
+  marketUpdateAllQueue: null,
+  marketUpdateAllOk: 0,
+  marketUpdateAllFailed: 0,
+  marketUpdateAllPrefetching: false,
   marketFavorites: readStoredFavorites(),
   marketCompat: {},
   marketReleaseNotes: null,
@@ -257,6 +297,12 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       if (notices) get().toast(notices, "info");
       set({ marketPendingApproval: null, marketInstallLog: null });
       await get().refreshMarketInstalled();
+      // 批量更新中撞审批后放行成功：弹队首（本项已装好）续传下一个。
+      // 单卡安装路径无 marketUpdateAllQueue，不入此分支
+      if (get().marketUpdateAllQueue) {
+        set((s) => ({ marketUpdateAllQueue: s.marketUpdateAllQueue!.slice(1), marketUpdateAllOk: s.marketUpdateAllOk + 1 }));
+        await get().resumeMarketUpdateAll();
+      }
     } catch (e) {
       set({ marketInstallError: { specifier, message: String(e) } });
       get().toast(i18n.t("Failed to install plugin: {{error}}", { error: tErr(String(e)) }), "error");
@@ -421,16 +467,28 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
     }
   },
 
-  // 用户确认承担供应链窗口风险：清挂起，以挂起时捕获的版本钉版本重装
+  // 用户确认承担供应链窗口风险：清挂起，以挂起时捕获的版本钉版本重装。
+  // 若处于批量更新中，完成当前项后从队列弹出并续传下一个（项目前保留在
+  // 队首）：批量绝不因单个需要确认的窗口项而终止，装完继续下一个
   confirmMarketReleaseAge: async () => {
     const pending = get().marketReleaseAgeConfirm;
     if (!pending || get().marketUpdating) return;
     set({ marketReleaseAgeConfirm: null });
-    await get().updateMarketPlugin(pending.name, { releaseAgePin: pending.latestVersion });
+    const done = await get().updateMarketPlugin(pending.name, { releaseAgePin: pending.latestVersion });
+    // 单卡路径（非批量）：不与批量队列交互
+    if (!get().marketUpdateAllQueue) return;
+    // 钉版本重装又撞构建脚本审批：队首保留，等 approve 续传
+    if (get().marketPendingApproval) return;
+    set((s) => ({
+      marketUpdateAllQueue: s.marketUpdateAllQueue!.slice(1),
+      marketUpdateAllOk: s.marketUpdateAllOk + (done ? 1 : 0),
+      marketUpdateAllFailed: s.marketUpdateAllFailed + (done ? 0 : 1),
+    }));
+    await get().resumeMarketUpdateAll();
   },
 
   // 用户放弃窗口内更新：正常路径（@latest）等版本过了保护期自然可用，
-  // 如实告知去向，不留半成品
+  // 如实告知去向，不留半成品。批量进行中则跳过当前窗口项（弹队首）续传下一个
   dismissMarketReleaseAge: () => {
     if (!get().marketReleaseAgeConfirm) return;
     set({ marketReleaseAgeConfirm: null });
@@ -438,33 +496,72 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       i18n.t("Update canceled. You can update normally once the version matures past the pnpm protection window."),
       "info",
     );
+    if (!get().marketUpdateAllQueue) return;
+    set((s) => ({ marketUpdateAllQueue: s.marketUpdateAllQueue!.slice(1) }));
+    void get().resumeMarketUpdateAll();
   },
 
-  // 一键全部更新：顺序执行（共享同一 profile 目录，pnpm 并发安装会争锁）。
-  // 逐个静默更新，结束汇总一条；中途撞上审批挂起或供应链窗口确认则停下，
-  // 剩余项待用户处置后重试
+  // 一键全部更新：把所有可更新项（含窗口内插件）排队，逐个静默更新。顺序执行
+  // （共享同一 profile 目录，pnpm 并发安装会争锁）。窗口项/构建脚本拦截项遇之
+  // 挂起确认框，用户确认/放弃后由 resumeMarketUpdateAll 从队列续传——批量绝不
+  // 因单个需要确认的项而中断抛弃后续（"只更新一个"的根因）。
+  // 串行安装前先并发预下载（store 预热）：npm 形态更新包经 marketPrefetch 拉
+  // tarball 进内容寻址 store，随后 dsh plugin add 直接从 store 复用（零下载）；
+  // GitHub 形态无 registry tarball，跳过预热照旧串行时下载。预下载只读 store
+  // 不写 profile，并发安全；失败容忍不中止，串行安装仍是唯一写盘路径
   updateAllMarketPlugins: async () => {
     const targets = Object.values(get().marketUpdates ?? {})
       // 兼容门禁判 false（目标要求更高 dsh 版本）的更新不进批量——单卡
       // Update 按钮已禁用，批量入口同样排除
       .filter((u) => u.updateAvailable && !u.managed && u.compatible !== false)
       .map((u) => u.name);
-    if (targets.length === 0 || get().marketUpdating) return;
-    let ok = 0;
-    let failed = 0;
-    for (const name of targets) {
-      const done = await get().updateMarketPlugin(name, { silent: true });
-      if (!done && (get().marketPendingApproval || get().marketReleaseAgeConfirm)) break;
-      if (done) ok += 1;
-      else failed += 1;
+    if (targets.length === 0 || get().marketUpdating || get().marketUpdateAllPrefetching) return;
+    // 预下载候选：与后续安装同源生成 specifier，npm 形态（githubRepoId(spec)
+    // 为 null）才预热；窗口项生成 name@latestVersion 钉版本，同样可预热
+    const npmSpecifiers = targets
+      .map((name) => {
+        const spec = get().marketInstalled.find((p) => p.name === name)?.spec ?? null;
+        const info = get().marketUpdates?.[name] ?? null;
+        return updateSpecifierFor(name, spec, info);
+      })
+      .filter((specifier) => !githubRepoId(specifier));
+    if (npmSpecifiers.length > 0) {
+      set({ marketUpdateAllPrefetching: true });
+      try {
+        await cmd.marketPrefetch(npmSpecifiers);
+      } catch {
+        // 预热失败容忍：串行安装仍会自行下载，不中止批量
+      } finally {
+        set({ marketUpdateAllPrefetching: false });
+      }
     }
-    if (failed === 0 && ok > 0) {
-      get().toast(i18n.t("Updated {{count}} plugins", { count: ok }), "success");
-    } else if (failed > 0) {
-      get().toast(i18n.t("Updated {{ok}} plugins, {{failed}} failed", { ok, failed }), "error");
+    set({ marketUpdateAllQueue: targets, marketUpdateAllOk: 0, marketUpdateAllFailed: 0 });
+    await get().resumeMarketUpdateAll();
+  },
+
+  // 批量驱动（唯一执行点）：逐项处理队首。项成功/失败即弹出计数；撞上窗口或
+  // 构建脚本审批则停留（挂起框已置位，队首保留）等用户表态后再续传；队空则
+  // settleUpdateAll 收尾。递归为异步尾调用，不涨调用栈。串行 await 保证同一
+  // profile 不并发争锁。审批挂起是硬交互（需用户放行任意代码），与窗口确认同
+  // 样停留，避免在用户表态前盲目重装
+  resumeMarketUpdateAll: async () => {
+    if (get().marketUpdating) return;
+    if (get().marketPendingApproval || get().marketReleaseAgeConfirm) return;
+    const queue = get().marketUpdateAllQueue;
+    if (!queue) return;
+    // 队列已空但仍持中继态（最后一项经 confirm/dismiss 弹空后触发）：收尾
+    if (queue.length === 0) {
+      settleUpdateAll(set, get);
+      return;
     }
-    await get().refreshMarketInstalled();
-    void get().refreshMarketUpdates();
+    const name = queue[0];
+    const done = await get().updateMarketPlugin(name, { silent: true });
+    if (get().marketPendingApproval || get().marketReleaseAgeConfirm) return;
+    const ok = get().marketUpdateAllOk + (done ? 1 : 0);
+    const failed = get().marketUpdateAllFailed + (done ? 0 : 1);
+    const rest = get().marketUpdateAllQueue!.slice(1);
+    set({ marketUpdateAllQueue: rest, marketUpdateAllOk: ok, marketUpdateAllFailed: failed });
+    await get().resumeMarketUpdateAll();
   },
 
   // 收藏/取消收藏：只认目录条目 fullName；目录下架的条目留在清单里，

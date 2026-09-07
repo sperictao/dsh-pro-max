@@ -79,6 +79,11 @@ export const marketSetPluginEnabled = (name: string, enabled: boolean) =>
   invokeTyped<InstalledPlugin>("market_set_plugin_enabled", { name, enabled });
 // 更新检测：npm 形态已装插件比对 registry latest；全部可检包都失败才报错
 export const marketCheckUpdates = () => invokeTyped<PluginUpdateInfo[]>("market_check_updates");
+// 批量更新前预下载（store 预热）：并发 pnpm store add 把 npm 形态更新包的
+// tarball 拉进内容寻址 store，随后串行 dsh plugin add 直接复用（零下载）。
+// 恒 Ok（单包失败容忍），profile 不可得等系统级错误才 reject
+export const marketPrefetch = (specifiers: string[]) =>
+  invokeTyped<void>("market_prefetch", { specifiers });
 // 取消当前活跃的插件安装/移除（busy 态取消按钮，G2）；无活跃命令返回 false（幂等）
 export const marketCancel = () => invokeTyped<boolean>("market_cancel");
 // 发现页兼容性批量查询（G4）：目录不携带 npm manifest，前端对可见卡片的

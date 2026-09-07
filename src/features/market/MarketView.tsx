@@ -521,6 +521,7 @@ function InstalledPane() {
   const refreshUpdates = useAppStore((s) => s.refreshMarketUpdates);
   const updatePlugin = useAppStore((s) => s.updateMarketPlugin);
   const updateAll = useAppStore((s) => s.updateAllMarketPlugins);
+  const updateAllPrefetching = useAppStore((s) => s.marketUpdateAllPrefetching);
   const setPluginEnabled = useAppStore((s) => s.setMarketPluginEnabled);
   // 重启 dsh web（启停生效的就近入口）：复用 Shell 域一键重启（busy 守卫、
   // 时间轴认领、托盘同步都在 dshActions），busy 镜像与 DshCard 同一套标志
@@ -539,8 +540,12 @@ function InstalledPane() {
   // 目录匹配表：给已装卡片补全描述/分类/星标/链接（目录没有的如实留白）
   const byName = useMemo(() => new Map((catalog?.plugins ?? []).map((p) => [p.name, p])), [catalog]);
   const pendingCount = useMemo(
-    // 兼容门禁判 false 的更新不进批量计数（单卡按钮已禁用，批量入口同样排除）
-    () => Object.values(updates ?? {}).filter((u) => u.updateAvailable && !u.managed && u.compatible !== false).length,
+    // 兼容门禁判 false 的更新不进批量计数（单卡按钮已禁用，批量入口同样排除）。
+    // 窗口内插件计在内：批量遇之弹知情确认框，确认后钉版本安装、继续下一个
+    () =>
+      Object.values(updates ?? {}).filter(
+        (u) => u.updateAvailable && !u.managed && u.compatible !== false,
+      ).length,
     [updates],
   );
 
@@ -558,11 +563,11 @@ function InstalledPane() {
           {pendingCount > 0 && (
             <button
               className={BTN_PRIMARY}
-              disabled={updating !== null || updatesBusy}
+              disabled={updating !== null || updatesBusy || updateAllPrefetching}
               onClick={() => void updateAll()}
               id="btn-updates-all"
             >
-              {updating !== null ? t("Working…") : t("Update all ({{count}})", { count: pendingCount })}
+              {updating !== null || updateAllPrefetching ? t("Working…") : t("Update all ({{count}})", { count: pendingCount })}
             </button>
           )}
           {/* 启停/更新落盘后重启生效的就近入口；启停开关的「重启后生效」

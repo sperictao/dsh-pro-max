@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Duration;
 use tauri::Emitter;
 
@@ -41,6 +42,12 @@ const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
 const PLUGIN_ADD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 /// dsh plugin remove 硬超时（卸载只删依赖，2min 与 B 方同值）
 const PLUGIN_REMOVE_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+/// 预下载（pnpm store add 预热）单包超时：只下载 tarball 进 store，不装
+/// node_modules，慢网放在 5min，到点杀进程防批量预热被单包拖死
+const PREFETCH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// 预下载并发 worker 数：与发现页兼容性查询同档，单包下载是网络 IO，
+/// 并发复用连接并不写盘，受控并发不挂死
+const PREFETCH_CONCURRENCY: usize = 8;
 /// --dump-config 组合预检超时（解析入口不绑端口，秒级；90s 与 B 方同值）
 const DUMP_CONFIG_TIMEOUT: Duration = Duration::from_secs(90);
 /// Launcher 自己管理的授权插件，不出现在可移除列表
@@ -754,15 +761,29 @@ fn release_age_policy() -> (u64, Vec<String>) {
         .unwrap_or_else(|| (DEFAULT_MINIMUM_RELEASE_AGE_MINUTES, Vec::new()))
 }
 
-/// 更新检测执行体（market_check_updates 的阻塞部分）：逐包串行查询
-/// （已装列表是个位数，并发无收益），npm 形态查 registry /latest，GitHub
-/// 仓库形态（github:/git+https: 落盘形态）查 raw.githubusercontent 默认分支
+/// 单包更新检测的并发计算产物：线程内完成 registry/GitHub 查询 + 兼容门禁 +
+/// 发布窗口判定，主线程按下标回填到对应 PluginUpdateInfo。字段即回填目标
+/// （latest_publish_time 等）。Err 由调用方按"单包失败"处理，不放大
+struct Resolved {
+    latest_version: Option<String>,
+    requires_dsh: Option<String>,
+    compatible: Option<bool>,
+    update_available: bool,
+    latest_in_release_age_window: bool,
+    latest_publish_time: Option<String>,
+}
+
+/// 更新检测执行体（market_check_updates 的阻塞部分）：逐包查询
+/// （已装列表是个位数），npm 形态查 registry /latest，GitHub 仓库形态
+/// （github:/git+https: 落盘形态）查 raw.githubusercontent 默认分支
 /// manifest——版本来自磁盘事实，比对远端 HEAD 的 package.json。实际版本复用
 /// 已装列表的磁盘事实（InstalledPlugin.version，installed_list_from_profile
 /// 统一判定）；latest 落在 pnpm minimumReleaseAge 窗口内的额外标记
 /// latest_in_release_age_window 并携带 latest_publish_time（窗口内 @latest
 /// 会被静默拦回旧版，前端据此先弹确认框并展示发布新鲜度；发布时间只有
 /// registry 有，git 形态不适用——其更新动作是原仓重装，不经 @latest）。
+/// 每包查询彼此独立（网络只读、不写盘），用 std::thread::scope 并发发出，
+/// 已装列表再多也不拖长检测；共享 reqwest Client（Send+Sync）复用连接。
 /// 部分包查询失败不放大为整体失败（如实无 latest、不出更新按钮）；全部
 /// 可检包都失败才报错——那是网络问题的信号
 fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
@@ -788,42 +809,94 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
     let dsh_host = super::components::dsh_version();
     let now = time::OffsetDateTime::now_utc();
     let client = update_http_client()?;
-    let mut checked = 0usize;
+    // 可检项下标（未受管且已装版本可得）。每项查询独立，并发发出后按下标
+    // 回填，顺序不漂移
+    let indexes: Vec<usize> = infos
+        .iter()
+        .enumerate()
+        .filter(|(_, info)| !info.managed && info.installed_version.is_some())
+        .map(|(i, _)| i)
+        .collect();
+    // 只读引用（Copy），供每个 scoped 线程 move 捕获原文；Client 跨线程
+    // 共享复用，dsh_host/now/age 策略都是只读事实
+    let client_ref = &client;
+    let age_excludes_ref = &age_excludes;
+    let dsh_host_str = dsh_host.as_deref();
+    let checked = indexes.len();
     let mut failed = 0usize;
     let mut first_error: Option<String> = None;
-    for info in infos
-        .iter_mut()
-        .filter(|i| !i.managed && i.installed_version.is_some())
-    {
-        checked += 1;
-        let git_repo = github_repo_id(&info.spec);
-        let latest = match git_repo.as_deref() {
-            Some(repo) => git_latest_with(&client, repo),
-            None => registry_latest_with(&client, &info.name),
-        };
-        match latest {
-            Ok(latest) => {
-                info.update_available = is_newer(
-                    &latest.version,
-                    info.installed_version.as_deref().unwrap_or_default(),
-                );
-                // 兼容门禁：声明了最低 dsh 版本才判定（未声明 None = 不设门）
-                info.requires_dsh = latest.requires_dsh;
-                info.compatible = info
-                    .requires_dsh
-                    .as_ref()
-                    .map(|req| meets_dsh_minimum(dsh_host.as_deref(), req));
-                if info.update_available && git_repo.is_none() {
-                    let publish = registry_publish_time(&info.name, &latest.version);
-                    info.latest_in_release_age_window = in_release_age_window(
-                        publish.as_deref(),
-                        now,
-                        age_minutes,
-                        release_age_excluded(&age_excludes, &info.name, &latest.version),
-                    );
-                    info.latest_publish_time = publish;
-                }
-                info.latest_version = Some(latest.version);
+    // std::thread::scope：线程在作用域结束前必须 join，as 引用借到栈上的
+    // client/age/dsh_host/now；闭包只读各自 info（Send+Sync），写回靠下标
+    let results: Vec<(usize, Result<Resolved, String>)> = thread::scope(|scope| {
+        let handles: Vec<_> = indexes
+            .iter()
+            .map(|&i| {
+                let info = &infos[i];
+                let git_repo = github_repo_id(&info.spec);
+                scope.spawn(move || {
+                    let latest = match git_repo.as_deref() {
+                        Some(repo) => git_latest_with(client_ref, repo),
+                        None => registry_latest_with(client_ref, &info.name),
+                    };
+                    match latest {
+                        Ok(latest) => {
+                            let update_available = is_newer(
+                                &latest.version,
+                                info.installed_version.as_deref().unwrap_or_default(),
+                            );
+                            let compatible = latest
+                                .requires_dsh
+                                .as_ref()
+                                .map(|req| meets_dsh_minimum(dsh_host_str, req));
+                            // 发布时间只对确有更新的 registry 包多付一次 HTTP
+                            let (window, publish) =
+                                if update_available && git_repo.is_none() {
+                                    let publish =
+                                        registry_publish_time(&info.name, &latest.version);
+                                    let window = in_release_age_window(
+                                        publish.as_deref(),
+                                        now,
+                                        age_minutes,
+                                        release_age_excluded(
+                                            age_excludes_ref,
+                                            &info.name,
+                                            &latest.version,
+                                        ),
+                                    );
+                                    (window, publish)
+                                } else {
+                                    (false, None)
+                                };
+                            Ok(Resolved {
+                                latest_version: Some(latest.version),
+                                requires_dsh: latest.requires_dsh,
+                                compatible,
+                                update_available,
+                                latest_in_release_age_window: window,
+                                latest_publish_time: publish,
+                            })
+                        }
+                        Err(e) => Err(e),
+                    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .zip(indexes)
+            .map(|(h, i)| (i, h.join().unwrap()))
+            .collect()
+    });
+    for (i, result) in results {
+        let info = &mut infos[i];
+        match result {
+            Ok(resolved) => {
+                info.update_available = resolved.update_available;
+                info.latest_version = resolved.latest_version;
+                info.requires_dsh = resolved.requires_dsh;
+                info.compatible = resolved.compatible;
+                info.latest_in_release_age_window = resolved.latest_in_release_age_window;
+                info.latest_publish_time = resolved.latest_publish_time;
             }
             Err(e) => {
                 failed += 1;
@@ -2518,6 +2591,61 @@ pub async fn market_remove(app: tauri::AppHandle, name: String) -> Result<(), St
 #[tauri::command]
 pub async fn market_check_updates() -> Result<Vec<PluginUpdateInfo>, String> {
     super::ipc_blocking(check_updates_once).await
+}
+
+// ============ 更新预下载（store 预热）============
+
+/// 预下载执行体：并发 `pnpm store add --dir <profile> <spec>`，把 tarball 预热进
+/// 内容寻址 store（不碰 profile 的 package.json / node_modules，只读网络不写盘），
+/// 随后串行 `dsh plugin add` 直接从 store 复用（reused，零下载）——把批量更新的
+/// 网络下载从「串行累加」降到「最长单包」。单包失败记 warning 不中止（容忍预热
+/// 失败，串行安装仍是唯一写盘路径、会自行下载）；只有系统级错误（如 profile
+/// 不可得）才 Err。并发 worker 池与 discovery_compat_once 同款（Mutex 队列 +
+/// 固定并发），共享 store 内容寻址 immutable，并发写入不同包安全
+fn prefetch_once(specifiers: Vec<String>, profile_dir: &std::path::Path) -> Result<(), String> {
+    if specifiers.is_empty() {
+        return Ok(());
+    }
+    let pnpm = super::components::pnpm_bin();
+    let queue: Mutex<Vec<String>> = Mutex::new(specifiers);
+    std::thread::scope(|s| {
+        for _ in 0..PREFETCH_CONCURRENCY {
+            s.spawn(|| loop {
+                let spec = match queue.lock().unwrap_or_else(|p| p.into_inner()).pop() {
+                    Some(x) => x,
+                    None => return,
+                };
+                let profile_str = profile_dir.display().to_string();
+                let argv = ["--dir", profile_str.as_str(), "store", "add", spec.as_str()];
+                match run_capture_lines(&pnpm, &argv, |_| {}, Some(PREFETCH_TIMEOUT), None) {
+                    Ok((_, _, true, _)) => {}
+                    Ok((out, err, false, _)) => {
+                        let raw = failure_raw(&out, &err, "prefetch");
+                        crate::logging::warn(
+                            "[market] 更新预下载失败",
+                            &format!("{}: {}", spec, raw),
+                        );
+                    }
+                    Err(e) => {
+                        crate::logging::warn(
+                            "[market] 更新预下载执行失败",
+                            &format!("{}: {}", spec, e),
+                        );
+                    }
+                }
+            });
+        }
+    });
+    Ok(())
+}
+
+/// 批量更新前的预下载（store 预热）：前端对所有 npm 形态更新 specifier 一次传入，
+/// 后端并发 `pnpm store add`（--dir 对齐 profile 的 store），完成后前端再进入串行
+/// 安装队列。恒 Ok（单包失败容忍）；profile 不可得等系统级错误才 Err
+#[tauri::command]
+pub async fn market_prefetch(specifiers: Vec<String>) -> Result<(), String> {
+    let profile_dir = web_profile_dir()?;
+    super::ipc_blocking(move || prefetch_once(specifiers, &profile_dir)).await
 }
 
 // ============ 发现页兼容性（G4）============
