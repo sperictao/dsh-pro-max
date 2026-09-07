@@ -1220,7 +1220,10 @@ fn run_capture_lines_streams_lines_from_real_process() {
 #[test]
 fn run_capture_lines_timeout_kills_hung_process() {
     // 复现：pnpm/dsh 挂死曾让安装 busy 态无限挂起（且无取消）——超时必须
-    // 真正终止等待、保留已捕获的部分输出、以 timed_out 报告
+    // 真正终止等待、保留已捕获的部分输出、以 timed_out 报告。击杀窗给
+    // 800ms：CI 高负载下 node 冷启动可到数百 ms，窗太短会在子进程尚未写入
+    // 时就击杀，"保留部分输出"无从谈起（v0.8.4 的 Linux CI 即此因）；快速
+    // 击杀由总耗时上断言，不靠窗长
     let Some(node) = which("node") else { return };
     let start = std::time::Instant::now();
     let (stdout, _, ok, timed_out) = run_capture_lines(
@@ -1230,7 +1233,7 @@ fn run_capture_lines_timeout_kills_hung_process() {
             "process.stdout.write('partial\\n'); setTimeout(() => {}, 30000);",
         ],
         |_| {},
-        Some(std::time::Duration::from_millis(300)),
+        Some(std::time::Duration::from_millis(800)),
         None,
     )
     .unwrap();
@@ -3264,12 +3267,14 @@ fn install_failure_message_prefers_classification_over_generic_text() {
 #[test]
 fn run_capture_lines_cancel_kills_early_and_reports() {
     // 复现：安装 busy 态无取消曾让用户干等 15 分钟——令牌置位必须在
-    // 100ms 轮询粒度内杀进程返回，且保留部分输出
+    // 轮询粒度内杀进程返回，且保留部分输出。置位延时给 800ms：CI 高负载
+    // 下 node 冷启动可到数百 ms，窗太短会在子进程尚未写入时就击杀（
+    // v0.8.4 的 Linux CI 即此因）；快速击杀由总耗时上断言，不靠窗长
     let Some(node) = which("node") else { return };
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let flag = cancel.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        std::thread::sleep(std::time::Duration::from_millis(800));
         flag.store(true, std::sync::atomic::Ordering::Relaxed);
     });
     let start = std::time::Instant::now();

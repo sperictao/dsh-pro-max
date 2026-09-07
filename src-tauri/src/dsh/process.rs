@@ -165,8 +165,8 @@ fn snapshot_collected(buf: &std::sync::Mutex<String>) -> String {
 /// timeout 到点、或 cancel 令牌被置位（用户取消，G2），都杀掉子进程并回收
 /// （不留僵尸），返回第四位 true——调用方凭自己持有的令牌区分超时与取消。
 /// 已捕获的部分输出保留。杀掉的直接子进程的管道可能仍被孙进程（pnpm 链）
-/// 持有，读线程无法 EOF——因此被杀路径不 join 读线程，只留一拍收尾后取共享
-/// 缓冲，让「挂死/取消」都不再无限挂住调用方
+/// 持有，读线程无法 EOF——因此被杀路径不 join 读线程，改为有界（1s）等读
+/// 线程 EOF 后取共享缓冲，让「挂死/取消」都不再无限挂住调用方
 pub(crate) fn run_capture_lines(
     program: &str,
     args: &[&str],
@@ -221,9 +221,15 @@ pub(crate) fn run_capture_lines(
         }
     }
     if timed_out {
-        // 管道被孙进程持有读线程就收不了尾：不 join（线程随管道关闭自行退出），
-        // 留一拍让无孙进程的常见情形走完 EOF
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        // 管道被孙进程持有读线程就收不了尾：有界等读线程 EOF——无孙进程的
+        // 常见情形（子进程死即管道关）毫秒级走完，早于旧版的无条件 1s；到点
+        // 才放手，此时共享缓冲里已有的就是能保全的部分输出
+        let grace_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while (!out_handle.is_finished() || !err_handle.is_finished())
+            && std::time::Instant::now() < grace_deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let stdout = snapshot_collected(&collected_out);
         let stderr = snapshot_collected(&collected_err);
         return Ok((
