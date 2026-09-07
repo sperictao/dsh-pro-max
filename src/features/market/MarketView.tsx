@@ -1146,7 +1146,7 @@ function BuildApprovalDialog() {
         <p className="mt-2 text-xs opacity-70">
           {t("{{plugin}} needs to run install scripts from these dependencies:", { plugin: pending.label })}
         </p>
-        <ul className="mt-2 rounded bg-muted px-3 py-2 font-mono text-xs">
+        <ul className="mt-2 max-w-full break-all rounded bg-muted px-3 py-2 font-mono text-xs">
           {pending.packages.map((p) => (
             <li key={p}>{p}</li>
           ))}

@@ -882,6 +882,17 @@ pub(crate) fn valid_identifier(s: &str) -> bool {
         && !s.contains("..")
 }
 
+/// 可写入 allowBuilds 的键：npm 包名形态（valid_identifier）或 pnpm 打印的
+/// git-hosted 精确键（`name@git+url#commit`，`+` 不在 identifier 白名单）。
+/// market_approve_builds 的 IPC 校验用——前端回传不可信，git 分支仍限长与
+/// 可打印 ASCII（键只会成为 yaml 字符串键，无 shell/路径面）
+pub(crate) fn valid_allow_key(s: &str) -> bool {
+    valid_identifier(s)
+        || (s.contains("git+")
+            && s.len() <= 512
+            && s.chars().all(|c| c.is_ascii_graphic()))
+}
+
 /// npm 形态 specifier 的包名部分；带协议前缀的形态（github:/file:/npm: 等）
 /// 返回 None（安装后的 dependencies 键名无法预知）。语义定义只有一份：
 /// specifier_cases.json 测试向量驱动本函数与前端 packageNameFromSpecifier
@@ -1246,6 +1257,34 @@ pub fn market_cancel() -> bool {
     }
 }
 
+/// spec 剥版本/键尾的包名：rfind('@') 且 i>0 保护 `@scope` 前缀；无 '@' 原样
+/// 返回。registry spec（`node-pty@1.1.0`）与 pnpm 打印的 git 键
+/// （`name@git+url#commit`）同一剥法
+fn strip_spec_version(spec: &str) -> &str {
+    match spec.rfind('@') {
+        Some(i) if i > 0 => &spec[..i],
+        _ => spec,
+    }
+}
+
+/// 从 pnpm 失败输出提取 git-hosted prepare 拦截的 allowBuilds 键（pnpm 11+
+/// 打印的精确键，`name@git+url#commit`）。判定收敛为"含 git+ 且以 ': true'
+/// 结尾的行"：不依赖缩进（dsh/UI 转发可能丢失），普通输出行不会被误判；
+/// blocked_build_packages 未命中（该失败形态无 Ignored build scripts 行）时
+/// 兜底调用
+pub(crate) fn git_prepare_allow_keys(output: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if let Some(key) = trimmed.strip_suffix(": true") {
+            if key.contains("git+") && !out.iter().any(|k| k == key) {
+                out.push(key.to_string());
+            }
+        }
+    }
+    out
+}
+
 /// 从 pnpm/dsh 失败输出（stdout+stderr 合并）提取被拦构建脚本的包名。
 /// pnpm 10 与 11/12 的错误形态不同但都含 `Ignored build scripts:` 行
 /// （逗号分隔、带版本号；11.25 起该行落在 stdout）；scope 包剥版本
@@ -1264,11 +1303,7 @@ pub(crate) fn blocked_build_packages(output: &str) -> Vec<String> {
         .unwrap_or_default();
     let mut out: Vec<String> = Vec::new();
     for raw in list.split(',') {
-        let spec = raw.trim();
-        let name = match spec.rfind('@') {
-            Some(i) if i > 0 => &spec[..i],
-            _ => spec,
-        };
+        let name = strip_spec_version(raw.trim());
         if valid_identifier(name) && !out.iter().any(|p| p == name) {
             out.push(name.to_string());
         }
@@ -1354,8 +1389,11 @@ pub(crate) fn merge_allow_builds(
         .or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
     let only_seq = only.as_sequence_mut().ok_or_else(yaml_invalid)?;
     for p in packages {
-        if !only_seq.iter().any(|v| v.as_str() == Some(p.as_str())) {
-            only_seq.push(serde_yaml::Value::from(p.as_str()));
+        // git 键剥为纯包名：pnpm 10 的 onlyBuiltDependencies 只认包名；
+        // allowBuilds 侧保留完整键（pnpm 11+ 据此精确匹配 git 来源）
+        let name = strip_spec_version(p);
+        if !only_seq.iter().any(|v| v.as_str() == Some(name)) {
+            only_seq.push(serde_yaml::Value::from(name));
         }
     }
     only_seq.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
@@ -2157,7 +2195,14 @@ pub(crate) fn install_decision(
             })
         }
         Err((raw, display)) => {
-            let packages = blocked_build_packages(&raw);
+            // 两类 pnpm 构建拦截都转审批，packages 统一承载"写入 allowBuilds
+            // 的键"：registry 包 = 包名（Ignored build scripts 行），git 包 =
+            // 完整键（ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED 硬失败，无该行）；
+            // git 键解析不出的变形输出仍走普通失败（HINT_GIT_PREPARE 兜底）
+            let mut packages = blocked_build_packages(&raw);
+            if packages.is_empty() {
+                packages = git_prepare_allow_keys(&raw);
+            }
             if !packages.is_empty() {
                 // 拦截不算安装失败：转审批请求（被拦包名 + 待写 yaml 路径）
                 let workspace_yaml = workspace_yaml.ok_or_else(|| {
@@ -2294,8 +2339,8 @@ fn approve_builds_once(
 }
 
 /// 用户审批放行构建脚本后执行：合并写入 profile 的 pnpm-workspace.yaml →
-/// 重跑安装。包名来自前端回传（最初由 launcher 从 pnpm stderr 解析），IPC
-/// 层不可信，逐个过与目录 specifier 同一白名单
+/// 重跑安装。键来自前端回传（最初由 launcher 从 pnpm 输出解析，registry 包
+/// 为包名、git 包为完整键），IPC 层不可信，逐个过 allowBuilds 键白名单
 #[tauri::command]
 pub async fn market_approve_builds(
     app: tauri::AppHandle,
@@ -2304,7 +2349,7 @@ pub async fn market_approve_builds(
 ) -> Result<InstallOutcome, String> {
     if !valid_identifier(&specifier)
         || packages.is_empty()
-        || packages.iter().any(|p| !valid_identifier(p))
+        || packages.iter().any(|p| !valid_allow_key(p))
     {
         return Err("Invalid plugin identifier".to_string());
     }

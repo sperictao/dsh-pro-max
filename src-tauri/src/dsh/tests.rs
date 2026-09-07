@@ -2028,9 +2028,10 @@ fn market_fetch_real_catalog_smoke() {
 use super::components::verify_bundled_tarball;
 use super::market::{
     audit_line, blocked_build_packages, catalog_from_raw, catalog_snapshot_decision,
-    install_failure_message, install_receipt, load_catalog_snapshot_file, merge_allow_builds,
-    package_name_from_specifier, policy_allows, policy_entries_from_raw, protocol_installed_match,
-    resolve_catalog_url, specifier_to_catalog_name, write_catalog_snapshot_file, github_repo_id,
+    git_prepare_allow_keys, install_failure_message, install_receipt,
+    load_catalog_snapshot_file, merge_allow_builds, package_name_from_specifier, policy_allows,
+    policy_entries_from_raw, protocol_installed_match, resolve_catalog_url,
+    specifier_to_catalog_name, valid_allow_key, write_catalog_snapshot_file, github_repo_id,
     CatalogLoadError, InstallOutcome, InstalledPlugin,
 };
 
@@ -2080,6 +2081,28 @@ fn failure_raw_merges_stdout_and_stderr_for_fingerprint_detection() {
     assert_eq!(failure_raw("", "", "remove"), "dsh plugin remove failed");
 }
 
+/// git-hosted prepare 拦截的 allowBuilds 键提取：pnpm 11+ 硬失败
+/// （ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED）打印的精确键，`name@git+url#commit`
+/// 形态——blocked_build_packages 的 Ignored build scripts 行在此形态不存在
+#[test]
+fn git_prepare_allow_keys_extracts_pnpm_printed_keys() {
+    // 实机样本（Windows + pnpm 11，dsh CLI 转发；缩进在转发链路中可能丢失）
+    let raw = "[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from \"https://github.com/btspoony/dsh-advisor.git\": The git-hosted package \"dsh-advisor@0.3.1\" needs to execute build scripts but is not in the \"allowBuilds\" allowlist.\nThis error happened while installing a direct dependency of C:\\Users\\EricTao\\.dsh\\profiles\\web\nAdd the package to \"allowBuilds\" in your project's pnpm-workspace.yaml to allow it to run scripts. For example:\nallowBuilds:\n  dsh-advisor@git+https://github.com/btspoony/dsh-advisor.git#1eda7b2026864f331dcb934a9861bdb3cbae6a9e: true\ndsh: pnpm failed in profile directory C:\\Users\\EricTao\\.dsh\\profiles\\web";
+    assert_eq!(
+        git_prepare_allow_keys(raw),
+        vec!["dsh-advisor@git+https://github.com/btspoony/dsh-advisor.git#1eda7b2026864f331dcb934a9861bdb3cbae6a9e"]
+    );
+    // scope 包 + 多包去重
+    let multi = "allowBuilds:\n  @scope/pkg@git+https://x.git#abc: true\n  dsh-x@git+https://y.git#def: true\n  dsh-x@git+https://y.git#def: true";
+    assert_eq!(
+        git_prepare_allow_keys(multi),
+        vec!["@scope/pkg@git+https://x.git#abc", "dsh-x@git+https://y.git#def"]
+    );
+    // registry 包的 ignored 示例行与无关输出不误判
+    assert!(git_prepare_allow_keys("allowBuilds:\n  esbuild: true").is_empty());
+    assert!(git_prepare_allow_keys("boom").is_empty());
+}
+
 #[test]
 fn merge_allow_builds_creates_merges_and_is_idempotent() {
     let dir = std::env::temp_dir().join(format!("dsh-pro-max-allow-builds-{}", std::process::id()));
@@ -2114,6 +2137,35 @@ fn merge_allow_builds_creates_merges_and_is_idempotent() {
     // 幂等：重复放行同包，文件不再变化
     let before = std::fs::read_to_string(&path).unwrap();
     merge_allow_builds(&path, &["node-pty".to_string()]).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// git 键写入：allowBuilds 保留 pnpm 打印的完整键（pnpm 11+ 据此精确匹配
+/// git 来源），onlyBuiltDependencies 双写剥为纯包名（pnpm 10 只认包名）；
+/// 幂等不漂移
+#[test]
+fn merge_allow_builds_writes_git_key_and_package_name_in_only_built() {
+    let dir = std::env::temp_dir().join(format!(
+        "dsh-pro-max-allow-builds-git-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("pnpm-workspace.yaml");
+    let key = "dsh-advisor@git+https://github.com/btspoony/dsh-advisor.git#1eda7b2026864f331dcb934a9861bdb3cbae6a9e";
+    merge_allow_builds(&path, &[key.to_string()]).unwrap();
+    let v: serde_yaml::Value =
+        serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["allowBuilds"][key], serde_yaml::Value::Bool(true));
+    let only: Vec<&str> = v["onlyBuiltDependencies"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .filter_map(|x| x.as_str())
+        .collect();
+    assert_eq!(only, vec!["dsh-advisor"]);
+    let before = std::fs::read_to_string(&path).unwrap();
+    merge_allow_builds(&path, &[key.to_string()]).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -2834,6 +2886,45 @@ fn install_decision_elevates_blocked_builds_to_needs_approval() {
     set_current("en");
 }
 
+/// git-hosted prepare 拦截（硬失败、无 Ignored build scripts 行）同样转审批：
+/// packages 承载 pnpm 打印的完整键；键解析不出的变形输出仍是普通失败
+#[test]
+fn install_decision_elevates_git_prepare_block_to_needs_approval() {
+    set_current("en");
+    let raw = "[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] The git-hosted package \"dsh-advisor@0.3.1\" needs to execute build scripts but is not in the \"allowBuilds\" allowlist.\nallowBuilds:\n  dsh-advisor@git+https://github.com/btspoony/dsh-advisor.git#1eda7b: true";
+    let outcome = super::market::install_decision(
+        "github:btspoony/dsh-advisor",
+        Err((raw.to_string(), "hint".to_string())),
+        None,
+        None,
+        Some("/p/pnpm-workspace.yaml".to_string()),
+    )
+    .expect("needs approval is not an error");
+    match outcome {
+        InstallOutcome::NeedsApproval { packages, .. } => {
+            assert_eq!(
+                packages,
+                vec!["dsh-advisor@git+https://github.com/btspoony/dsh-advisor.git#1eda7b"]
+            );
+        }
+        InstallOutcome::Installed { .. } => panic!("expected needsApproval"),
+    }
+    // 解析不出键 → 普通失败，display 保留 HINT_GIT_PREPARE 手动兜底
+    let err = super::market::install_decision(
+        "github:owner/repo",
+        Err((
+            "ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED no example line".to_string(),
+            "hint".to_string(),
+        )),
+        None,
+        None,
+        Some("/p/x.yaml".to_string()),
+    )
+    .expect_err("plain failure");
+    assert_eq!(err.1, "hint");
+    set_current("en");
+}
+
 #[test]
 fn install_decision_success_computes_receipt_from_before_after() {
     let after = vec![InstalledPlugin {
@@ -3054,6 +3145,21 @@ fn specifier_parsers_match_shared_test_vectors() {
 }
 
 // ============ G1：pnpm 失败分类 ============
+
+/// market_approve_builds 的 IPC 键校验：npm 包名与 pnpm 打印的 git 键都放行，
+/// 垃圾输入（空/空格/超长）仍拒
+#[test]
+fn valid_allow_key_accepts_package_names_and_git_keys() {
+    assert!(valid_allow_key("node-pty"));
+    assert!(valid_allow_key("@scope/pkg"));
+    assert!(valid_allow_key(
+        "dsh-advisor@git+https://github.com/btspoony/dsh-advisor.git#1eda7b2026864f331dcb934a9861bdb3cbae6a9e"
+    ));
+    assert!(!valid_allow_key(""));
+    assert!(!valid_allow_key("bad name"));
+    assert!(!valid_allow_key("no-grip but has spaces with git+ inside"));
+    assert!(!valid_allow_key(&format!("a@git+x#{}", "c".repeat(600))));
+}
 
 #[test]
 fn pnpm_failure_hint_classifies_known_families() {
