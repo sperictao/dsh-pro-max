@@ -21,8 +21,8 @@ const plugins = [
   },
   {
     source: "vendor/dsh-auth-tailscale",
-    commit: "5958d1ed265186af02fbd40ad2e804072a5ed95a",
-    output: "dsh-auth-tailscale-5958d1ed2651.tgz",
+    commit: "d9c97876a78ff15e3a0659611f9874d83b0850d7",
+    output: "dsh-auth-tailscale-d9c97876a78f.tgz",
   },
 ];
 

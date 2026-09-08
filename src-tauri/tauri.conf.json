@@ -42,8 +42,8 @@
     "resources": {
       "../.artifacts/dsh-plugins/dsh-client-connection-authz-8a27dc344a79.tgz": "dsh-plugins/dsh-client-connection-authz-8a27dc344a79.tgz",
       "../.artifacts/dsh-plugins/dsh-client-connection-authz-8a27dc344a79.tgz.sha256": "dsh-plugins/dsh-client-connection-authz-8a27dc344a79.tgz.sha256",
-      "../.artifacts/dsh-plugins/dsh-auth-tailscale-5958d1ed2651.tgz": "dsh-plugins/dsh-auth-tailscale-5958d1ed2651.tgz",
-      "../.artifacts/dsh-plugins/dsh-auth-tailscale-5958d1ed2651.tgz.sha256": "dsh-plugins/dsh-auth-tailscale-5958d1ed2651.tgz.sha256"
+      "../.artifacts/dsh-plugins/dsh-auth-tailscale-d9c97876a78f.tgz": "dsh-plugins/dsh-auth-tailscale-d9c97876a78f.tgz",
+      "../.artifacts/dsh-plugins/dsh-auth-tailscale-d9c97876a78f.tgz.sha256": "dsh-plugins/dsh-auth-tailscale-d9c97876a78f.tgz.sha256"
     },
     "macOS": {
       "hardenedRuntime": true,
