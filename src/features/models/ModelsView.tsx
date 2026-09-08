@@ -242,9 +242,11 @@ function ModelSearchInput({
   const rootRef = useRef<HTMLDivElement>(null);
 
   const candidates = useMemo(() => {
-    const seen = new Set(configured);
+    // textarea 手输/YAML 既有重复 id 不产生重复候选与重复 key
+    const configuredUnique = [...new Set(configured)];
+    const seen = new Set(configuredUnique);
     const pool: { id: string; name: string }[] = [
-      ...configured.map((id) => ({ id, name: id })),
+      ...configuredUnique.map((id) => ({ id, name: id })),
       ...catalog.filter((e) => (!family || e.family === family) && !seen.has(e.id)),
     ];
     const q = value.trim().toLowerCase();
@@ -356,6 +358,11 @@ function ProviderCard({
   const [draft, setDraft] = useState("");
   const [fetching, setFetching] = useState(false);
   const [remote, setRemote] = useState<string[] | null>(null);
+
+  // 端点三元组变化后旧端点的拉取结果不再可信，立即撤下
+  useEffect(() => {
+    setRemote(null);
+  }, [provider.baseURL, provider.api, provider.apiKeyEnv]);
 
   const appendModel = (id: string) => {
     if (!provider.models.includes(id)) onChange({ models: [...provider.models, id] });

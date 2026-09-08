@@ -294,6 +294,10 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
             &[("error", e.to_string())],
         )
     })?;
+    // fsync 后再 rename：断电时 rename 后的目标不会是空/截断文件
+    if let Ok(f) = fs::File::open(&tmp) {
+        let _ = f.sync_all();
+    }
     fs::rename(&tmp, path).map_err(|e| {
         crate::logging::error("替换 settings.yaml", &e.to_string());
         let _ = fs::remove_file(&tmp);
@@ -386,7 +390,8 @@ fn catalog_family(provider_key: &str) -> &'static str {
 /// 解析 models.dev api.json 并投影：提取 {id,name,family}、按 id 去重（first-wins）、
 /// 按 id 排序保证快照稳定；无 id 的条目丢弃
 pub(crate) fn project_catalog(raw: &str, fetched_at: i64) -> Result<CatalogFile, String> {
-    let root: HashMap<String, ModelsDevProvider> = serde_json::from_str(raw).map_err(|e| {
+    // BTreeMap：跨 provider 重复 id 的 first-wins 胜者按 provider 键序确定，刷新间不漂移
+    let root: BTreeMap<String, ModelsDevProvider> = serde_json::from_str(raw).map_err(|e| {
         crate::logging::error("解析 models.dev 目录", &e.to_string());
         keyf("Failed to parse the model catalog", &[])
     })?;
@@ -431,10 +436,7 @@ fn fetch_url_text(url: &str, timeout_secs: u64) -> Result<String, String> {
         .build()
         .map_err(|e| {
             crate::logging::error("HTTP client 初始化失败", &e.to_string());
-            keyf(
-                "Cannot initialize HTTP client: {error}",
-                &[("error", e.to_string())],
-            )
+            keyf("Cannot initialize the HTTP client", &[])
         })?;
     let resp = client.get(url).send().map_err(|e| {
         crate::logging::error("网络请求失败", &format!("{url}: {e}"));
@@ -548,10 +550,7 @@ pub(crate) fn fetch_remote_models(base_url: &str, api: Option<&str>, api_key_env
         .build()
         .map_err(|e| {
             crate::logging::error("HTTP client 初始化失败", &e.to_string());
-            keyf(
-                "Cannot initialize HTTP client: {error}",
-                &[("error", e.to_string())],
-            )
+            keyf("Cannot initialize the HTTP client", &[])
         })?;
     let mut req = client.get(&url);
     req = if api == Some("anthropic-messages") {

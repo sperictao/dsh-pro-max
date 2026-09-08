@@ -138,6 +138,7 @@ export const en = {
   "The model catalog request returned an HTTP error": "The model catalog request returned an HTTP error",
   "Failed to read the model catalog response": "Failed to read the model catalog response",
   "Failed to parse the model catalog": "Failed to parse the model catalog",
+  "Cannot initialize the HTTP client": "Cannot initialize the HTTP client",
   "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.": "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.",
   "Default Model": "Default Model",
   "Provider": "Provider",

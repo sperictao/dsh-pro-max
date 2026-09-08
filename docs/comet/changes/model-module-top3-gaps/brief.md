@@ -39,7 +39,7 @@
 - A2: 模糊搜索联想（对齐 market 实时过滤模式）：默认模型 Model 输入与 ProviderCard"添加模型"输入均可输入即时过滤候选（匹配 id/name、大小写不敏感），↑↓/Enter/点击/Esc/外点交互可用；先写失败测试（当前无联想能力）再实现。
 - A3: 全量目录数据链路：`model_catalog_refresh` 拉取 models.dev api.json 并投影 `{id,name,family}`（family 映射与按 id 去重以纯函数单测覆盖）、写含 `fetchedAt` 的快照；`model_catalog_load` 读快照；候选按 provider wire protocol 过滤 family（anthropic-messages→anthropic、openai 系→openai）。
 - A4: 目录自动更新：进入模型页快照立即可用；缺失或 fetchedAt 超 24h 自动后台刷新并替换；刷新失败静默降级（不弹错误，联想仍含已配模型）。过期判断与降级以单测覆盖。
-- A5: ProviderCard 提供"拉取模型列表"操作：成功时结果逐条展示、点击追加进 models 且去重；环境变量未设置 / 网络失败 / HTTP 错误三种失败各有明确中文错误文案（经既有 Rust keyf→i18n 契约），错误含请求 URL 但绝不含 key 值。
+- A5: ProviderCard 提供"拉取模型列表"操作：成功时结果逐条展示、点击追加进 models 且去重；环境变量未设置 / 网络失败 / HTTP 错误三种失败各有静态中文错误文案（键无插值以命中 zh 字典；URL/变量名/状态码进日志，用户界面中卡片本身已展示 env 名与 Base URL），任何路径不含 key 值。
 - A6: 新增用户可见文案 en/zh-CN 双语齐全，`node scripts/check-i18n.mjs` 通过。
 - A7: 前端 ModelsView 测试与 Rust models 测试（含新增用例）全绿。
 

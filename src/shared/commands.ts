@@ -105,7 +105,8 @@ export const modelCatalogLoad = () => invokeTyped<ModelCatalogFile | null>("mode
 export const modelCatalogRefresh = () => invokeTyped<ModelCatalogFile>("model_catalog_refresh");
 // 上游模型列表（兼连通性验证）；密钥经环境变量名解析，值不落盘
 export const modelRemoteList = (baseURL: string, api: string | null, apiKeyEnv: string | null) =>
-  invokeTyped<string[]>("model_remote_list", { baseURL, api, apiKeyEnv });
+  // Tauri 按 camelCase 形参名取参：base_url → baseUrl（baseURL 永不命中）
+  invokeTyped<string[]>("model_remote_list", { baseUrl: baseURL, api, apiKeyEnv });
 
 // ============ 更新 ============
 export const getUpdaterConfigHealth = () => invokeTyped<UpdaterConfigHealth>("get_updater_config_health");

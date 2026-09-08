@@ -140,6 +140,7 @@ export const zhCN: Record<I18nKey, string> = {
   "The model catalog request returned an HTTP error": "模型目录请求返回了 HTTP 错误",
   "Failed to read the model catalog response": "读取模型目录响应失败",
   "Failed to parse the model catalog": "解析模型目录失败",
+  "Cannot initialize the HTTP client": "无法初始化 HTTP 客户端",
   "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.": "编辑 ~/.dsh/settings.yaml 的模型设置。API 密钥只保存环境变量名，绝不保存密钥值。",
   "Default Model": "默认模型",
   "Provider": "提供商",
