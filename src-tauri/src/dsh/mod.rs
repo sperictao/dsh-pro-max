@@ -79,6 +79,9 @@ reexport_commands! {
     market::market_diagnostics,
     models::model_config_load,
     models::model_config_save,
+    models::model_catalog_load,
+    models::model_catalog_refresh,
+    models::model_remote_list,
 }
 
 // ============ 共享常量 ============

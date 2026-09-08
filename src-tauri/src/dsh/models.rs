@@ -10,14 +10,20 @@ use super::components::dsh_dir;
 use crate::i18n::keyf;
 use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value as Yaml};
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// UI 管理的提供商字段；其余字段经 extra 透传保留
 const MANAGED_PROVIDER_KEYS: [&str; 5] = ["displayName", "baseURL", "api", "apiKeyEnv", "models"];
 /// agent-default-model 与 llm-pi-ai 在 settings.yaml 的键名
 const DEFAULT_MODEL_KEY: &str = "agent-default-model";
 const PI_AI_KEY: &str = "llm-pi-ai";
+
+/// models.dev 全量模型目录（与 CCursor 同源）；快照过期阈值
+pub(crate) const MODELS_DEV_API: &str = "https://models.dev/api.json";
+const CATALOG_STALE_SECS: i64 = 24 * 60 * 60;
+const REMOTE_LIST_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
@@ -275,8 +281,22 @@ pub(crate) fn save_model_config_at(path: &PathBuf, config: &ModelConfig) -> Resu
             &[("error", e.to_string())],
         )
     })?;
-    fs::write(path, text).map_err(|e| {
+    write_atomic(path, &text)
+}
+
+/// temp + rename 原子写：写入中断电/崩溃不会留下截断的 settings.yaml
+fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+    let tmp = path.with_extension("yaml.tmp");
+    fs::write(&tmp, text).map_err(|e| {
         crate::logging::error("写入 settings.yaml", &e.to_string());
+        keyf(
+            "Failed to write settings.yaml: {error}",
+            &[("error", e.to_string())],
+        )
+    })?;
+    fs::rename(&tmp, path).map_err(|e| {
+        crate::logging::error("替换 settings.yaml", &e.to_string());
+        let _ = fs::remove_file(&tmp);
         keyf(
             "Failed to write settings.yaml: {error}",
             &[("error", e.to_string())],
@@ -314,4 +334,259 @@ pub fn model_config_load() -> Result<ModelConfig, String> {
 #[tauri::command]
 pub fn model_config_save(config: ModelConfig) -> Result<(), String> {
     save_model_config_at(&settings_path()?, &config)
+}
+
+// ============ 模型目录（models.dev 全量快照）============
+
+/// models.dev 投影条目：模型 id + 展示名 + 协议家族
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub struct CatalogEntry {
+    pub id: String,
+    pub name: String,
+    /// openai | anthropic（dsh pi-ai 无 gemini 原生协议，google 端点经 openai 兼容）
+    pub family: String,
+}
+
+/// 目录快照：缓存不是事实来源，fetched_at 供过期判断
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub struct CatalogFile {
+    /// unix 秒（IPC 走 JSON number）
+    #[ts(type = "number")]
+    pub fetched_at: i64,
+    pub entries: Vec<CatalogEntry>,
+}
+
+#[derive(Deserialize)]
+struct ModelsDevProvider {
+    #[serde(default)]
+    models: HashMap<String, ModelsDevModel>,
+}
+
+#[derive(Deserialize)]
+struct ModelsDevModel {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+}
+
+/// family 归类：anthropic 官方键 → anthropic，其余（含 google）→ openai
+fn catalog_family(provider_key: &str) -> &'static str {
+    if provider_key == "anthropic" {
+        "anthropic"
+    } else {
+        "openai"
+    }
+}
+
+/// 解析 models.dev api.json 并投影：提取 {id,name,family}、按 id 去重（first-wins）、
+/// 按 id 排序保证快照稳定；无 id 的条目丢弃
+pub(crate) fn project_catalog(raw: &str, fetched_at: i64) -> Result<CatalogFile, String> {
+    let root: HashMap<String, ModelsDevProvider> = serde_json::from_str(raw).map_err(|e| {
+        crate::logging::error("解析 models.dev 目录", &e.to_string());
+        keyf("Failed to parse the model catalog", &[])
+    })?;
+    let mut by_id: BTreeMap<String, CatalogEntry> = BTreeMap::new();
+    for (provider_key, provider) in root {
+        let family = catalog_family(&provider_key);
+        for (key, model) in provider.models {
+            let Some(id) = model.id.or(if key.is_empty() { None } else { Some(key) }) else {
+                continue;
+            };
+            if id.trim().is_empty() {
+                continue;
+            }
+            by_id
+                .entry(id.clone())
+                .or_insert_with(|| CatalogEntry {
+                    name: model.name.unwrap_or_else(|| id.clone()),
+                    family: family.to_string(),
+                    id,
+                });
+        }
+    }
+    Ok(CatalogFile {
+        fetched_at,
+        entries: by_id.into_values().collect(),
+    })
+}
+
+/// 快照过期判断（unix 秒）
+pub(crate) fn is_catalog_stale(file: &CatalogFile, now_secs: i64) -> bool {
+    now_secs - file.fetched_at >= CATALOG_STALE_SECS
+}
+
+fn unix_now() -> i64 {
+    time::OffsetDateTime::now_utc().unix_timestamp()
+}
+
+fn fetch_url_text(url: &str, timeout_secs: u64) -> Result<String, String> {
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .user_agent(concat!("dsh-pro-max/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| {
+            crate::logging::error("HTTP client 初始化失败", &e.to_string());
+            keyf(
+                "Cannot initialize HTTP client: {error}",
+                &[("error", e.to_string())],
+            )
+        })?;
+    let resp = client.get(url).send().map_err(|e| {
+        crate::logging::error("网络请求失败", &format!("{url}: {e}"));
+        keyf("Failed to reach the model catalog", &[])
+    })?;
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        crate::logging::warn("模型目录请求失败", &format!("HTTP {status}: {url}"));
+        return Err(keyf("The model catalog request returned an HTTP error", &[]));
+    }
+    resp.text().map_err(|e| {
+        keyf("Failed to read the model catalog response", &[])
+    })
+}
+
+fn refresh_catalog_at(snapshot_path: &Path) -> Result<CatalogFile, String> {
+    let raw = fetch_url_text(MODELS_DEV_API, REMOTE_LIST_TIMEOUT_SECS * 3)?;
+    let file = project_catalog(&raw, unix_now())?;
+    // 快照尽力而为：写失败只影响下次离线兜底，不影响本次返回
+    if let Some(dir) = snapshot_path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string(&file) {
+        if let Err(e) = write_atomic(snapshot_path, &json) {
+            crate::logging::warn("[models] 目录快照写入失败", &e);
+        }
+    }
+    Ok(file)
+}
+
+fn catalog_snapshot_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .map(|p| p.join("model-catalog-snapshot.json"))
+        .map_err(|e| e.to_string())
+}
+
+/// 快照即缓存：缺失/损坏一律 None，静默等待后台刷新
+pub(crate) fn load_model_catalog_snapshot(path: &Path) -> Option<CatalogFile> {
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+#[tauri::command]
+pub fn model_catalog_load(app: tauri::AppHandle) -> Result<Option<CatalogFile>, String> {
+    let path = catalog_snapshot_path(&app)?;
+    Ok(load_model_catalog_snapshot(&path))
+}
+
+#[tauri::command]
+pub async fn model_catalog_refresh(app: tauri::AppHandle) -> Result<CatalogFile, String> {
+    super::ipc_blocking(move || refresh_catalog_at(&catalog_snapshot_path(&app)?)).await
+}
+
+// ============ 远端模型列表拉取（兼连通性验证）============
+
+/// 按 wire 协议拼上游模型列表 URL；尾斜杠归一
+pub(crate) fn remote_models_url(base_url: &str, api: Option<&str>) -> Result<String, String> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err(keyf(
+            "Provider base URL is required to fetch models",
+            &[],
+        ));
+    }
+    if api == Some("anthropic-messages") {
+        Ok(format!("{base}/v1/models"))
+    } else {
+        Ok(format!("{base}/models"))
+    }
+}
+
+/// 解析上游 /models 响应：取 data[].id，去重、字典序
+pub(crate) fn parse_remote_models(json: &str) -> Vec<String> {
+    #[derive(Deserialize)]
+    struct Resp {
+        #[serde(default)]
+        data: Vec<serde_json::Value>,
+    }
+    let Ok(resp) = serde_json::from_str::<Resp>(json) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<String> = resp
+        .data
+        .iter()
+        .filter_map(|v| v.get("id").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// 密钥只在本函数内存中出现，不落盘、不进日志
+pub(crate) fn fetch_remote_models(base_url: &str, api: Option<&str>, api_key_env: Option<&str>) -> Result<Vec<String>, String> {
+    let env_holder = api_key_env.map(str::to_string);
+    let env_name = non_empty(&env_holder)
+        .ok_or_else(|| keyf("Provider API key environment variable is not configured", &[]))?;
+    let key = std::env::var(&env_name).map_err(|_| {
+        crate::logging::warn("模型列表拉取缺密钥环境变量", &env_name);
+        keyf(
+            "Environment variable is not set in the environment where dsh-pro-max was launched",
+            &[],
+        )
+    })?;
+    let url = remote_models_url(base_url, api)?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(REMOTE_LIST_TIMEOUT_SECS))
+        .user_agent(concat!("dsh-pro-max/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| {
+            crate::logging::error("HTTP client 初始化失败", &e.to_string());
+            keyf(
+                "Cannot initialize HTTP client: {error}",
+                &[("error", e.to_string())],
+            )
+        })?;
+    let mut req = client.get(&url);
+    req = if api == Some("anthropic-messages") {
+        req.header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01")
+    } else {
+        req.bearer_auth(key)
+    };
+    let resp = req.send().map_err(|e| {
+        // 细节（URL/原因）只进日志；key 值任何路径都不出现
+        crate::logging::error("拉取模型列表失败", &format!("{url}: {e}"));
+        keyf("Failed to reach the provider models endpoint", &[])
+    })?;
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        crate::logging::warn("上游模型列表请求失败", &format!("HTTP {status}: {url}"));
+        return Err(keyf(
+            "The provider models endpoint returned an HTTP error",
+            &[],
+        ));
+    }
+    let text = resp.text().map_err(|e| {
+        keyf("Failed to read the models response", &[])
+    })?;
+    Ok(parse_remote_models(&text))
+}
+
+#[tauri::command]
+pub async fn model_remote_list(
+    base_url: String,
+    api: Option<String>,
+    api_key_env: Option<String>,
+) -> Result<Vec<String>, String> {
+    super::ipc_blocking(move || {
+        fetch_remote_models(&base_url, api.as_deref(), api_key_env.as_deref())
+    })
+    .await
 }
