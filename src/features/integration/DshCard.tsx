@@ -536,6 +536,13 @@ export function DshCard() {
                       )}
                     </div>
                   )}
+                  {/* 非 failed 节点的插件动作（peer 兼容预检披露）：detail 已带
+                      失配清单，按钮独立于红色警示框之外——启动成功语义配中性色 */}
+                  {step.state !== "failed" && step.actionPlugin && (
+                    <div className="mt-1.5">
+                      <DisableRetryButton plugin={step.actionPlugin} disabled={busy} />
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

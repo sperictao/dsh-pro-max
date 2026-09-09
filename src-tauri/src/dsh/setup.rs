@@ -5,6 +5,7 @@ use super::auth::{
     serve_configured, tailscale_online, AuthConfig,
 };
 use super::autostart::{autostart_enabled, autostart_impl};
+use super::compat::done_detail_with_preflight;
 use super::components::{
     auth_plugins_installed, bundled_plugin_specs, dsh_dir, dsh_version, dsh_version_is_compatible,
     install_auth_plugins, install_supported_dsh, magic_dns_info, npm_bin, resolve_dsh_bin,
@@ -85,6 +86,20 @@ impl StepCtx<'_> {
             None,
             None,
             None,
+        );
+    }
+    /// done 附带插件动作披露：peer 兼容预检发现失配插件时，节点 detail 追加
+    /// 失配清单并携带 action_plugin，前端在成功节点上同样渲染「禁用并重试」
+    pub(crate) fn done_noting(&self, detail: &str, action_plugin: Option<String>) {
+        emit_step(
+            self.app,
+            self.index,
+            self.id,
+            "done",
+            Some(detail.to_string()),
+            None,
+            None,
+            action_plugin,
         );
     }
     /// 失败：发出 failed 节点 + 把后续步骤标记 skipped，再返回 Err（时间轴即展示面）
@@ -624,7 +639,8 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
                 return ctx.fail_diagnosis(&failure, &remaining_after(5));
             }
         }
-        ctx.done("dsh web is running on 127.0.0.1:3899");
+        let (detail, action) = done_detail_with_preflight("dsh web is running on 127.0.0.1:3899");
+        ctx.done_noting(&detail, action);
     }
 
     {

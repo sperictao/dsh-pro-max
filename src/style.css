@@ -427,7 +427,8 @@
 
 .timeline-content { min-width: 0; flex: 1; padding-top: 0.125rem; }
 .timeline-title { font-size: 0.8125rem; font-weight: 500; }
-.timeline-detail { margin-top: 0.125rem; font-size: 0.75rem; opacity: 0.7; word-break: break-all; }
+/* pre-line 供多行 detail（peer 兼容预检披露逐行追加）；单行 detail 不受影响 */
+.timeline-detail { margin-top: 0.125rem; font-size: 0.75rem; opacity: 0.7; word-break: break-all; white-space: pre-line; }
 
 /* 失败节点：问题 + 解决方案 */
 .timeline-issue {

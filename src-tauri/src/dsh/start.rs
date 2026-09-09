@@ -1,6 +1,7 @@
 //! 本地一键启动（4 步时间轴）：仅 loopback 的 dsh web 启动链（dsh_start_web 命令）。
 
 use super::auth::{any_http_status, http_get, AuthConfig};
+use super::compat::done_detail_with_preflight;
 use super::components::{
     dsh_dir, dsh_version, dsh_version_is_compatible, install_supported_dsh, resolve_node_bin,
 };
@@ -310,7 +311,9 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
             ctx.running("Restarting dsh web…");
             match restart_dsh_web(None, None, &AuthConfig::default()) {
                 Ok(pid) => {
-                    ctx.done("dsh web is running on 127.0.0.1:3899");
+                    let (detail, action) =
+                        done_detail_with_preflight("dsh web is running on 127.0.0.1:3899");
+                    ctx.done_noting(&detail, action);
                     pid
                 }
                 Err(error) => {
@@ -346,6 +349,7 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
         let failure = start_failure_diagnosis(&log);
         return ctx.fail_err_diagnosis(&failure, &remaining_after(start_idx));
     }
-    ctx.done("dsh web is running on 127.0.0.1:3899");
+    let (detail, action) = done_detail_with_preflight("dsh web is running on 127.0.0.1:3899");
+    ctx.done_noting(&detail, action);
     verify_local_ready(app, steps, pid, log_offset)
 }

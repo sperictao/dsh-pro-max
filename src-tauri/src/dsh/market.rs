@@ -849,24 +849,22 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
                                 .as_ref()
                                 .map(|req| meets_dsh_minimum(dsh_host_str, req));
                             // 发布时间只对确有更新的 registry 包多付一次 HTTP
-                            let (window, publish) =
-                                if update_available && git_repo.is_none() {
-                                    let publish =
-                                        registry_publish_time(&info.name, &latest.version);
-                                    let window = in_release_age_window(
-                                        publish.as_deref(),
-                                        now,
-                                        age_minutes,
-                                        release_age_excluded(
-                                            age_excludes_ref,
-                                            &info.name,
-                                            &latest.version,
-                                        ),
-                                    );
-                                    (window, publish)
-                                } else {
-                                    (false, None)
-                                };
+                            let (window, publish) = if update_available && git_repo.is_none() {
+                                let publish = registry_publish_time(&info.name, &latest.version);
+                                let window = in_release_age_window(
+                                    publish.as_deref(),
+                                    now,
+                                    age_minutes,
+                                    release_age_excluded(
+                                        age_excludes_ref,
+                                        &info.name,
+                                        &latest.version,
+                                    ),
+                                );
+                                (window, publish)
+                            } else {
+                                (false, None)
+                            };
                             Ok(Resolved {
                                 latest_version: Some(latest.version),
                                 requires_dsh: latest.requires_dsh,
@@ -991,9 +989,7 @@ pub(crate) fn valid_identifier(s: &str) -> bool {
 /// 可打印 ASCII（键只会成为 yaml 字符串键，无 shell/路径面）
 pub(crate) fn valid_allow_key(s: &str) -> bool {
     valid_identifier(s)
-        || (s.contains("git+")
-            && s.len() <= 512
-            && s.chars().all(|c| c.is_ascii_graphic()))
+        || (s.contains("git+") && s.len() <= 512 && s.chars().all(|c| c.is_ascii_graphic()))
 }
 
 /// npm 形态 specifier 的包名部分；带协议前缀的形态（github:/file:/npm: 等）

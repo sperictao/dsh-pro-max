@@ -300,7 +300,9 @@ fn start_diagnosis_names_the_culprit_plugin_and_points_at_the_plugins_page() {
         .unwrap();
     let diagnosis = start_failure_diagnosis(&log);
     assert!(diagnosis.problem.contains("@nanmicoder/dsh-agent-teams"));
-    assert!(diagnosis.problem.contains("registerContinuableSetup is not a function"));
+    assert!(diagnosis
+        .problem
+        .contains("registerContinuableSetup is not a function"));
     assert!(diagnosis.solution.contains("@nanmicoder/dsh-agent-teams"));
     // 非受管第三方插件：诊断附带一键禁用重试的入口
     assert_eq!(
@@ -1826,7 +1828,13 @@ fn market_installed_reads_version_from_disk_or_spec() {
     )
     .unwrap();
     let list = installed_list_from_profile(&profile).expect("list");
-    let v = |name: &str| list.iter().find(|p| p.name == name).unwrap().version.clone();
+    let v = |name: &str| {
+        list.iter()
+            .find(|p| p.name == name)
+            .unwrap()
+            .version
+            .clone()
+    };
     assert_eq!(
         v("range-pkg").as_deref(),
         Some("1.4.2"),
@@ -1893,7 +1901,10 @@ fn set_entries_enabled_handles_official_empty_scaffold() {
         .unwrap()
         .unwrap();
     assert!(disabled.contains("id: better-sidebar") && disabled.contains("disabled: true"));
-    assert!(disabled.contains("# Your patch layer"), "脚手架注释头必须保留");
+    assert!(
+        disabled.contains("# Your patch layer"),
+        "脚手架注释头必须保留"
+    );
     assert!(!disabled.contains("[]"), "`[]` 占位行必须剥除");
     assert_eq!(
         patch_row_states(&disabled).get("better-sidebar"),
@@ -2093,11 +2104,11 @@ fn market_fetch_real_catalog_smoke() {
 use super::components::verify_bundled_tarball;
 use super::market::{
     audit_line, blocked_build_packages, catalog_from_raw, catalog_snapshot_decision,
-    git_prepare_allow_keys, install_failure_message, install_receipt,
+    git_prepare_allow_keys, github_repo_id, install_failure_message, install_receipt,
     load_catalog_snapshot_file, merge_allow_builds, package_name_from_specifier, policy_allows,
     policy_entries_from_raw, protocol_installed_match, resolve_catalog_url,
-    specifier_to_catalog_name, valid_allow_key, write_catalog_snapshot_file, github_repo_id,
-    CatalogLoadError, InstallOutcome, InstalledPlugin,
+    specifier_to_catalog_name, valid_allow_key, write_catalog_snapshot_file, CatalogLoadError,
+    InstallOutcome, InstalledPlugin,
 };
 
 #[test]
@@ -2161,7 +2172,10 @@ fn git_prepare_allow_keys_extracts_pnpm_printed_keys() {
     let multi = "allowBuilds:\n  @scope/pkg@git+https://x.git#abc: true\n  dsh-x@git+https://y.git#def: true\n  dsh-x@git+https://y.git#def: true";
     assert_eq!(
         git_prepare_allow_keys(multi),
-        vec!["@scope/pkg@git+https://x.git#abc", "dsh-x@git+https://y.git#def"]
+        vec![
+            "@scope/pkg@git+https://x.git#abc",
+            "dsh-x@git+https://y.git#def"
+        ]
     );
     // registry 包的 ignored 示例行与无关输出不误判
     assert!(git_prepare_allow_keys("allowBuilds:\n  esbuild: true").is_empty());
@@ -2650,7 +2664,8 @@ fn protocol_installed_match_hits_each_sibling_repo_exactly() {
     ];
     let hit = protocol_installed_match("github:owner/dsh", "dsh", &list).expect("hit dsh");
     assert_eq!(hit.name, "dsh");
-    let hit = protocol_installed_match("github:owner/dsh-relay", "dsh-relay", &list).expect("hit dsh-relay");
+    let hit = protocol_installed_match("github:owner/dsh-relay", "dsh-relay", &list)
+        .expect("hit dsh-relay");
     assert_eq!(hit.name, "dsh-relay");
 }
 
@@ -3573,4 +3588,147 @@ fn diagnostics_from_dump_flags_duplicates_and_orphans() {
         vec!["base".to_string(), "community".to_string()]
     );
     assert_eq!(d.orphans, vec!["ghost".to_string()]);
+}
+
+// ============ 启动前导出漂移预检（compat） ============
+
+/// 造宿主/插件包 fixture：files 为 (相对路径, 内容)；返回根目录
+fn drift_fixture_dir(tag: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "dsh-pro-max-drift-{tag}-{}-{unique}",
+        std::process::id()
+    ));
+    for (rel, content) in files {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    root
+}
+
+#[test]
+fn export_drift_flags_missing_host_export() {
+    // 回归锚（本机 2026-09 实炸）：dsh-rewind-plugin 具名导入
+    // decodeStorageRecord，宿主升线 0.1.5-alpha.1 后 dsh-session 删除了它——
+    // 启动前必须点名，且不得把存在的导出（decodeSeqRanges）也报成缺失
+    let host = drift_fixture_dir(
+        "host",
+        &[
+            (
+                "@deepseek-ai/dsh-session/package.json",
+                r#"{"name":"@deepseek-ai/dsh-session","version":"0.1.5-alpha.1","main":"lib/index.js"}"#,
+            ),
+            (
+                "@deepseek-ai/dsh-session/lib/index.js",
+                "export {\n  decodeSeqRanges,\n  encodeSeqRanges,\n  SessionStore as default\n};\n",
+            ),
+        ],
+    );
+    let imports = std::collections::HashMap::from([(
+        "dsh-session".to_string(),
+        std::collections::HashSet::from([
+            "decodeSeqRanges".to_string(),
+            "decodeStorageRecord".to_string(),
+            "default".to_string(),
+        ]),
+    )]);
+    let drifts = super::compat::drift_for_plugin(
+        "dsh-rewind-plugin",
+        &imports,
+        &host,
+        &mut std::collections::HashMap::new(),
+    );
+    assert_eq!(drifts.len(), 1);
+    assert_eq!(drifts[0].dependency, "@deepseek-ai/dsh-session");
+    assert_eq!(drifts[0].missing, vec!["decodeStorageRecord".to_string()]);
+    std::fs::remove_dir_all(host).unwrap();
+}
+
+#[test]
+fn plugin_import_scan_extracts_named_imports_only() {
+    // 抽取器认多行 import、`as` 重命名与 re-export；不认子路径导入、
+    // default 导入，也不被普通字符串里的包名骗到
+    let dir = drift_fixture_dir(
+        "scan",
+        &[(
+            "dsh-foo/package.json",
+            r#"{"name":"dsh-foo","main":"lib/index.js"}"#,
+        ), (
+            "dsh-foo/lib/index.js",
+            concat!(
+                "import {\n  decodeSeqRanges,\n  encodeSeqRanges as enc,\n  packChunkRuns\n} from \"@deepseek-ai/dsh-session\";\n",
+                "export { helper } from '@deepseek-ai/dsh-home-paths';\n",
+                "import dshSession from \"@deepseek-ai/dsh-session\";\n",
+                "import { deep } from \"@deepseek-ai/dsh-session/lib/internal.js\";\n",
+                "const docs = \"see @deepseek-ai/dsh-session for details\";\n",
+            ),
+        )],
+    );
+    let imports = super::compat::plugin_host_imports(&dir.join("dsh-foo"));
+    assert_eq!(
+        imports.get("dsh-session").map(|s| s.len()),
+        Some(3),
+        "多行 import 的三个具名（enc 归并到 encodeSeqRanges 的重命名 enc）+ default/子路径不抽"
+    );
+    assert!(imports.get("dsh-session").unwrap().contains("enc"));
+    assert!(imports.get("dsh-home-paths").unwrap().contains("helper"));
+    assert_eq!(imports.len(), 2, "子路径与字符串值不算宿主导入");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn host_export_parse_requires_aggregate_form() {
+    // 只认 `export { … }` 聚合；export const / default 等形态跳过，整体
+    // 解析不出聚合时返回 None（宿主包被跳过，宁漏报不误报）
+    let dir = drift_fixture_dir(
+        "hostparse",
+        &[
+            (
+                "@deepseek-ai/dsh-a/package.json",
+                r#"{"name":"@deepseek-ai/dsh-a","main":"lib/index.js"}"#,
+            ),
+            (
+                "@deepseek-ai/dsh-a/lib/index.js",
+                "export const direct = 1;\nexport { alpha, beta as gamma };\n",
+            ),
+            (
+                "@deepseek-ai/dsh-b/package.json",
+                r#"{"name":"@deepseek-ai/dsh-b","main":"lib/index.js"}"#,
+            ),
+            (
+                "@deepseek-ai/dsh-b/lib/index.js",
+                "export default class {}\n",
+            ),
+        ],
+    );
+    let names = super::compat::host_export_names(&dir, "dsh-a").unwrap();
+    assert!(names.contains("alpha") && names.contains("gamma"));
+    assert!(!names.contains("direct"), "非聚合形态不进导出集");
+    assert_eq!(super::compat::host_export_names(&dir, "dsh-b"), None);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn peer_preflight_warning_lines_cap_at_three_then_fold() {
+    let drift = |plugin: &str| super::compat::ExportDrift {
+        plugin: plugin.to_string(),
+        dependency: "@deepseek-ai/dsh-session".to_string(),
+        missing: vec!["decodeStorageRecord".to_string()],
+    };
+    let lines = super::compat::preflight_warning_lines(&[drift("a"), drift("b"), drift("c")]);
+    assert_eq!(lines.matches('\n').count(), 2);
+    assert!(lines.contains("Incompatible plugin a:"));
+    assert!(lines.contains("does not export decodeStorageRecord"));
+    let folded = super::compat::preflight_warning_lines(&[
+        drift("a"),
+        drift("b"),
+        drift("c"),
+        drift("d"),
+        drift("e"),
+    ]);
+    assert!(folded.contains("… and 2 more"));
 }

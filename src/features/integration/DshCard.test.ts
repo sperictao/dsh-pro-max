@@ -365,6 +365,57 @@ describe("start failure log disclosure", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders the disable action on a succeeded start node that discloses drift", async () => {
+    // peer 导出漂移预检：启动成功但 detail 逐行点名失配插件并携带
+    // actionPlugin——按钮独立于红色警示框（启动成功不是失败语义）
+    useAppStore.setState({
+      dshHasRunSetup: true,
+      dshStatus: { ...ready, dshRunning: true },
+      dshTimeline: [{
+        index: 2,
+        id: "start",
+        state: "done" as const,
+        detail: "dsh web is running on 127.0.0.1:3899\nIncompatible plugin dsh-rewind-plugin: @deepseek-ai/dsh-session does not export decodeStorageRecord; it will abort dsh startup",
+        problem: null,
+        solution: null,
+        actionPlugin: "dsh-rewind-plugin",
+        titleKey: null,
+      }],
+    });
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue({ ...ready, dshRunning: true });
+
+    render(createElement(DshCard));
+
+    expect(await screen.findByText(/dsh web is running on 127\.0\.0\.1:3899/)).toBeInTheDocument();
+    expect(screen.getByText(/Incompatible plugin dsh-rewind-plugin/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Disable dsh-rewind-plugin and retry" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps plain succeeded start nodes free of the disable action", () => {
+    useAppStore.setState({
+      dshHasRunSetup: true,
+      dshStatus: { ...ready, dshRunning: true },
+      dshTimeline: [{
+        index: 2,
+        id: "start",
+        state: "done" as const,
+        detail: "dsh web is running on 127.0.0.1:3899",
+        problem: null,
+        solution: null,
+        actionPlugin: null,
+        titleKey: null,
+      }],
+    });
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue({ ...ready, dshRunning: true });
+
+    render(createElement(DshCard));
+
+    expect(screen.getByText(/dsh web is running on 127\.0\.0\.1:3899/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Disable .* and retry/ })).not.toBeInTheDocument();
+  });
+
   it("disables the culprit plugin then reruns the start flow", async () => {
     useAppStore.setState({
       dshHasRunSetup: true,
