@@ -3,7 +3,8 @@
 use super::auth::{any_http_status, http_get, AuthConfig};
 use super::compat::done_detail_with_preflight;
 use super::components::{
-    dsh_dir, dsh_version, dsh_version_is_compatible, install_supported_dsh, resolve_node_bin,
+    decide_pinned_dsh, dsh_dir, dsh_version, install_supported_dsh, resolve_node_bin,
+    PinnedDshDecision,
 };
 use super::process::{dsh_web_pid, port_listening, process_alive, wait_web_start};
 use super::setup::StepCtx;
@@ -260,25 +261,36 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
             id: steps[1],
         };
         let current = dsh_version();
-        if dsh_version_is_compatible(current.as_deref()) {
-            // 显示实际版本而非锁定版本（同 dsh_setup 的修复）
-            ctx.done(&keyf(
-                "Compatible dsh is installed: {version}",
-                &[("version", current.clone().unwrap_or_default())],
-            ));
-        } else {
-            ctx.running(&keyf(
-                "Installing the pinned dsh ({version})…",
-                &[("version", SUPPORTED_DSH_VERSION.to_string())],
-            ));
-            match install_supported_dsh() {
-                Ok(version) => ctx.done(&keyf("Installed {version}", &[("version", version)])),
-                Err(error) => {
-                    return ctx.fail_err(
-                        &error,
-                        "Check your network and npm settings, then retry",
-                        &remaining_after(1),
-                    )
+        match decide_pinned_dsh(current.as_deref()) {
+            PinnedDshDecision::KeepCurrent => {
+                // 显示实际版本而非锁定版本（同 dsh_setup 的修复）
+                ctx.done(&keyf(
+                    "Compatible dsh is installed: {version}",
+                    &[("version", current.clone().unwrap_or_default())],
+                ));
+            }
+            PinnedDshDecision::KeepCrossLine => {
+                // 跨线但高于下限：用户装过比验证栈更新的版本，保留不降级；
+                // 本地访问走 dsh 原生 token 不依赖授权插件，如实披露插件风险即可
+                ctx.done(&keyf(
+                    "{version} is newer than the verified stack; authorization plugins may be incompatible",
+                    &[("version", current.clone().unwrap_or_default())],
+                ));
+            }
+            PinnedDshDecision::InstallPinned => {
+                ctx.running(&keyf(
+                    "Installing the pinned dsh ({version})…",
+                    &[("version", SUPPORTED_DSH_VERSION.to_string())],
+                ));
+                match install_supported_dsh() {
+                    Ok(version) => ctx.done(&keyf("Installed {version}", &[("version", version)])),
+                    Err(error) => {
+                        return ctx.fail_err(
+                            &error,
+                            "Check your network and npm settings, then retry",
+                            &remaining_after(1),
+                        )
+                    }
                 }
             }
         }

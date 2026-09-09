@@ -404,6 +404,7 @@ export const en = {
   "Tailscale login name contains unsupported characters": "Tailscale login name contains unsupported characters",
   "Cannot read the current Tailscale identity: {{error}}": "Cannot read the current Tailscale identity: {{error}}",
   "Compatible dsh is installed: {{version}}": "Compatible dsh is installed: {{version}}",
+  "{{version}} is newer than the verified stack; authorization plugins may be incompatible": "{{version}} is newer than the verified stack; authorization plugins may be incompatible",
   "Installing the pinned dsh ({{version}})…": "Installing the pinned dsh ({{version}})…",
   "Check your network and npm settings, then run npm install -g {{package}}@{{version}} and retry": "Check your network and npm settings, then run npm install -g {{package}}@{{version}} and retry",
   "Authorization plugins are installed": "Authorization plugins are installed",

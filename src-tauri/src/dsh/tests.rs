@@ -6,8 +6,8 @@ use super::auth::{
 };
 use super::autostart::{port_guard_js, render_desktop_entry, render_start_web, sh_quote};
 use super::components::{
-    dsh_version_is_compatible, normalize_version, plugin_profile_is_current,
-    version_within_supported_line,
+    decide_pinned_dsh, dsh_version_is_compatible, normalize_version, plugin_profile_is_current,
+    version_within_supported_line, PinnedDshDecision,
 };
 use super::probe::{
     classify_remote_rpc_response, classify_remote_url_access, curl_direct_args,
@@ -210,6 +210,24 @@ fn version_gate_requires_same_minor_line() {
     assert!(!gate("0.1.1-rc.2"));
     assert!(!gate("0.2.0"));
     assert!(!gate("1.0.0"));
+}
+
+#[test]
+fn decide_pinned_dsh_keeps_newer_but_lower_line_installs() {
+    // 下限是 SUPPORTED_DSH_VERSION：跨线但高于下限的要保留（用户装过更新版本，
+    // 启动/自启不该悄悄降回），如实披露而不装回；同线更高/等于也保留；
+    // 低于下限或未装才装回锁定版。
+    assert_eq!(decide_pinned_dsh(Some(SUPPORTED_DSH_VERSION)), PinnedDshDecision::KeepCurrent);
+    assert_eq!(decide_pinned_dsh(Some("0.1.5-alpha.2")), PinnedDshDecision::KeepCurrent);
+    assert_eq!(decide_pinned_dsh(Some("0.1.5")), PinnedDshDecision::KeepCurrent);
+    // 跨线新版本（高于下限）保留并如实披露
+    assert_eq!(decide_pinned_dsh(Some("0.2.0")), PinnedDshDecision::KeepCrossLine);
+    assert_eq!(decide_pinned_dsh(Some("0.1.6-alpha.1")), PinnedDshDecision::KeepCrossLine);
+    // 低于下限 / 解析失败 / 未装 → 装回锁定版
+    assert_eq!(decide_pinned_dsh(Some("0.1.5-alpha.0")), PinnedDshDecision::InstallPinned);
+    assert_eq!(decide_pinned_dsh(Some("0.1.2-alpha.5")), PinnedDshDecision::InstallPinned);
+    assert_eq!(decide_pinned_dsh(Some("not-a-version")), PinnedDshDecision::InstallPinned);
+    assert_eq!(decide_pinned_dsh(None), PinnedDshDecision::InstallPinned);
 }
 
 #[test]

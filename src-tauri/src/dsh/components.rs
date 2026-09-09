@@ -341,6 +341,32 @@ pub(crate) fn dsh_version_is_compatible(version: Option<&str>) -> bool {
     }
 }
 
+/// 一键启动/自启守卫对已装 dsh 版本的处理决策。
+/// 区分「是否保留当前版本」：用户可能装过比验证栈更新的版本（含跨线），
+/// 启动流程不应把它悄悄降回锁定版。跨线但高于下限的仍保留，只如实披露风险
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PinnedDshDecision {
+    /// 同线更高或等于锁定版：兼容，保留并显示「兼容已装」
+    KeepCurrent,
+    /// 跨线但高于下限：保留当前版本；授权插件可能与内置栈不匹配，如实披露
+    KeepCrossLine,
+    /// 低于下限或未安装：装回锁定版
+    InstallPinned,
+}
+
+/// 决策已装的 dsh 版本：把「新旧方向」从 dsh_version_is_compatible 里拆出来。
+/// 兼容判定（= 下限且同线）仍服务 detect/状态展示；此处只关心要不要降级。
+pub(crate) fn decide_pinned_dsh(version: Option<&str>) -> PinnedDshDecision {
+    let Some(v) = version else { return PinnedDshDecision::InstallPinned };
+    match (parse_version(v), parse_version(SUPPORTED_DSH_VERSION)) {
+        (Some(actual), Some(min)) if actual >= min && actual.same_line(&min) => {
+            PinnedDshDecision::KeepCurrent
+        }
+        (Some(actual), Some(min)) if actual >= min => PinnedDshDecision::KeepCrossLine,
+        _ => PinnedDshDecision::InstallPinned,
+    }
+}
+
 /// 安装 Launcher 锁定的 dsh 版本（固定 SUPPORTED_DSH_VERSION），并在 npm
 /// 成功后再次校验实际 CLI。固定版本而非跟随 @next：上游把 @next 滚到新
 /// minor（如 0.1.3-alpha.1）时并不照顾 vendored 授权栈的兼容性，被动跟随会把

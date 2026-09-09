@@ -7,8 +7,8 @@ use super::AUTOSTART_PREFIX;
 // PathBuf 仅 Windows 自启分支使用（常量与分支均 cfg(windows)，Linux/macOS 不编译）
 use super::auth::{resolve_auth_config, resolve_fqdn, resolve_tailscale_login, AuthConfig};
 use super::components::{
-    dsh_dir, dsh_version, dsh_version_is_compatible, install_auth_plugins, install_supported_dsh,
-    resolve_dsh_bin, resolve_node_bin, tailscale_path,
+    decide_pinned_dsh, dsh_dir, dsh_version, install_auth_plugins, install_supported_dsh,
+    resolve_dsh_bin, resolve_node_bin, tailscale_path, PinnedDshDecision,
 };
 use super::process::kill_by_pattern;
 use std::fs;
@@ -132,7 +132,10 @@ pub(crate) fn autostart_enabled() -> bool {
 #[tauri::command]
 pub fn dsh_set_autostart(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     if enabled {
-        if !dsh_version_is_compatible(dsh_version().as_deref()) {
+        // 仅当已装版本低于锁定版（或未装）才降级；用户装过更新（含跨线）的
+        // 版本时保留，不悄悄装回——版本决策统一走 decide_pinned_dsh
+        if matches!(decide_pinned_dsh(dsh_version().as_deref()), PinnedDshDecision::InstallPinned)
+        {
             install_supported_dsh()?;
         }
         install_auth_plugins(&app)?;

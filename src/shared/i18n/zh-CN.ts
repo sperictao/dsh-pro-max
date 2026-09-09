@@ -408,6 +408,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Tailscale login name contains unsupported characters": "Tailscale 登录名包含不支持的字符",
   "Cannot read the current Tailscale identity: {{error}}": "无法读取当前 Tailscale 身份: {{error}}",
   "Compatible dsh is installed: {{version}}": "已安装兼容的 dsh: {{version}}",
+  "{{version}} is newer than the verified stack; authorization plugins may be incompatible": "{{version}} 高于验证过的兼容栈，授权插件可能不兼容",
   "Installing the pinned dsh ({{version}})…": "正在安装锁定的 dsh（{{version}}）…",
   "Check your network and npm settings, then run npm install -g {{package}}@{{version}} and retry": "请检查网络与 npm 设置，然后运行 npm install -g {{package}}@{{version}} 并重试",
   "Authorization plugins are installed": "授权插件已安装",
