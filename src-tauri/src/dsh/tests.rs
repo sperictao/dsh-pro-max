@@ -3754,8 +3754,8 @@ fn peer_preflight_warning_lines_cap_at_three_then_fold() {
 // ============ 模型目录 + 远端拉取 + 原子写（Top3）============
 
 use super::models::{
-    fetch_remote_models, is_catalog_stale, load_model_catalog_snapshot, parse_remote_models,
-    project_catalog, remote_models_url, CatalogEntry, CatalogFile,
+    fetch_remote_models, load_model_catalog_snapshot, parse_remote_models, project_catalog,
+    remote_models_url, CatalogEntry, CatalogFile,
 };
 
 #[test]
@@ -3855,17 +3855,6 @@ fn catalog_snapshot_roundtrip_and_corruption() {
     std::fs::write(&path, "{broken").unwrap();
     assert!(load_model_catalog_snapshot(&path).is_none());
     std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn catalog_staleness_boundary() {
-    let file = CatalogFile {
-        fetched_at: 100_000,
-        entries: Vec::new(),
-    };
-    // 24h 内新鲜，达到 24h 即过期
-    assert!(!is_catalog_stale(&file, 100_000 + 24 * 60 * 60 - 1));
-    assert!(is_catalog_stale(&file, 100_000 + 24 * 60 * 60));
 }
 
 #[test]

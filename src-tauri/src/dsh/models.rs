@@ -20,9 +20,8 @@ const MANAGED_PROVIDER_KEYS: [&str; 5] = ["displayName", "baseURL", "api", "apiK
 const DEFAULT_MODEL_KEY: &str = "agent-default-model";
 const PI_AI_KEY: &str = "llm-pi-ai";
 
-/// models.dev 全量模型目录（与 CCursor 同源）；快照过期阈值
+/// models.dev 全量模型目录（与 CCursor 同源）
 pub(crate) const MODELS_DEV_API: &str = "https://models.dev/api.json";
-const CATALOG_STALE_SECS: i64 = 24 * 60 * 60;
 const REMOTE_LIST_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
@@ -420,11 +419,6 @@ pub(crate) fn project_catalog(raw: &str, fetched_at: i64) -> Result<CatalogFile,
     })
 }
 
-/// 快照过期判断（unix 秒）
-pub(crate) fn is_catalog_stale(file: &CatalogFile, now_secs: i64) -> bool {
-    now_secs - file.fetched_at >= CATALOG_STALE_SECS
-}
-
 fn unix_now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
@@ -447,9 +441,8 @@ fn fetch_url_text(url: &str, timeout_secs: u64) -> Result<String, String> {
         crate::logging::warn("模型目录请求失败", &format!("HTTP {status}: {url}"));
         return Err(keyf("The model catalog request returned an HTTP error", &[]));
     }
-    resp.text().map_err(|e| {
-        keyf("Failed to read the model catalog response", &[])
-    })
+    resp.text()
+        .map_err(|_| keyf("Failed to read the model catalog response", &[]))
 }
 
 fn refresh_catalog_at(snapshot_path: &Path) -> Result<CatalogFile, String> {
@@ -536,8 +529,8 @@ pub(crate) fn fetch_remote_models(base_url: &str, api: Option<&str>, api_key_env
     let env_holder = api_key_env.map(str::to_string);
     let env_name = non_empty(&env_holder)
         .ok_or_else(|| keyf("Provider API key environment variable is not configured", &[]))?;
-    let key = std::env::var(&env_name).map_err(|_| {
-        crate::logging::warn("模型列表拉取缺密钥环境变量", &env_name);
+    let key = std::env::var(env_name).map_err(|_| {
+        crate::logging::warn("模型列表拉取缺密钥环境变量", env_name);
         keyf(
             "Environment variable is not set in the environment where dsh-pro-max was launched",
             &[],
@@ -572,9 +565,9 @@ pub(crate) fn fetch_remote_models(base_url: &str, api: Option<&str>, api_key_env
             &[],
         ));
     }
-    let text = resp.text().map_err(|e| {
-        keyf("Failed to read the models response", &[])
-    })?;
+    let text = resp
+        .text()
+        .map_err(|_| keyf("Failed to read the models response", &[]))?;
     Ok(parse_remote_models(&text))
 }
 
