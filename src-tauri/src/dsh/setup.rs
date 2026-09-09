@@ -32,6 +32,9 @@ use crate::i18n::keyf;
 
 // ============ 一键启动（时间轴事件流） ============
 
+// 8 个参数是 StepEvent 的天然字段宽度（步骤定位 3 + 四态文本 4 + 标题键 1），
+// 全部调用点经 StepCtx 转发同构数据，为 lint 拆结构体不值
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_step(
     app: &tauri::AppHandle,
     index: usize,
