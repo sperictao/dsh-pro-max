@@ -1,0 +1,164 @@
+schema: comet.native.v4
+name: model-module-gap-vs-ccursor
+language: zh-CN
+phase: archive
+status: done
+state_version: 8
+brief: brief.md
+shape_confirmation_hash: 312043fe2a94c96aa390228ef9487df9a1a89864bc463f8bcbba11bc88d93e5e
+spec_changes:
+  - capability: model-gap-analysis-prompt
+    operation: create
+    source: specs/model-gap-analysis-prompt/spec.md
+workspace:
+  isolation: current
+  change_branch: main
+  target_branch: main
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 1
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "A1: 交付物是单个 Markdown 文件，作为提示词包含六要素：任务目标与对比方向、双侧模块定位（真实文件清单 + CCursor
+      克隆方式）、事实基线（上述盘点）、对比与归类规则、输出格式要求（差距清单 + 可迁移性三类判定 + 机制提案）、执行验收标准。"
+    result: passed
+    reason:
+      text: 交付物 §1–§6 六要素齐备：目标与单向对比、双侧定位（真实清单+GitHub
+        URL+克隆命令）、事实基线、对比归类规则、输出模板（差距表+三分类+机制提案）、执行 done 条件。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: "A2: 提示词自包含：不引用本会话、本 change 或 `/tmp` 临时路径；CCursor 一律以 GitHub URL + 克隆命令指称。"
+    result: passed
+    reason:
+      text: 全文无 comet/brief/会话引用，/tmp 仅以自建克隆命令出现，CCursor 一律 GitHub URL 指称，中文书写面向任意
+        agent 会话。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: "A3: 提示词明确要求执行者对每条缺失给出双方代码依据（`文件:行号`），并区分三类：可迁移缺失 / 归属他模块或架构差异 /
+      本项目有意的设计差异（如 apiKeyEnv 只存环境变量名）。"
+    result: passed
+    reason:
+      text: §4 规则 2–3 明确要求双方 文件:行号 依据并恰好三分类（可迁移/归属他模块·架构差异/有意设计，apiKeyEnv 为例），§5–§6
+        表格列与 done 条件强制执行。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: "A4: 提示词中引用的本项目文件路径全部真实存在；抽查事实基线中至少 3 条陈述与源码一致。"
+    result: passed
+    reason:
+      text: §2.1 的 6 个路径 test -f 全部存在；独立抽查 8
+        条事实与源码一致（API_OPTIONS/EFFORT_OPTIONS/重启提示/MANAGED_PROVIDER_KEYS/两键名/apiKeyEnv/busy
+        防重入/多行 trim 及否定陈述）。
+      truncated: false
+builder_handoff:
+  candidate_id: d96cae27-8d75-4a39-8bf6-76b48d5f8687
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:c4f6fb05-75f2-4e26-9d64-ba24b0a7faf1
+  iteration: 1
+  summary:
+    text: 第 1 轮候选：产出交付物 docs/agent/model-module-gap-prompt.md（gitignored 目录，沿用户既往
+      gap 分析材料惯例，brief 决策已记录）。文档为自包含中文任务书，六要素齐备（目标与单向对比方向、双侧模块定位含 CCursor GitHub
+      URL+克隆命令、内嵌双侧事实基线、三分类归类规则+8 能力域划分、输出格式模板含机制提案列、执行验收 done 条件）。本轮处理验收项 A1–A4
+      全部。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+  checks:
+    - name:
+        text: paths-exist
+        truncated: false
+      result: passed
+      note:
+        text: 文档引用的 6 个本项目路径 test -f 全部存在
+        truncated: false
+    - name:
+        text: fact-spot-check
+        truncated: false
+      result: passed
+      note:
+        text: 抽查 4 条事实与源码一致：ModelsView.tsx:13 API_OPTIONS、:15 EFFORT_OPTIONS、:171 重启提示
+          t() 键、models.rs:7 apiKeyEnv 注释
+        truncated: false
+    - name:
+        text: readonly-review-agent
+        truncated: false
+      result: passed
+      note:
+        text: 独立只读复核 agent 逐条核对 A1–A4 全部 pass，附加输出格式与 8 能力域覆盖检查通过
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: 交付物位于 gitignored 的 docs/agent/，不随 Git 提交（按既往 gap 分析材料惯例，brief 决策已记录）
+      truncated: false
+    - text: CCursor 侧行号随上游漂移，文档已声明行号以执行者自行确认为准
+      truncated: false
+  known_limits_truncated: false
+  review:
+    status: passed
+    summary:
+      text: 独立只读复核（非 Builder 执行）逐条核对 A1–A4：六要素齐备、自包含无上下文依赖、三分类与代码依据要求明确、5
+        条事实抽查与源码一致；附加检查（输出三节模板、8 能力域覆盖）通过。
+      truncated: false
+    reviewer_execution_ref: readonly-review-agent-57dd8b27-20260908
+  submitted_at: 2026-09-08T14:51:36.659Z
+blockers: []
+verification:
+  candidate_id: d96cae27-8d75-4a39-8bf6-76b48d5f8687
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:00cb0e3e-74a2-4876-a0fe-fbdffa80aa35
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks: []
+  summary:
+    text: 交付物为自包含中文任务书，六要素齐备、无上下文依赖、三分类与代码依据要求明确；本项目侧 6 个引用路径全部真实，8
+      条以上事实基线独立抽查与源码一致。A1–A4 全部通过，判定 pass。
+    truncated: false
+  risks:
+    - text: CCursor 侧行号与事实无法在本工作区独立验证（仓库未克隆），交付物已声明行号以执行者自行确认为准并设基线修正节，风险可控
+      truncated: false
+    - text: 交付物位于 gitignored 的 docs/agent/，不随 Git 提交（brief 决策已记录，非验收缺陷）
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-08T14:55:44.361Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 交付物为自包含中文任务书，六要素齐备、无上下文依赖、三分类与代码依据要求明确；本项目侧 6 个引用路径全部真实，8
+        条以上事实基线独立抽查与源码一致。A1–A4 全部通过，判定 pass。
+      truncated: false
+    completed_at: 2026-09-08T14:55:44.361Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-09-08T14:29:39.860Z
