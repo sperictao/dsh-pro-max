@@ -44,3 +44,8 @@ Thumbs.db
 src-tauri/target/
 src-tauri/gen/
 src-tauri/tauri.conf.updater.prod.json
+# >>> Comet managed project state >>>
+!/.comet/
+/.comet/*
+!/.comet/config.yaml
+# <<< Comet managed project state <<<
