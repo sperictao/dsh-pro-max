@@ -13,6 +13,7 @@ import type {
   LauncherConfig,
   MarketCatalog,
   MarketDiagnostics,
+  ModelCatalogFile,
   ModelConfig,
   PluginReleaseNotes,
   PluginUpdateInfo,
@@ -99,6 +100,13 @@ export const marketDiagnostics = () => invokeTyped<MarketDiagnostics>("market_di
 // ============ 模型配置 ============
 export const modelConfigLoad = () => invokeTyped<ModelConfig>("model_config_load");
 export const modelConfigSave = (config: ModelConfig) => invokeTyped<void>("model_config_save", { config });
+// models.dev 全量目录：load 读本地快照（缺失/损坏为 null），refresh 拉取并落快照
+export const modelCatalogLoad = () => invokeTyped<ModelCatalogFile | null>("model_catalog_load");
+export const modelCatalogRefresh = () => invokeTyped<ModelCatalogFile>("model_catalog_refresh");
+// 上游模型列表（兼连通性验证）；密钥经环境变量名解析，值不落盘
+export const modelRemoteList = (baseURL: string, api: string | null, apiKeyEnv: string | null) =>
+  // Tauri 按 camelCase 形参名取参：base_url → baseUrl（baseURL 永不命中）
+  invokeTyped<string[]>("model_remote_list", { baseUrl: baseURL, api, apiKeyEnv });
 
 // ============ 更新 ============
 export const getUpdaterConfigHealth = () => invokeTyped<UpdaterConfigHealth>("get_updater_config_health");

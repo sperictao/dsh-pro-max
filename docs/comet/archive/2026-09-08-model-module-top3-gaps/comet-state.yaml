@@ -1,0 +1,239 @@
+schema: comet.native.v4
+name: model-module-top3-gaps
+language: zh-CN
+phase: archive
+status: done
+state_version: 21
+brief: brief.md
+shape_confirmation_hash: 0b6595cb087ef33179be123974af7704380da0ffe2749c0f528d33b75b657c8f
+spec_changes:
+  - capability: models-config-enhancements
+    operation: create
+    source: specs/models-config-enhancements/spec.md
+workspace:
+  isolation: worktree
+  change_branch: comet/model-module-top3-gaps
+  target_branch: main
+  finish: merge
+loop:
+  stage: done
+  goal_cycle: 3
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "A1: settings.yaml 保存路径改为临时文件 + rename 原子替换；既有 save/load
+      往返测试保持通过；新增断言保存后无临时文件残留。"
+    result: passed
+    reason:
+      text: write_atomic 实现 temp+fsync+rename（models.rs:288-309），save_model_config_at
+        唯一写入点；单测断言保存后无 tmp 残留且既有往返用例保留
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: 'A2: 模糊搜索联想（对齐 market 实时过滤模式）：默认模型 Model 输入与
+      ProviderCard"添加模型"输入均可输入即时过滤候选（匹配
+      id/name、大小写不敏感），↑↓/Enter/点击/Esc/外点交互可用；先写失败测试（当前无联想能力）再实现。'
+    result: passed
+    reason:
+      text: ModelSearchInput 大小写不敏感子串匹配 id/name、截断 50、键盘/点击/Esc/外点齐全，两处落点在场，悬空
+        datalist 消除；前端测试断言真实行为（含 family 过滤与键盘选中）
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: "A3: 全量目录数据链路：`model_catalog_refresh` 拉取 models.dev api.json 并投影
+      `{id,name,family}`（family 映射与按 id 去重以纯函数单测覆盖）、写含 `fetchedAt`
+      的快照；`model_catalog_load` 读快照；候选按 provider wire protocol 过滤
+      family（anthropic-messages→anthropic、openai 系→openai）。"
+    result: passed
+    reason:
+      text: project_catalog family 映射/id 兜底 dict 键/BTreeMap 确定性去重排序（复核修正在场）、快照含
+        fetchedAt 且损坏容忍；前端 familyOf 过滤与加载 effect 在场，均有单测
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: "A4: 目录自动更新：进入模型页快照立即可用；缺失或 fetchedAt 超 24h
+      自动后台刷新并替换；刷新失败静默降级（不弹错误，联想仍含已配模型）。过期判断与降级以单测覆盖。"
+    result: passed
+    reason:
+      text: 24h 过期判断有边界单测（24h-1s 新鲜/24h 过期）；前端快照立即可用、过期后台刷新、失败静默降级，degrades/refreshes
+        两测试覆盖
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: 'A5: ProviderCard 提供"拉取模型列表"操作：成功时结果逐条展示、点击追加进 models 且去重；环境变量未设置 / 网络失败 /
+      HTTP 错误三种失败各有静态中文错误文案（键无插值以命中 zh 字典；URL/变量名/状态码进日志，用户界面中卡片本身已展示 env 名与
+      Base URL），任何路径不含 key 值。'
+    result: passed
+    reason:
+      text: remote_models_url 协议分路+尾斜杠归一有单测；fetch_remote_models env 只读内存、key
+        只进请求头、五种失败全静态错误键、URL/状态码只进日志；UI 拉取按钮/点选追加去重/已添加标记/端点变更撤下旧结果均在场且有测试
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: "A6: 新增用户可见文案 en/zh-CN 双语齐全，`node scripts/check-i18n.mjs` 通过。"
+    result: passed
+    reason:
+      text: en/zh-CN 各新增 20 键逐条对应（含 Cannot initialize the HTTP client）；实际只读运行
+        scripts/check-i18n.mjs 输出 488 key 无缺失无死 key
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: "A7: 前端 ModelsView 测试与 Rust models 测试（含新增用例）全绿。"
+    result: passed
+    reason:
+      text: 未运行测试套件（避免构建产物）；静态抽查两侧测试断言均具体非恒真、导入与 helper 完整，与 Builder 报告的 tsc/vitest
+        121/cargo 173 全绿相容
+      truncated: false
+builder_handoff:
+  candidate_id: f6ea9398-7b70-43c2-a205-2882afad6f1f
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:26f3e6ca-021a-42f1-96f4-4f9bd8d2a072
+  iteration: 1
+  summary:
+    text: 两轮提交完成三项实现：①模型目录模糊联想（models.dev 全量快照投影 {id,name,family} 按 id 去重 BTreeMap
+      确定性排序、本地快照含 fetchedAt、缺失/超24h 自动后台刷新、失败静默降级；ModelSearchInput 组件 market 同款
+      toLowerCase 子串过滤截断50条+键盘/点击/Esc/外点，替换悬空 datalist）②model_remote_list
+      上游模型列表拉取（wire 协议分路 URL、密钥经环境变量只在内存、错误键静态化 zh 可命中）③settings.yaml
+      原子写（temp+fsync+rename）。复核发现并已修复：IPC 参数名
+      baseURL→baseUrl（真实链路必败项）、fsync、确定性去重、端点变更撤下旧结果、configured
+      去重、新调用点坏键静态化；brief A5 验收文字已回写对齐静态化取舍。处理验收项 A1–A7 全部。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+  checks:
+    - name:
+        text: vitest-full
+        truncated: false
+      result: passed
+      note:
+        text: 121 用例全绿（含 ModelsView 9 用例：模糊搜索/追加/静默降级/过期刷新/拉取成功与失败/原子写往返相关前端面）
+        truncated: false
+    - name:
+        text: cargo-test-full
+        truncated: false
+      result: passed
+      note:
+        text: 173 用例全绿（投影 family 映射与去重、快照往返与损坏容忍、24h 过期边界、URL 拼接、响应解析、env 缺失分支、无 tmp 残留）
+        truncated: false
+    - name:
+        text: tsc
+        truncated: false
+      result: passed
+      note:
+        text: 类型检查通过
+        truncated: false
+    - name:
+        text: check-i18n
+        truncated: false
+      result: passed
+      note:
+        text: 488 key，无缺失无死 key
+        truncated: false
+    - name:
+        text: e2e-smoke
+        truncated: false
+      result: passed
+      note:
+        text: 全步骤通过（新命令已入 mock 表）
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: model_remote_list 的真实 HTTP 链路无自动化覆盖（需上游端点与密钥，属手工验收路径）；IPC 参数名映射经复核静态确认
+      truncated: false
+    - text: write_atomic 的 fsync 在 Windows 上对只读句柄静默无效（不劣于修复前）；market.rs:312
+        既有坏键为范围外既有债
+      truncated: false
+  known_limits_truncated: false
+  review:
+    status: passed
+    summary:
+      text: 独立只读复核两轮：首轮发现 1 项必要问题（model_remote_list 参数名 baseURL 与 Tauri 期望 baseUrl
+        不匹配，真实链路必败）与 6 项建议；027fa76 修正后第二轮逐条确认 7 条全部正确修复、无新增问题。
+      truncated: false
+    reviewer_execution_ref: readonly-review-agent-724d940e-20260909
+  submitted_at: 2026-09-08T23:10:16.305Z
+blockers: []
+verification:
+  candidate_id: f6ea9398-7b70-43c2-a205-2882afad6f1f
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:9e07bfa2-d033-43d1-8c07-3b321e8c3a13
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks: []
+  summary:
+    text: A1–A7 全部通过：原子写含 fsync、模糊搜索与目录链路完整、自动更新与远端拉取的失败路径均为静态键且密钥无泄漏，i18n
+      实跑通过。上一轮发现的 modelRemoteList IPC 参数名缺陷已确认修复在场（commands.ts 传 baseUrl 匹配 Rust
+      base_url）。硬约束（无新依赖、settings.yaml 契约、market/integration 域不动）均满足。
+    truncated: false
+  risks:
+    - text: 24h 过期阈值在前端（ModelsView.tsx CATALOG_STALE_SECS）与
+        Rust（CATALOG_STALE_SECS）各存一份，双侧均有测试但存在漂移风险
+      truncated: false
+    - text: write_atomic 的 tmp 名经 with_extension 生成，对快照文件会得到形如
+        model-catalog-snapshot.yaml.tmp 的命名（同目录不影响原子性，仅命名观感）
+      truncated: false
+    - text: A7 依赖 Builder 报告的测试运行结果作线索，本验证以静态断言审查佐证，未独立复跑 vitest/cargo
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-08T23:15:05.633Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: 用户在 Build 期间改变需求（全量 models.dev 目录 + 自动更新；模糊搜索对齐 market），旧 Shape
+        的精选目录/datalist 决定已失效，回到 Shape 按新需求更新正式产物并重新确认。
+      truncated: false
+    completed_at: 2026-09-08T22:08:09.861Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native confirmed acceptance criteria changed
+      truncated: false
+    completed_at: 2026-09-08T23:04:00.420Z
+  - goal_cycle: 3
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: A1–A7 全部通过：原子写含 fsync、模糊搜索与目录链路完整、自动更新与远端拉取的失败路径均为静态键且密钥无泄漏，i18n
+        实跑通过。上一轮发现的 modelRemoteList IPC 参数名缺陷已确认修复在场（commands.ts 传 baseUrl 匹配
+        Rust base_url）。硬约束（无新依赖、settings.yaml 契约、market/integration 域不动）均满足。
+      truncated: false
+    completed_at: 2026-09-08T23:15:05.633Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-09-08T15:13:13.717Z

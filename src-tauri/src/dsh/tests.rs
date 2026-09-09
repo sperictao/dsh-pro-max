@@ -3750,3 +3750,131 @@ fn peer_preflight_warning_lines_cap_at_three_then_fold() {
     ]);
     assert!(folded.contains("… and 2 more"));
 }
+
+// ============ 模型目录 + 远端拉取 + 原子写（Top3）============
+
+use super::models::{
+    fetch_remote_models, is_catalog_stale, load_model_catalog_snapshot, parse_remote_models,
+    project_catalog, remote_models_url, CatalogEntry, CatalogFile,
+};
+
+#[test]
+fn model_config_save_leaves_no_temp_file() {
+    set_current("en");
+    let path = temp_settings_path("atomic");
+    let config = ModelConfig {
+        default_provider: Some("p".into()),
+        default_model: Some("m".into()),
+        default_reasoning_effort: None,
+        providers: Vec::new(),
+    };
+    save_model_config_at(&path, &config).expect("save");
+    // 原子写经 temp+rename：保存后不得残留临时文件，目标完整可读
+    assert!(!path.with_extension("yaml.tmp").exists());
+    assert!(load_model_config_at(&path).is_ok());
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn remote_models_url_builds_per_protocol() {
+    // openai 系：base 即 API root，直接拼 /models；尾斜杠归一
+    assert_eq!(
+        remote_models_url("https://gw.example.com/v1/", Some("openai-completions")).unwrap(),
+        "https://gw.example.com/v1/models"
+    );
+    assert_eq!(
+        remote_models_url("https://gw.example.com/v1", Some("openai-responses")).unwrap(),
+        "https://gw.example.com/v1/models"
+    );
+    // anthropic：base 不含版本段，拼 /v1/models + 版本头
+    assert_eq!(
+        remote_models_url("https://api.anthropic.com", Some("anthropic-messages")).unwrap(),
+        "https://api.anthropic.com/v1/models"
+    );
+    // 空 base 拒绝
+    assert!(remote_models_url("  ", None).is_err());
+}
+
+#[test]
+fn parse_remote_models_dedupes_and_sorts() {
+    let json = r#"{"data":[{"id":"b-model"},{"id":"a-model"},{"id":"b-model"},{"name":"no-id"}]}"#;
+    assert_eq!(
+        parse_remote_models(json),
+        vec!["a-model".to_string(), "b-model".to_string()]
+    );
+    assert!(parse_remote_models("not json").is_empty());
+}
+
+#[test]
+fn project_catalog_maps_family_and_dedupes() {
+    let raw = r#"{
+        "anthropic": {"models": {
+            "claude-opus-4": {"id": "claude-opus-4", "name": "Claude Opus 4"},
+            "key-only": {"name": "Key Fallback"}
+        }},
+        "google": {"models": {"gemini-2.5-pro": {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro"}}},
+        "deepseek": {"models": {"deepseek-chat": {"id": "deepseek-chat"}}},
+        "empty-family": {"models": {"": {"id": "", "name": "blank id"}}}
+    }"#;
+    let file = project_catalog(raw, 1_000).expect("project");
+    assert_eq!(file.fetched_at, 1_000);
+    // 按 id 排序
+    let ids: Vec<&str> = file.entries.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["claude-opus-4", "deepseek-chat", "gemini-2.5-pro", "key-only"]
+    );
+    let by_id = |id: &str| file.entries.iter().find(|e| e.id == id).unwrap();
+    // anthropic 官方键 → anthropic；google/其余 → openai
+    assert_eq!(by_id("claude-opus-4").family, "anthropic");
+    assert_eq!(by_id("gemini-2.5-pro").family, "openai");
+    assert_eq!(by_id("deepseek-chat").family, "openai");
+    // id 字段缺失回落 dict 键（CCursor 同款 m.id || modelId）；空 id 条目丢弃
+    assert_eq!(by_id("key-only").name, "Key Fallback");
+}
+
+#[test]
+fn catalog_snapshot_roundtrip_and_corruption() {
+    let dir = std::env::temp_dir().join(format!("dsh-pro-max-catalog-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("snapshot.json");
+    let file = CatalogFile {
+        fetched_at: 5_000,
+        entries: vec![CatalogEntry {
+            id: "glm-5.2".into(),
+            name: "GLM-5.2".into(),
+            family: "openai".into(),
+        }],
+    };
+    std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
+    let loaded = load_model_catalog_snapshot(&path).expect("loaded");
+    assert_eq!(loaded.fetched_at, 5_000);
+    assert_eq!(loaded.entries[0].id, "glm-5.2");
+
+    // 快照是缓存：损坏一律 None
+    std::fs::write(&path, "{broken").unwrap();
+    assert!(load_model_catalog_snapshot(&path).is_none());
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn catalog_staleness_boundary() {
+    let file = CatalogFile {
+        fetched_at: 100_000,
+        entries: Vec::new(),
+    };
+    // 24h 内新鲜，达到 24h 即过期
+    assert!(!is_catalog_stale(&file, 100_000 + 24 * 60 * 60 - 1));
+    assert!(is_catalog_stale(&file, 100_000 + 24 * 60 * 60));
+}
+
+#[test]
+fn fetch_remote_models_requires_env_value() {
+    set_current("en");
+    const KEY: &str = "DEFINITELY_UNSET_MODEL_KEY_2026";
+    assert!(std::env::var(KEY).is_err(), "test requires the env var to be unset");
+    // env 变量不存在：在发请求前即报静态错误（变量名只进日志，用户面文案不含）
+    let err = fetch_remote_models("https://gw.example.com", Some("openai-completions"), Some(KEY))
+        .unwrap_err();
+    assert!(err.contains("Environment variable is not set"));
+}

@@ -13,6 +13,8 @@ export type { UpdaterHelpPaths } from "./bindings/UpdaterHelpPaths";
 export type { UpdateInfo } from "./bindings/UpdateInfo";
 export type { ProviderConfig } from "./bindings/ProviderConfig";
 export type { ModelConfig } from "./bindings/ModelConfig";
+export type { CatalogEntry as ModelCatalogEntry } from "./bindings/CatalogEntry";
+export type { CatalogFile as ModelCatalogFile } from "./bindings/CatalogFile";
 export type { MarketPlugin } from "./bindings/MarketPlugin";
 export type { MarketCatalog } from "./bindings/MarketCatalog";
 export type { InstalledPlugin } from "./bindings/InstalledPlugin";

@@ -169,6 +169,9 @@ async function main() {
         market_installed: () => marketInstalled,
         market_check_updates: () => [],
         model_config_load: () => modelConfig,
+        model_catalog_load: () => ({ fetchedAt: Math.floor(Date.now() / 1000), entries: [] }),
+        model_catalog_refresh: () => ({ fetchedAt: Math.floor(Date.now() / 1000), entries: [] }),
+        model_remote_list: () => [],
         "plugin:app|version": () => "0.4.0",
         "plugin:notification|is_permission_granted": () => true,
       };
