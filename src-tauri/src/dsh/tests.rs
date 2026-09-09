@@ -170,17 +170,17 @@ fn dsh_version_compatible_pins_to_supported_line() {
     // 已装插件的 peer——那会在「CLI 已升、插件未升」的跟线窗口里自相
     // 矛盾）。常量自身和同线更高 rc/稳定版兼容。
     assert!(dsh_version_is_compatible(Some(SUPPORTED_DSH_VERSION)));
-    assert!(dsh_version_is_compatible(Some("0.1.2-alpha.5")));
-    assert!(dsh_version_is_compatible(Some("0.1.2")));
-    // 跨线一律不兼容：旧线 0.1.1/0.1.0 与更远的线都拒绝。0.1.0-rc.8 曾满足
-    // ">= 下限"的宽松判定，但跨线重排了运行时与数据格式（实机教训）
-    assert!(!dsh_version_is_compatible(Some("0.1.1-rc.2")));
-    assert!(!dsh_version_is_compatible(Some("0.1.0-rc.8")));
+    assert!(dsh_version_is_compatible(Some("0.1.5-alpha.2")));
+    assert!(dsh_version_is_compatible(Some("0.1.5")));
+    // 跨线一律不兼容：旧线 0.1.2/0.1.3 与更远的线都拒绝。0.1.3-alpha.2
+    // 曾满足 ">= 下限"的宽松判定，但跨线重排了运行时与数据格式（实机教训）
+    assert!(!dsh_version_is_compatible(Some("0.1.2-rc.1")));
+    assert!(!dsh_version_is_compatible(Some("0.1.3-alpha.2")));
     assert!(!dsh_version_is_compatible(Some("1.0.0")));
-    // 低于锁定版本或无法解析的版本不兼容；alpha.3 曾是「同线更高」的放行
-    // 样本，floor 升到 alpha.4 后翻到线下——bump 常量会翻转判定方向
-    assert!(!dsh_version_is_compatible(Some("0.1.2-alpha.3")));
-    assert!(!dsh_version_is_compatible(Some("0.1.2-alpha.1")));
+    // 低于锁定版本或无法解析的版本不兼容；alpha.0 位于 floor 之下，
+    // bump 常量会翻转判定方向
+    assert!(!dsh_version_is_compatible(Some("0.1.5-alpha.0")));
+    assert!(!dsh_version_is_compatible(Some("0.1.2-alpha.5")));
     assert!(!dsh_version_is_compatible(Some("0.0.1-rc.5")));
     assert!(!dsh_version_is_compatible(Some("not-a-version")));
     assert!(!dsh_version_is_compatible(None));

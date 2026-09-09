@@ -99,11 +99,11 @@ pub(crate) async fn ipc_blocking<T: Send + 'static>(
 /// 升级时与 vendor 插件 pin、bundle tgz 文件名三处同步 bump（见
 /// scripts/build-dsh-plugins.mjs 与 src-tauri/tauri.conf.json）。
 const DSH_PACKAGE: &str = "@deepseek-ai/dsh";
-const SUPPORTED_DSH_VERSION: &str = "0.1.2-alpha.4";
+const SUPPORTED_DSH_VERSION: &str = "0.1.5-alpha.1";
 const CONNECTION_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-client-connection-authz";
 const AUTH_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-auth-tailscale";
-const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-8a27dc344a79.tgz";
-const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-d9c97876a78f.tgz";
+const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-021fee6a4f4a.tgz";
+const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-9765f2a544c7.tgz";
 const TAILSCALE_LOGIN_ENV: &str = "DSH_TAILSCALE_ALLOWED_LOGINS";
 /// 远程特权接口（settings/credentials/host 等 loopback authority）与普通远程
 /// API/WS 各自所需的 App Capability 环境变量。capability 路径固定为
