@@ -19,6 +19,11 @@ problem: string | null,
  */
 solution: string | null, 
 /**
+ * 可一键禁用重试的第三方插件包名（仅启动失败的插件归因节点携带；
+ * 受管授权插件为 None——其恢复路径是 Repair dsh stack）
+ */
+actionPlugin: string | null, 
+/**
  * 步骤标题的 i18n key（"step.<id>"）：骨架/派生时间轴节点携带，
  * 前端零映射渲染；事件流节点为 None（标题已由骨架就位）
  */

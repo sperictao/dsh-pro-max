@@ -105,7 +105,6 @@ const AUTH_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-auth-tailscale";
 const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-8a27dc344a79.tgz";
 const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-d9c97876a78f.tgz";
 const TAILSCALE_LOGIN_ENV: &str = "DSH_TAILSCALE_ALLOWED_LOGINS";
-const LOCAL_ONLY_LOGIN: &str = "local-only@localhost.invalid";
 /// 远程特权接口（settings/credentials/host 等 loopback authority）与普通远程
 /// API/WS 各自所需的 App Capability 环境变量。capability 路径固定为
 /// `/cap/dsh-admin` / `/cap/dsh`，域名由用户在设置页 DeepSeek Harness 分区配置；
@@ -211,6 +210,9 @@ pub struct StepEvent {
     pub problem: Option<String>,
     /// 解决方案（失败节点展示）
     pub solution: Option<String>,
+    /// 可一键禁用重试的第三方插件包名（仅启动失败的插件归因节点携带；
+    /// 受管授权插件为 None——其恢复路径是 Repair dsh stack）
+    pub action_plugin: Option<String>,
     /// 步骤标题的 i18n key（"step.<id>"）：骨架/派生时间轴节点携带，
     /// 前端零映射渲染；事件流节点为 None（标题已由骨架就位）
     pub title_key: Option<String>,
@@ -247,6 +249,7 @@ fn pending_step(index: usize, id: &str) -> StepEvent {
         detail: None,
         problem: None,
         solution: None,
+        action_plugin: None,
         title_key: Some(step_title_key(id)),
     }
 }

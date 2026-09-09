@@ -298,10 +298,15 @@ fn start_diagnosis_names_the_culprit_plugin_and_points_at_the_plugins_page() {
             ),
         )
         .unwrap();
-    let (problem, solution) = start_failure_diagnosis(&log);
-    assert!(problem.contains("@nanmicoder/dsh-agent-teams"));
-    assert!(problem.contains("registerContinuableSetup is not a function"));
-    assert!(solution.contains("@nanmicoder/dsh-agent-teams"));
+    let diagnosis = start_failure_diagnosis(&log);
+    assert!(diagnosis.problem.contains("@nanmicoder/dsh-agent-teams"));
+    assert!(diagnosis.problem.contains("registerContinuableSetup is not a function"));
+    assert!(diagnosis.solution.contains("@nanmicoder/dsh-agent-teams"));
+    // 非受管第三方插件：诊断附带一键禁用重试的入口
+    assert_eq!(
+        diagnosis.action_plugin.as_deref(),
+        Some("@nanmicoder/dsh-agent-teams")
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -322,7 +327,7 @@ fn start_diagnosis_points_rewritten_credentials_at_migration() {
             "Error: credentials-local: the value for \"version\" in /Users/x/.dsh/.credentials.yaml must be a string\n",
         )
         .unwrap();
-    let (_, solution) = start_failure_diagnosis(&log);
+    let solution = start_failure_diagnosis(&log).solution;
     assert!(solution.contains(".credentials.yaml"));
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -520,6 +525,38 @@ fn auth_start_script_binds_loopback_and_exports_allowlist() {
 #[test]
 fn guard_js_targets_loopback() {
     assert!(port_guard_js(3899).contains("net.connect(3899,'127.0.0.1')"));
+}
+
+/// 无登录名（身份解析失败/纯本地路径）时不注入 allowlist env：授权插件按
+/// 空 allowlist 默认 deny-all；有额外名单时仅注入额外名单
+#[test]
+fn env_pairs_omit_login_env_when_no_logins_resolve() {
+    use super::auth::AuthConfig;
+    assert!(AuthConfig::default().env_pairs(None).is_empty());
+
+    let extras = AuthConfig {
+        extra_allowed_logins: vec!["alice@example.com".to_string()],
+        use_capability: None,
+        admin_capability: None,
+    };
+    assert_eq!(
+        extras.env_pairs(None),
+        vec![(
+            "DSH_TAILSCALE_ALLOWED_LOGINS",
+            "alice@example.com".to_string()
+        )]
+    );
+    // 真实身份在场时与额外名单合并，身份在前
+    assert_eq!(
+        extras
+            .env_pairs(Some("owner@example.com"))
+            .into_iter()
+            .next(),
+        Some((
+            "DSH_TAILSCALE_ALLOWED_LOGINS",
+            "owner@example.com,alice@example.com".to_string()
+        ))
+    );
 }
 
 #[test]
@@ -2717,35 +2754,47 @@ fn resolve_local_access_url_falls_back_to_bare_url_after_budget_exhausted() {
 fn diagnose_start_failure_branches_on_log_fingerprints() {
     set_current("en");
     // 无日志：占用端口的兜底文案
-    let (problem, solution) = super::setup::diagnose_start_failure_from_tail(None);
-    assert!(problem.contains("no log output"));
-    assert!(solution.contains("dsh-web.log"));
+    let no_log = super::setup::diagnose_start_failure_from_tail(None);
+    assert!(no_log.problem.contains("no log output"));
+    assert!(no_log.solution.contains("dsh-web.log"));
     // EPERM 指纹 → Windows 开发者模式
-    let (_, solution) = super::setup::diagnose_start_failure_from_tail(Some(
+    let eperm = super::setup::diagnose_start_failure_from_tail(Some(
         "Error: EPERM: operation not permitted, symlink",
     ));
-    assert!(solution.contains("Developer Mode"));
+    assert!(eperm.solution.contains("Developer Mode"));
+    assert_eq!(eperm.action_plugin, None);
     // credentials 格式指纹 → 手动还原指引
-    let (_, solution) = super::setup::diagnose_start_failure_from_tail(Some(
+    let credentials = super::setup::diagnose_start_failure_from_tail(Some(
         "Error: the value for \"version\" in /x/.dsh/.credentials.yaml must be a string",
     ));
-    assert!(solution.contains("KEY: value"));
+    assert!(credentials.solution.contains("KEY: value"));
     // 插件崩溃链优先于通用指纹
-    let (problem, solution) = super::setup::diagnose_start_failure_from_tail(Some(concat!(
+    let plugin = super::setup::diagnose_start_failure_from_tail(Some(concat!(
             "Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): ",
             "failed to apply loader entry agent-teams (@nanmicoder/dsh-agent-teams): ctx.x is not a function\n",
             "EPERM something", // 通用指纹在场也不抢插件点名
         )));
-    assert!(problem.contains("@nanmicoder/dsh-agent-teams"));
-    assert!(solution.contains("Plugins page"));
+    assert!(plugin.problem.contains("@nanmicoder/dsh-agent-teams"));
+    assert!(plugin.solution.contains("Plugins page"));
+    assert_eq!(
+        plugin.action_plugin.as_deref(),
+        Some("@nanmicoder/dsh-agent-teams")
+    );
+    // 受管授权插件不提供一键禁用（恢复路径是 Repair dsh stack）
+    let managed = super::setup::diagnose_start_failure_from_tail(Some(concat!(
+            "Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): ",
+            "failed to apply loader entry tailscale-auth (@dsh-external/dsh-auth-tailscale): invalid config\n",
+        )));
+    assert!(managed.problem.contains("@dsh-external/dsh-auth-tailscale"));
+    assert_eq!(managed.action_plugin, None);
     // 普通日志：问题截前 8 行进时间轴
     let long_tail = (1..=20)
         .map(|i| format!("line{i}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let (problem, _) = super::setup::diagnose_start_failure_from_tail(Some(&long_tail));
-    assert!(problem.contains("line8"));
-    assert!(!problem.contains("line9"));
+    let truncated = super::setup::diagnose_start_failure_from_tail(Some(&long_tail));
+    assert!(truncated.problem.contains("line8"));
+    assert!(!truncated.problem.contains("line9"));
     set_current("en");
 }
 
@@ -2861,14 +2910,15 @@ fn lock_timeout_diagnosis_points_at_the_lock_file_not_the_builtin_plugin() {
     // connection 插件的锁等待上。按插件链归因会指引用户去 Plugins 页移除一个
     // 不可移除的内置插件——锁超时指纹必须优先，解法指向锁文件本身
     set_current("en");
-    let (problem, solution) = super::setup::diagnose_start_failure_from_tail(Some(concat!(
+    let lock = super::setup::diagnose_start_failure_from_tail(Some(concat!(
             "Error: dsh: plugin tree failed to load: failed to apply loader entry connection (@deepseek-ai/dsh-client-connection): ",
             "atomic-write: timed out waiting for the writer lock at C:\\Users\\x\\.dsh\\.credentials.yaml.lock\n",
             "Error: atomic-write: timed out waiting for the writer lock at C:\\Users\\x\\.dsh\\.credentials.yaml.lock\n",
         )));
-    assert!(problem.contains(".credentials.yaml.lock"));
-    assert!(solution.contains(".credentials.yaml.lock"));
-    assert!(!solution.contains("Plugins page"));
+    assert!(lock.problem.contains(".credentials.yaml.lock"));
+    assert!(lock.solution.contains(".credentials.yaml.lock"));
+    assert!(!lock.solution.contains("Plugins page"));
+    assert_eq!(lock.action_plugin, None);
     set_current("en");
 }
 

@@ -19,7 +19,7 @@ import {
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
 
 const stepDone = (index: number, id: string): DshStepEvent => ({
-  index, id, state: "done", detail: null, problem: null, solution: null, titleKey: `step.${id}`,
+  index, id, state: "done", detail: null, problem: null, solution: null, actionPlugin: null, titleKey: `step.${id}`,
 });
 const remoteReadyTimeline: DshStepEvent[] =
   ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"].map((id, i) => stepDone(i, id));
@@ -89,7 +89,7 @@ beforeEach(() => {
   vi.spyOn(cmd, "dshStepSchema").mockImplementation(async (remote: boolean) =>
     (remote ? ["node","install","plugins","tailscale","magicdns","start","serve","verify"]
             : ["node","install","start","ready"])
-      .map((id, index) => ({ index, id, state: "pending" as const, detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
+      .map((id, index) => ({ index, id, state: "pending" as const, detail: null, problem: null, solution: null, actionPlugin: null, titleKey: `step.${id}` })),
   );
 });
 
@@ -285,6 +285,7 @@ describe("start failure log disclosure", () => {
     detail: null,
     problem: "dsh web failed to start; log says:\nError: boom",
     solution: "Check the log at ~/.dsh/dsh-web.log",
+    actionPlugin: null,
     titleKey: null,
   };
 
@@ -344,6 +345,80 @@ describe("start failure log disclosure", () => {
     expect(screen.getByText(/dsh web failed to start/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "View log" })).not.toBeInTheDocument();
   });
+
+  it("offers disable-and-retry only when the diagnosis names a third-party plugin", async () => {
+    renderFailedStart();
+    expect(await screen.findByRole("button", { name: "View log" })).toBeInTheDocument();
+    // 无肇事插件（actionPlugin 为 null）：不渲染禁用按钮
+    expect(screen.queryByRole("button", { name: /Disable .* and retry/ })).not.toBeInTheDocument();
+
+    const thirdParty = {
+      ...failedStart,
+      problem: "dsh web failed to start; plugin @vendor/bad-plugin failed to load:\nctx.x is not a function",
+      actionPlugin: "@vendor/bad-plugin",
+    };
+    useAppStore.setState({ dshTimeline: [thirdParty] });
+
+    // 受管过滤由 Rust 侧完成；前端只认 actionPlugin 在场即渲染
+    expect(
+      await screen.findByRole("button", { name: "Disable @vendor/bad-plugin and retry" }),
+    ).toBeInTheDocument();
+  });
+
+  it("disables the culprit plugin then reruns the start flow", async () => {
+    useAppStore.setState({
+      dshHasRunSetup: true,
+      dshStatus: { ...ready, dshRunning: false },
+      dshTimeline: [{
+        ...failedStart,
+        problem: "dsh web failed to start; plugin @vendor/bad-plugin failed to load:\nboom",
+        actionPlugin: "@vendor/bad-plugin",
+      }],
+    });
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue({ ...ready, dshRunning: false });
+    const setEnabled = vi.spyOn(cmd, "marketSetPluginEnabled").mockResolvedValue({
+      name: "@vendor/bad-plugin",
+    } as never);
+    const startWeb = vi.spyOn(cmd, "dshStartWeb").mockResolvedValue("http://127.0.0.1:3899");
+    vi.mocked(shell.open).mockResolvedValue();
+
+    render(createElement(DshCard));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Disable @vendor/bad-plugin and retry" }),
+    );
+
+    await waitFor(() =>
+      expect(setEnabled).toHaveBeenCalledWith("@vendor/bad-plugin", false),
+    );
+    // 禁用成功后自动重跑当前模式的启动流程
+    await waitFor(() => expect(startWeb).toHaveBeenCalledOnce());
+  });
+
+  it("stays on the failed node without retrying when the disable fails", async () => {
+    useAppStore.setState({
+      dshHasRunSetup: true,
+      dshStatus: { ...ready, dshRunning: false },
+      dshTimeline: [{
+        ...failedStart,
+        problem: "dsh web failed to start; plugin @vendor/bad-plugin failed to load:\nboom",
+        actionPlugin: "@vendor/bad-plugin",
+      }],
+    });
+    vi.spyOn(cmd, "dshDetect").mockResolvedValue({ ...ready, dshRunning: false });
+    const setEnabled = vi.spyOn(cmd, "marketSetPluginEnabled")
+      .mockRejectedValue(new Error("nope"));
+    const startWeb = vi.spyOn(cmd, "dshStartWeb").mockResolvedValue("http://127.0.0.1:3899");
+
+    render(createElement(DshCard));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Disable @vendor/bad-plugin and retry" }),
+    );
+
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledOnce());
+    // 禁用失败不重试：启动命令未被调用，失败节点仍在
+    expect(startWeb).not.toHaveBeenCalled();
+    expect(screen.getByText(/@vendor\/bad-plugin failed to load/)).toBeInTheDocument();
+  });
 });
 
 describe("tray echo keeps the timeline on the event stream", () => {
@@ -353,7 +428,7 @@ describe("tray echo keeps the timeline on the event stream", () => {
     useAppStore.setState({
       dshHasRunSetup: false,
       dshTimeline: [
-        { index: 0, id: "node", state: "done", detail: "old", problem: null, solution: null, titleKey: null },
+        { index: 0, id: "node", state: "done", detail: "old", problem: null, solution: null, actionPlugin: null, titleKey: null },
       ],
     });
     vi.spyOn(cmd, "dshStartWeb").mockResolvedValue("http://127.0.0.1:3899");
@@ -406,6 +481,7 @@ describe("tray echo keeps the timeline on the event stream", () => {
       detail: "Checking Node.js & npm…",
       problem: null,
       solution: null,
+      actionPlugin: null,
       titleKey: null,
     });
 
@@ -423,6 +499,7 @@ describe("tray echo keeps the timeline on the event stream", () => {
       detail: "Node.js is available",
       problem: null,
       solution: null,
+      actionPlugin: null,
       titleKey: null,
     });
 
@@ -439,6 +516,7 @@ describe("cross-page state preservation", () => {
       detail: "detail",
       problem: "problem",
       solution: "solution",
+      actionPlugin: null,
     titleKey: null,
   };
     useAppStore.setState({

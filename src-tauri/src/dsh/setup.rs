@@ -17,7 +17,10 @@ use super::process::{
 };
 use super::update::clear_web_profile_compat_entry;
 use super::StepEvent;
-use super::{RemoteRpcAccess, RemoteUrlAccess, DSH_PACKAGE, SUPPORTED_DSH_VERSION, WEB_PORT};
+use super::{
+    RemoteRpcAccess, RemoteUrlAccess, AUTH_PLUGIN_PACKAGE, CONNECTION_PLUGIN_PACKAGE, DSH_PACKAGE,
+    SUPPORTED_DSH_VERSION, WEB_PORT,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -36,6 +39,7 @@ pub(crate) fn emit_step(
     detail: Option<String>,
     problem: Option<String>,
     solution: Option<String>,
+    action_plugin: Option<String>,
 ) {
     let _ = app.emit(
         "dsh-step",
@@ -46,6 +50,7 @@ pub(crate) fn emit_step(
             detail,
             problem,
             solution,
+            action_plugin,
             title_key: None, // 事件流节点的标题已由骨架就位，不重复携带
         },
     );
@@ -67,6 +72,7 @@ impl StepCtx<'_> {
             Some(detail.to_string()),
             None,
             None,
+            None,
         );
     }
     pub(crate) fn done(&self, detail: &str) {
@@ -76,6 +82,7 @@ impl StepCtx<'_> {
             self.id,
             "done",
             Some(detail.to_string()),
+            None,
             None,
             None,
         );
@@ -101,35 +108,70 @@ impl StepCtx<'_> {
         self.emit_fail(problem, solution, remaining);
         Err(problem.to_string())
     }
+    /// 启动失败诊断入时间轴：失败节点额外携带 actionPlugin（可一键禁用
+    /// 重试的第三方插件）时，前端在节点上渲染对应按钮
+    pub(crate) fn fail_diagnosis(
+        &self,
+        failure: &StartFailureDiagnosis,
+        remaining: &[(&'static str, usize)],
+    ) -> Result<(), String> {
+        self.emit_fail_diagnosis(failure, remaining);
+        Err(failure.problem.clone())
+    }
+    /// 同 fail_diagnosis，返回 `Result<String, String>`（同 fail_err 之于 fail）
+    pub(crate) fn fail_err_diagnosis(
+        &self,
+        failure: &StartFailureDiagnosis,
+        remaining: &[(&'static str, usize)],
+    ) -> Result<String, String> {
+        self.emit_fail_diagnosis(failure, remaining);
+        Err(failure.problem.clone())
+    }
     pub(crate) fn emit_fail(
         &self,
         problem: &str,
         solution: &str,
         remaining: &[(&'static str, usize)],
     ) {
-        log::error!("[dsh 一键配置] 步骤 {} 失败: {}", self.id, problem);
+        self.emit_fail_diagnosis(
+            &StartFailureDiagnosis {
+                problem: problem.to_string(),
+                solution: solution.to_string(),
+                action_plugin: None,
+            },
+            remaining,
+        );
+    }
+    fn emit_fail_diagnosis(
+        &self,
+        failure: &StartFailureDiagnosis,
+        remaining: &[(&'static str, usize)],
+    ) {
+        log::error!("[dsh 一键配置] 步骤 {} 失败: {}", self.id, failure.problem);
         emit_step(
             self.app,
             self.index,
             self.id,
             "failed",
             None,
-            Some(problem.to_string()),
-            Some(solution.to_string()),
+            Some(failure.problem.clone()),
+            Some(failure.solution.clone()),
+            failure.action_plugin.clone(),
         );
         for (id, idx) in remaining {
-            emit_step(self.app, *idx, id, "skipped", None, None, None);
+            emit_step(self.app, *idx, id, "skipped", None, None, None, None);
         }
     }
 }
 
-/// 后台启动 dsh web 进程：显式绑定 loopback，并把 Tailscale 登录名与按配置
-/// 解析出的 use/admin App Capability 交给授权插件。不等待端口就绪，返回子进程
+/// 后台启动 dsh web 进程：显式绑定 loopback，并把 Tailscale 登录名（有身份
+/// 才注入；无 = 授权插件默认拒绝全部远程登录）与按配置解析出的 use/admin
+/// App Capability 交给授权插件。不等待端口就绪，返回子进程
 /// PID 供启动等待探活；
 /// 失败返回 (problem, solution) 供时间轴与更新流程分别展示针对性排障提示。
 /// dsh_setup 与 dsh_update 共用
 pub(crate) fn spawn_dsh_web(
-    login: &str,
+    login: Option<&str>,
     fqdn: Option<&str>,
     auth: &AuthConfig,
 ) -> Result<u32, (String, String)> {
@@ -234,10 +276,21 @@ pub(crate) fn plugin_failure_from_log_tail(tail: &str) -> Option<(String, String
         .map(|(name, error)| (name.to_string(), error.to_string()))
 }
 
+/// 启动失败诊断：problem/solution 进时间轴；action_plugin 是可一键禁用
+/// 重试的第三方插件包名（受管授权插件不提供此动作——它的既定恢复路径是
+/// Repair dsh stack，由 solution 文案指引）
+#[derive(Debug, Clone)]
+pub(crate) struct StartFailureDiagnosis {
+    pub(crate) problem: String,
+    pub(crate) solution: String,
+    pub(crate) action_plugin: Option<String>,
+}
+
 /// 从日志尾部内容诊断启动失败（决策核，不碰文件系统）：插件加载失败优先点名
-/// 具体插件与根因报错（致命标记门控在提取函数内）；其余按日志里的常见崩溃
-/// 指纹（EPERM/symlink、credentials 格式）给针对性方案
-pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> (String, String) {
+/// 具体插件与根因报错（致命标记门控在提取函数内），非受管插件附带给一键
+/// 禁用重试；其余按日志里的常见崩溃指纹（EPERM/symlink、credentials 格式）
+/// 给针对性方案
+pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> StartFailureDiagnosis {
     // 锁超时指纹优先于插件链归因：孤儿 credentials 写锁让 boot 崩在内置
     // connection 插件的锁等待上，按插件链点名会指引用户去 Plugins 页移除一个
     // 不可移除的内置插件；真实解法是删掉孤儿锁（Launcher 启动路径已自动清理
@@ -246,21 +299,24 @@ pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> (String, S
         if t.contains("timed out waiting for the writer lock")
             && t.contains(".credentials.yaml.lock")
         {
-            return (
-                "dsh web failed to start: the credentials writer lock ~/.dsh/.credentials.yaml.lock is held by another dsh process or was left behind by a killed one".to_string(),
-                "If no other dsh command is running, delete ~/.dsh/.credentials.yaml.lock, then retry".to_string(),
-            );
+            return StartFailureDiagnosis {
+                problem: "dsh web failed to start: the credentials writer lock ~/.dsh/.credentials.yaml.lock is held by another dsh process or was left behind by a killed one".to_string(),
+                solution: "If no other dsh command is running, delete ~/.dsh/.credentials.yaml.lock, then retry".to_string(),
+                action_plugin: None,
+            };
         }
     }
     if let Some((plugin, error)) = tail.and_then(plugin_failure_from_log_tail) {
-        return (
-            keyf(
+        let managed = plugin == AUTH_PLUGIN_PACKAGE || plugin == CONNECTION_PLUGIN_PACKAGE;
+        return StartFailureDiagnosis {
+            problem: keyf(
                 "dsh web failed to start; plugin {plugin} failed to load:\n{error}", &[("plugin", plugin.clone()), ("error", error)],
             ),
-            keyf(
-                "Remove or update the plugin {plugin} on the Plugins page, then retry; launcher-managed authorization plugins are restored by Repair dsh stack", &[("plugin", plugin)],
+            solution: keyf(
+                "Remove or update the plugin {plugin} on the Plugins page, then retry; launcher-managed authorization plugins are restored by Repair dsh stack", &[("plugin", plugin.clone())],
             ),
-        );
+            action_plugin: (!managed).then_some(plugin),
+        };
     }
     let problem = match tail {
         Some(t) => {
@@ -285,12 +341,16 @@ pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> (String, S
         }
         _ => "Check the log at ~/.dsh/dsh-web.log; port 3899 may be occupied or the dsh CLI may need a newer Node.js".to_string(),
     };
-    (problem, solution)
+    StartFailureDiagnosis {
+        problem,
+        solution,
+        action_plugin: None,
+    }
 }
 
 /// 启动失败诊断：把 dsh-web.log 尾部的真实错误带进时间轴（进程崩溃时这里就是
 /// 堆栈），并按常见崩溃原因给出针对性方案。只读日志，不修改任何状态
-pub(crate) fn start_failure_diagnosis(log: &Path) -> (String, String) {
+pub(crate) fn start_failure_diagnosis(log: &Path) -> StartFailureDiagnosis {
     diagnose_start_failure_from_tail(read_log_tail(log, 40).as_deref())
 }
 
@@ -541,7 +601,7 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
         }
         if port_listening(WEB_PORT) {
             ctx.running("Restarting dsh web with authorization plugins…");
-            if let Err(error) = restart_dsh_web(&tailscale.1, fqdn.as_deref(), &auth) {
+            if let Err(error) = restart_dsh_web(Some(&tailscale.1), fqdn.as_deref(), &auth) {
                 return ctx.fail(
                     &error,
                     "Check the log at ~/.dsh/dsh-web.log",
@@ -550,7 +610,7 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
             }
         } else {
             ctx.running("Starting dsh web on 127.0.0.1:3899…");
-            let pid = match spawn_dsh_web(&tailscale.1, fqdn.as_deref(), &auth) {
+            let pid = match spawn_dsh_web(Some(&tailscale.1), fqdn.as_deref(), &auth) {
                 Ok(pid) => pid,
                 Err((problem, solution)) => {
                     return ctx.fail(&problem, &solution, &remaining_after(5))
@@ -560,8 +620,8 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), String> {
                 let log = dsh_dir()
                     .map(|dir| dir.join("dsh-web.log"))
                     .unwrap_or_else(|_| PathBuf::from("dsh-web.log"));
-                let (problem, solution) = start_failure_diagnosis(&log);
-                return ctx.fail(&problem, &solution, &remaining_after(5));
+                let failure = start_failure_diagnosis(&log);
+                return ctx.fail_diagnosis(&failure, &remaining_after(5));
             }
         }
         ctx.done("dsh web is running on 127.0.0.1:3899");
@@ -766,7 +826,7 @@ pub(crate) fn format_verification_checks(checks: &[String]) -> String {
 /// 重启 dsh web，确保新 profile 和授权环境生效。成功返回新进程 PID
 /// （供启动后的就绪验证探活）。
 pub(crate) fn restart_dsh_web(
-    login: &str,
+    login: Option<&str>,
     fqdn: Option<&str>,
     auth: &AuthConfig,
 ) -> Result<u32, String> {
@@ -789,7 +849,7 @@ pub(crate) fn restart_dsh_web(
         let log = dsh_dir()
             .map(|d| d.join("dsh-web.log"))
             .unwrap_or_else(|_| PathBuf::from("dsh-web.log"));
-        let problem = start_failure_diagnosis(&log).0;
+        let problem = start_failure_diagnosis(&log).problem;
         log::error!("[dsh 重启] 等待 dsh web 就绪超时: {}", problem);
         return Err(problem);
     }

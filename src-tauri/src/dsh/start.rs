@@ -7,7 +7,7 @@ use super::components::{
 use super::process::{dsh_web_pid, port_listening, process_alive, wait_web_start};
 use super::setup::StepCtx;
 use super::setup::{restart_dsh_web, spawn_dsh_web, start_failure_diagnosis};
-use super::{LOCAL_ONLY_LOGIN, SUPPORTED_DSH_VERSION, WEB_PORT};
+use super::{SUPPORTED_DSH_VERSION, WEB_PORT};
 use std::fs;
 use std::path::PathBuf;
 
@@ -195,8 +195,8 @@ fn verify_local_ready(
             let log = dsh_dir()
                 .map(|d| d.join("dsh-web.log"))
                 .unwrap_or_else(|_| PathBuf::from("dsh-web.log"));
-            let (problem, solution) = start_failure_diagnosis(&log);
-            ctx.fail_err(&problem, &solution, &[])
+            let failure = start_failure_diagnosis(&log);
+            ctx.fail_err_diagnosis(&failure, &[])
         }
         LocalReady::Unresponsive => ctx.fail_err(
             "dsh web started but is not responding on 127.0.0.1:3899",
@@ -207,13 +207,14 @@ fn verify_local_ready(
 }
 
 /// 一键启动 dsh web 并返回本机访问地址（不碰 Tailscale Serve）。
-/// 本地访问遵循 dsh 原生方式：不安装授权插件，用不可能命中的远程登录名
-/// 启动；web 以 dsh 自身的 launch token 鉴权，启动时把带 token 的地址打印
-/// 进 dsh-web.log，这里解析出该地址交给前端打开——浏览器经 token 换取
-/// 持久 cookie 后即为 dsh 原生的已登录会话（web 重启会换 token，需重新
-/// 从本应用打开）。与 dsh_setup 一样按 LOCAL_STEPS 逐步发出 dsh-step 事件，
-/// 前端时间轴据此显示本地模式安装进度。ready 步是真实就绪验证（HTTP 应答
-/// + 进程存活），boot 后崩溃会以失败节点带上日志里的具体报错
+/// 本地访问遵循 dsh 原生方式：web 以 dsh 自身的 launch token 鉴权，启动时
+/// 把带 token 的地址打印进 dsh-web.log，这里解析出该地址交给前端打开——
+/// 浏览器经 token 换取持久 cookie 后即为 dsh 原生的已登录会话（web 重启会
+/// 换 token，需重新从本应用打开）。不注入登录名 env：授权插件按空 allowlist
+/// 默认拒绝全部远程登录，本地链路不经它。与 dsh_setup 一样按 LOCAL_STEPS
+/// 逐步发出 dsh-step 事件，前端时间轴据此显示本地模式安装进度。ready 步是
+/// 真实就绪验证（HTTP 应答 + 进程存活），boot 后崩溃会以失败节点带上日志里
+/// 的具体报错
 #[tauri::command]
 pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
     // 全程阻塞 I/O（npm 安装、进程拉起、最长 60s 端口等待 + 10s token 轮询）：
@@ -307,7 +308,7 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
                 id: steps[2],
             };
             ctx.running("Restarting dsh web…");
-            match restart_dsh_web(LOCAL_ONLY_LOGIN, None, &AuthConfig::default()) {
+            match restart_dsh_web(None, None, &AuthConfig::default()) {
                 Ok(pid) => {
                     ctx.done("dsh web is running on 127.0.0.1:3899");
                     pid
@@ -332,7 +333,7 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
     };
     ctx.running("Starting dsh web on 127.0.0.1:3899…");
     let log_offset = dsh_web_log_len();
-    let pid = match spawn_dsh_web(LOCAL_ONLY_LOGIN, None, &AuthConfig::default()) {
+    let pid = match spawn_dsh_web(None, None, &AuthConfig::default()) {
         Ok(pid) => pid,
         Err((problem, solution)) => {
             return ctx.fail_err(&problem, &solution, &remaining_after(start_idx));
@@ -342,8 +343,8 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
         let log = dsh_dir()
             .map(|d| d.join("dsh-web.log"))
             .unwrap_or_else(|_| PathBuf::from("dsh-web.log"));
-        let (problem, solution) = start_failure_diagnosis(&log);
-        return ctx.fail_err(&problem, &solution, &remaining_after(start_idx));
+        let failure = start_failure_diagnosis(&log);
+        return ctx.fail_err_diagnosis(&failure, &remaining_after(start_idx));
     }
     ctx.done("dsh web is running on 127.0.0.1:3899");
     verify_local_ready(app, steps, pid, log_offset)

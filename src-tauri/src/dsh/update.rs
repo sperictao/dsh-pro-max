@@ -7,10 +7,7 @@ use super::components::{
 };
 use super::process::{port_listening, run_capture};
 use super::setup::restart_dsh_web;
-use super::{
-    AUTH_PLUGIN_PACKAGE, CONNECTION_PLUGIN_PACKAGE, LOCAL_ONLY_LOGIN, SUPPORTED_DSH_VERSION,
-    WEB_PORT,
-};
+use super::{AUTH_PLUGIN_PACKAGE, CONNECTION_PLUGIN_PACKAGE, SUPPORTED_DSH_VERSION, WEB_PORT};
 use crate::version::parse_version;
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -23,13 +20,16 @@ use crate::i18n::keyf;
 
 // ============ 更新 ============
 
-pub(crate) fn runtime_auth_context() -> (String, Option<String>) {
+/// 运行期授权上下文 (login, fqdn)：login 仅在 Tailscale 身份可解析时为
+/// Some——解析失败不再注入哨兵登录名（授权插件按空 allowlist 默认
+/// deny-all），只影响远程访问，不影响本机使用
+pub(crate) fn runtime_auth_context() -> (Option<String>, Option<String>) {
     let Some(ts) = tailscale_path() else {
-        return (LOCAL_ONLY_LOGIN.to_string(), None);
+        return (None, None);
     };
     match resolve_tailscale_login(&ts) {
-        Ok(login) => (login, resolve_fqdn()),
-        Err(_) => (LOCAL_ONLY_LOGIN.to_string(), None),
+        Ok(login) => (Some(login), resolve_fqdn()),
+        Err(_) => (None, None),
     }
 }
 
@@ -52,7 +52,7 @@ fn dsh_update_once(app: &tauri::AppHandle) -> Result<String, String> {
     if was_running {
         let (login, fqdn) = runtime_auth_context();
         let auth = resolve_auth_config()?;
-        restart_dsh_web(&login, fqdn.as_deref(), &auth)?;
+        restart_dsh_web(login.as_deref(), fqdn.as_deref(), &auth)?;
     }
     Ok(version)
 }
@@ -175,7 +175,7 @@ fn dsh_remove_plugins_once() -> Result<(), String> {
     if port_listening(WEB_PORT) {
         let (login, fqdn) = runtime_auth_context();
         let auth = resolve_auth_config()?;
-        restart_dsh_web(&login, fqdn.as_deref(), &auth)?;
+        restart_dsh_web(login.as_deref(), fqdn.as_deref(), &auth)?;
     }
     Ok(())
 }
@@ -444,7 +444,7 @@ fn dsh_install_version_once(version: &str) -> Result<String, String> {
     if was_running {
         let (login, fqdn) = runtime_auth_context();
         let auth = resolve_auth_config()?;
-        restart_dsh_web(&login, fqdn.as_deref(), &auth)?;
+        restart_dsh_web(login.as_deref(), fqdn.as_deref(), &auth)?;
     }
     Ok(version.to_string())
 }

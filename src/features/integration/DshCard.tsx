@@ -105,6 +105,38 @@ function StartLogDisclosure() {
   );
 }
 
+// 失败节点的「禁用肇事插件并重试」：仅第三方插件（Rust 诊断已过滤受管
+// 授权插件）。禁用失败如实 toast 且不重试；成功后走 startDshWeb 的既有
+// 编排（busy 管理与时间轴重置都在那，禁用成功的提示留在时间轴重置前）
+function DisableRetryButton({ plugin, disabled }: { plugin: string; disabled: boolean }) {
+  const { t } = useTranslation();
+  const toast = useAppStore((s) => s.toast);
+  const [disabling, setDisabling] = useState(false);
+  return (
+    <button
+      className={BTN_SM}
+      disabled={disabled || disabling}
+      onClick={() => {
+        void (async () => {
+          setDisabling(true);
+          try {
+            await cmd.marketSetPluginEnabled(plugin, false);
+            toast(t("Plugin {{plugin}} disabled", { plugin }), "success");
+          } catch (e) {
+            toast(t("Failed to disable {{plugin}}: {{error}}", { plugin, error: tErr(String(e)) }), "error");
+            return;
+          } finally {
+            setDisabling(false);
+          }
+          await startDshWeb();
+        })();
+      }}
+    >
+      {disabling ? t("Disabling...") : t("Disable {{plugin}} and retry", { plugin })}
+    </button>
+  );
+}
+
 // 地址行：URL 胶囊靠左、复制/打开靠右（自按钮行右侧迁来，独占一行）
 function AddressRow({
   url,
@@ -499,6 +531,9 @@ export function DshCard() {
                       {step.problem && <div className="timeline-problem">{step.problem}</div>}
                       {step.solution && <div className="timeline-solution">{step.solution}</div>}
                       {(step.id === "start" || step.id === "ready") && <StartLogDisclosure />}
+                      {step.actionPlugin && (
+                        <DisableRetryButton plugin={step.actionPlugin} disabled={busy} />
+                      )}
                     </div>
                   )}
                 </div>

@@ -25,15 +25,17 @@ pub(crate) struct AuthConfig {
 }
 
 impl AuthConfig {
-    /// 逗号拼接的完整 allowlist（本机当前登录 + 额外登录名，去重）。
-    pub(crate) fn allowed_logins(&self, login: &str) -> String {
-        let mut all = vec![login.to_string()];
+    /// 逗号拼接的完整 allowlist（本机当前登录 + 额外登录名，去重）；
+    /// 登录名与额外名单全空时返回 None——调用方据此省略整个 env 注入，
+    /// 授权插件按自身默认（空 allowlist = deny-all）拒绝全部远程登录
+    pub(crate) fn allowed_logins(&self, login: Option<&str>) -> Option<String> {
+        let mut all: Vec<String> = login.map(str::to_string).into_iter().collect();
         for extra in &self.extra_allowed_logins {
-            if extra != login {
+            if Some(extra.as_str()) != login {
                 all.push(extra.clone());
             }
         }
-        all.join(",")
+        (!all.is_empty()).then(|| all.join(","))
     }
 
     /// 需经 Serve 转发的 capability（0/1/2 个），按 use 在前、admin 在后的固定顺序。
@@ -44,9 +46,13 @@ impl AuthConfig {
             .collect()
     }
 
-    /// spawn_detached 的 env 列表：allowed_logins 必注入，use/admin 仅在配置时注入。
-    pub(crate) fn env_pairs<'a>(&'a self, login: &'a str) -> Vec<(&'a str, String)> {
-        let mut envs = vec![(TAILSCALE_LOGIN_ENV, self.allowed_logins(login))];
+    /// spawn_detached 的 env 列表：allowlist 仅在确有登录名时注入，use/admin
+    /// 仅在配置时注入。
+    pub(crate) fn env_pairs(&self, login: Option<&str>) -> Vec<(&'static str, String)> {
+        let mut envs = Vec::new();
+        if let Some(logins) = self.allowed_logins(login) {
+            envs.push((TAILSCALE_LOGIN_ENV, logins));
+        }
         if let Some(cap) = &self.use_capability {
             envs.push((USE_CAP_ENV, cap.clone()));
         }
