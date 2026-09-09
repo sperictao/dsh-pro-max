@@ -2,8 +2,8 @@
 // 版本卡挂载自动查一次（npm view dist-tags 15s 超时，失败原因持久展示）；
 // 已装行的状态胶囊与列表行的「验证栈」标记把兼容事实前置到一眼可读
 // （primary=验证栈 / muted=同线更新未验证 / destructive=不兼容，布尔值由 Rust 计算）；
-// 安装按钮允许切换到任意 tag 指向的版本——高于验证栈的行有警示，
-// 风险如实披露但不阻断用户选择（授权插件只影响远程链路）
+// 安装按钮允许切换到任意 tag 指向的版本——不兼容的行有红字警示，装完再 toast
+// 提示授权插件可能失效，风险如实披露但不阻断用户选择（授权插件只影响远程链路）
 
 import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
@@ -54,12 +54,13 @@ export function DshVersionSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const install = async (version: string) => {
+  const install = async (version: string, incompatible: boolean) => {
     if (installing) return;
     setInstalling(version);
     try {
       await cmd.dshInstallVersion(version);
       toast(t("dsh updated to {{version}}", { version }), "success");
+      if (incompatible) toast(t("Authorization plugins may be incompatible; if local & remote access break, use startup diagnostics to disable them"), "info");
       await check();
     } catch (e) {
       toast(t("Install failed: {{error}}", { error: tErr(String(e)) }), "error");
@@ -127,8 +128,8 @@ export function DshVersionSection() {
                 {!tag.isInstalled && (
                   <button
                     className={BTN_SM}
-                    disabled={busy || tag.incompatible}
-                    onClick={() => void install(tag.version)}
+                    disabled={busy}
+                    onClick={() => void install(tag.version, tag.incompatible)}
                   >
                     {installing === tag.version ? t("Installing…") : t("Install")}
                   </button>

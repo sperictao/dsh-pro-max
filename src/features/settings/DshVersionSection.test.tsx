@@ -65,6 +65,46 @@ describe("DshVersionSection cross-page state", () => {
 });
 
 describe("DshVersionSection compatibility facts", () => {
+  it("keeps the install button enabled for incompatible versions and warns after install", async () => {
+    const withIncompatible: DshLatestInfo = {
+      tags: [
+        {
+          tag: "next",
+          version: "0.2.0",
+          isInstalled: false,
+          aboveSupported: false,
+          incompatible: true,
+        },
+      ],
+      installedVersion: "0.1.0-rc.6",
+      installedCompatible: true,
+      installedAboveSupported: false,
+      supportedVersion: "0.1.0-rc.6",
+      error: null,
+    };
+    vi.spyOn(cmd, "dshCheckLatest").mockResolvedValue(withIncompatible);
+    const installSpy = vi.spyOn(cmd, "dshInstallVersion").mockResolvedValue("0.2.0");
+    const toastSpy = vi.fn();
+    useAppStore.setState({ toast: toastSpy });
+    const user = userEvent.setup();
+
+    render(createElement(DshVersionSection));
+    const installBtn = await screen.findByRole("button", { name: "Install" });
+    // 不兼容的版本不再被禁用，只是带红色警示文案
+    expect(installBtn).not.toBeDisabled();
+    expect(screen.getByText("incompatible with the bundled plugin stack")).toBeInTheDocument();
+
+    await user.click(installBtn);
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("0.2.0"));
+    // 装完成功 toast 之外追加授权插件风险提示
+    await waitFor(() =>
+      expect(toastSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Authorization plugins may be incompatible"),
+        "info",
+      ),
+    );
+  });
+
   it("marks the installed version and the matching tag as the verified stack", async () => {
     const verified: DshLatestInfo = {
       tags: [

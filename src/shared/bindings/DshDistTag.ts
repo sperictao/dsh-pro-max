@@ -21,6 +21,6 @@ isInstalled: boolean,
  */
 aboveSupported: boolean, 
 /**
- * 过不了版本闸门（跨线或低于插件栈下限，装上本地与远程一起失效）
+ * 跨线或低于插件栈下限：授权插件大概率失效，但只做展示标记不拦截安装
  */
 incompatible: boolean, };

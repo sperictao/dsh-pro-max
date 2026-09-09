@@ -193,7 +193,7 @@ pub struct DshDistTag {
     pub is_installed: bool,
     /// 高于 Launcher 验证栈（授权插件未验证）
     pub above_supported: bool,
-    /// 过不了版本闸门（跨线或低于插件栈下限，装上本地与远程一起失效）
+    /// 跨线或低于插件栈下限：授权插件大概率失效，但只做展示标记不拦截安装
     pub incompatible: bool,
 }
 
@@ -385,8 +385,9 @@ pub(crate) fn sort_tag_pairs_by_publish_time(
 
 /// 安装指定版本的 dsh（设置页版本卡的「安装」按钮）：参数化的安装管道，
 /// 与 install_supported_dsh 同构（npm install -g + 安装后版本校验），
-/// 装完若 web 正在运行则重启。版本闸门拦截跨线版本；同线高于锁定的
-/// 版本可装（above_supported 标记如实披露「未验证」状态）。
+/// 装完若 web 正在运行则重启。任何可解析版本均可安装——兼容性只做展示
+/// 标记（incompatible/above_supported），不做安装拦截；跨线版本的风险由
+/// 前端红字披露，装上后授权插件失效走启动失败诊断兜底。
 #[tauri::command]
 pub async fn dsh_install_version(version: String) -> Result<String, String> {
     super::ipc_blocking(move || dsh_install_version_once(&version)).await
@@ -397,14 +398,6 @@ fn dsh_install_version_once(version: &str) -> Result<String, String> {
         return Err(keyf(
             "Invalid dsh version: {version}",
             &[("version", version.to_string())],
-        ));
-    }
-    // 设置页逐版本安装同样过版本闸门：跨线的 dsh 与 vendored 授权栈不
-    // 兼容（如 0.1.3-alpha.1 会让本地与远程访问一起失效），装上即坏，直接拒绝
-    if !dsh_version_is_compatible(Some(version)) {
-        let min = SUPPORTED_DSH_VERSION;
-        return Err(keyf(
-            "dsh {version} is outside the supported line ({min} or newer of the same release line); install a compatible version instead", &[("version", version.to_string()), ("min", min.to_string())],
         ));
     }
     let was_running = port_listening(WEB_PORT);
