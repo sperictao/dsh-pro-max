@@ -105,6 +105,9 @@ export const modelConfigSave = (config: ModelConfig) => invokeTyped<void>("model
 // models.dev 全量目录：load 读本地快照（缺失/损坏为 null），refresh 拉取并落快照
 export const modelCatalogLoad = () => invokeTyped<ModelCatalogFile | null>("model_catalog_load");
 export const modelCatalogRefresh = () => invokeTyped<ModelCatalogFile>("model_catalog_refresh");
+// launcher 进程环境中的密钥引用状态；只返回 env name -> available，不返回 secret。
+export const modelEnvStatus = (names: string[]) =>
+  invokeTyped<Record<string, boolean>>("model_env_status", { names });
 // 上游模型列表（兼连通性验证）；密钥经环境变量名解析，普通 Provider headers 一并发送，
 // 凭据类保留头由 Rust 层再次过滤，不能覆盖 apiKeyEnv 认证。
 export const modelRemoteList = (
