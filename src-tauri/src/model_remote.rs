@@ -1,7 +1,8 @@
 //! Provider 模型发现请求适配。
 //!
-//! `dsh::models` 负责 settings.yaml 模型域；这里仅承接带自定义 headers 的
-//! `/models` HTTP 探测命令，避免凭据类 header 覆盖 `apiKeyEnv` 的认证语义。
+//! `dsh::models` 负责 settings.yaml 模型域；这里承接带自定义 headers 的
+//! `/models` HTTP 探测以及凭据环境变量可用性检查。后者只返回布尔值，绝不
+//! 把 secret 内容跨 IPC 暴露给前端。
 
 use crate::i18n::keyf;
 use serde::Deserialize;
@@ -17,6 +18,25 @@ const RESERVED_HEADERS: [&str; 4] = [
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+fn env_value_available(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn required_env_value(name: &str) -> Result<String, String> {
+    match std::env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Ok(value),
+        _ => {
+            crate::logging::warn("模型列表拉取缺密钥环境变量", name);
+            Err(keyf(
+                "Environment variable is not set in the environment where dsh-pro-max was launched",
+                &[],
+            ))
+        }
+    }
 }
 
 fn remote_models_url(base_url: &str, api: Option<&str>) -> Result<String, String> {
@@ -81,16 +101,10 @@ fn fetch_remote_models(
     api_key_env: Option<&str>,
     headers: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<String>, String> {
-    // apiKeyEnv 未配置 = 明确允许匿名模型发现；一旦配置则环境变量必须存在，
-    // 不静默回退匿名访问，避免把凭据配置错误伪装成可用状态。
+    // apiKeyEnv 未配置 = 明确允许匿名模型发现；一旦配置则环境变量必须存在且
+    // 非空，不静默回退匿名访问，避免把凭据配置错误伪装成可用状态。
     let key = if let Some(env_name) = non_empty(api_key_env) {
-        Some(std::env::var(env_name).map_err(|_| {
-            crate::logging::warn("模型列表拉取缺密钥环境变量", env_name);
-            keyf(
-                "Environment variable is not set in the environment where dsh-pro-max was launched",
-                &[],
-            )
-        })?)
+        Some(required_env_value(env_name)?)
     } else {
         None
     };
@@ -136,6 +150,24 @@ fn fetch_remote_models(
         .text()
         .map_err(|_| keyf("Failed to read the models response", &[]))?;
     Ok(parse_remote_models(&text))
+}
+
+/// 批量检查密钥环境变量是否在 launcher 当前进程环境中存在且非空。
+/// 返回值仅包含调用方传入的变量名与布尔状态，不读取/返回 secret 内容。
+#[tauri::command]
+pub fn model_env_status(names: Vec<String>) -> BTreeMap<String, bool> {
+    names
+        .into_iter()
+        .filter_map(|raw| {
+            let name = raw.trim().to_string();
+            if name.is_empty() {
+                None
+            } else {
+                let available = env_value_available(&name);
+                Some((name, available))
+            }
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -189,5 +221,17 @@ mod tests {
         );
         assert!(request.headers().get("authorization").is_none());
         assert!(request.headers().get("x-api-key").is_none());
+    }
+
+    #[test]
+    fn env_status_trims_dedupes_and_does_not_expose_values() {
+        let missing = "__DSH_PRO_MAX_READINESS_TEST_MISSING_8E4D3A2F__";
+        let status = model_env_status(vec![
+            "".to_string(),
+            format!("  {missing}  "),
+            missing.to_string(),
+        ]);
+        assert_eq!(status.len(), 1);
+        assert_eq!(status.get(missing), Some(&false));
     }
 }
