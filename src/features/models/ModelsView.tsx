@@ -312,7 +312,7 @@ export function ModelsView() {
                 className={`${SELECT} w-44`}
                 value={cfg.defaultReasoningEffort ?? ""}
                 disabled={busyGlobal}
-                onChange={(event) => void persistReasoning(event.target.value)}
+                onChange={(event) => void persistReasoning(event.target.value).catch(() => undefined)}
                 aria-label={t("Reasoning Effort")}
               >
                 <option value="">{t("Not set")}</option>
@@ -429,7 +429,7 @@ export function ModelsView() {
                         <button
                           className={BTN_SM}
                           disabled={rowBusy || busyGlobal}
-                          onClick={() => void makeDefault(provider)}
+                          onClick={() => void makeDefault(provider).catch(() => undefined)}
                         >
                           {t("Make default")}
                         </button>
@@ -457,7 +457,7 @@ export function ModelsView() {
                           className={BTN_DANGER_SM}
                           id={`btn-confirm-delete-${index}`}
                           disabled={rowBusy || busyGlobal}
-                          onClick={() => void removeProvider(provider.route)}
+                          onClick={() => void removeProvider(provider.route).catch(() => undefined)}
                         >
                           {t("Delete?")}
                         </button>
@@ -608,6 +608,8 @@ function DefaultModelMenu({
       setOpen(false);
       setQuery("");
       setHi(-1);
+    } catch {
+      // persist 已向用户展示错误；保持菜单打开，允许直接重试或选择其他模型。
     } finally {
       setPicking(false);
     }
