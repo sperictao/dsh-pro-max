@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -11,15 +11,15 @@ describe("HeadersEditor", () => {
     render(createElement(HeadersEditor, { headers: null, onChange }));
 
     await user.click(screen.getByRole("button", { name: "Import JSON" }));
-    await user.type(
-      screen.getByLabelText("Headers JSON"),
-      JSON.stringify({
-        "X-Title": "my-app",
-        Authorization: "Bearer literal-secret",
-        "x-api-key": "literal-secret",
-      }),
-      { parseSpecialCharSequences: false },
-    );
+    fireEvent.change(screen.getByLabelText("Headers JSON"), {
+      target: {
+        value: JSON.stringify({
+          "X-Title": "my-app",
+          Authorization: "Bearer literal-secret",
+          "x-api-key": "literal-secret",
+        }),
+      },
+    });
     await user.click(screen.getByRole("button", { name: "Apply" }));
 
     expect(onChange).toHaveBeenLastCalledWith({ "X-Title": "my-app" });
