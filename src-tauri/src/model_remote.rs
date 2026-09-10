@@ -5,16 +5,139 @@
 //! 把 secret 内容跨 IPC 暴露给前端。
 
 use crate::i18n::keyf;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const REMOTE_LIST_TIMEOUT_SECS: u64 = 10;
+const PROVIDER_MODELS_CACHE_VERSION: u8 = 1;
+static PROVIDER_MODELS_CACHE_LOCK: Mutex<()> = Mutex::new(());
 const RESERVED_HEADERS: [&str; 4] = [
     "authorization",
     "x-api-key",
     "cookie",
     "proxy-authorization",
 ];
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderModelsCacheEntry {
+    pub models: Vec<String>,
+    pub fetched_at: u64,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ProviderModelsCacheFile {
+    version: u8,
+    #[serde(default)]
+    entries: BTreeMap<String, ProviderModelsCacheEntry>,
+}
+
+fn provider_models_cache_path() -> Result<PathBuf, String> {
+    Ok(crate::config::home_dir()?
+        .join(".dsh-pro-max")
+        .join("cache")
+        .join("provider-models.json"))
+}
+
+fn provider_models_cache_key(
+    base_url: &str,
+    api: Option<&str>,
+    api_key_env: Option<&str>,
+    headers: Option<&BTreeMap<String, String>>,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(base_url.trim().trim_end_matches('/').as_bytes());
+    hasher.update([0]);
+    hasher.update(api.unwrap_or("").trim().as_bytes());
+    hasher.update([0]);
+    hasher.update(api_key_env.unwrap_or("").trim().as_bytes());
+    hasher.update([0]);
+    if let Some(headers) = headers {
+        for (name, value) in headers {
+            if name.trim().is_empty() || is_reserved_header(name) {
+                continue;
+            }
+            hasher.update(name.trim().to_ascii_lowercase().as_bytes());
+            hasher.update([0]);
+            hasher.update(value.as_bytes());
+            hasher.update([0]);
+        }
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn load_provider_models_cache() -> ProviderModelsCacheFile {
+    let Ok(path) = provider_models_cache_path() else {
+        return ProviderModelsCacheFile::default();
+    };
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return ProviderModelsCacheFile::default();
+    };
+    match serde_json::from_str::<ProviderModelsCacheFile>(&raw) {
+        Ok(cache) if cache.version == PROVIDER_MODELS_CACHE_VERSION => cache,
+        Ok(_) => ProviderModelsCacheFile::default(),
+        Err(error) => {
+            crate::logging::warn("解析 Provider 模型缓存失败", &error.to_string());
+            ProviderModelsCacheFile::default()
+        }
+    }
+}
+
+fn save_provider_models_cache(cache: &ProviderModelsCacheFile) -> Result<(), String> {
+    let path = provider_models_cache_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let raw = serde_json::to_string_pretty(cache).map_err(|error| error.to_string())?;
+    fs::write(path, raw).map_err(|error| error.to_string())
+}
+
+fn cached_provider_models(
+    base_url: &str,
+    api: Option<&str>,
+    api_key_env: Option<&str>,
+    headers: Option<&BTreeMap<String, String>>,
+) -> Option<ProviderModelsCacheEntry> {
+    let _guard = PROVIDER_MODELS_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let key = provider_models_cache_key(base_url, api, api_key_env, headers);
+    load_provider_models_cache().entries.get(&key).cloned()
+}
+
+fn remember_provider_models(
+    base_url: &str,
+    api: Option<&str>,
+    api_key_env: Option<&str>,
+    headers: Option<&BTreeMap<String, String>>,
+    models: &[String],
+) {
+    if models.is_empty() {
+        return;
+    }
+    let _guard = PROVIDER_MODELS_CACHE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let fetched_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let key = provider_models_cache_key(base_url, api, api_key_env, headers);
+    let mut cache = load_provider_models_cache();
+    cache.version = PROVIDER_MODELS_CACHE_VERSION;
+    cache.entries.insert(
+        key,
+        ProviderModelsCacheEntry { models: models.to_vec(), fetched_at },
+    );
+    if let Err(error) = save_provider_models_cache(&cache) {
+        crate::logging::warn("写入 Provider 模型缓存失败", &error);
+    }
+}
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
@@ -274,6 +397,24 @@ pub fn model_env_status(names: Vec<String>) -> BTreeMap<String, bool> {
 }
 
 #[tauri::command]
+pub async fn model_remote_cache_get(
+    base_url: String,
+    api: Option<String>,
+    api_key_env: Option<String>,
+    headers: Option<BTreeMap<String, String>>,
+) -> Result<Option<ProviderModelsCacheEntry>, String> {
+    crate::dsh::ipc_blocking(move || {
+        Ok(cached_provider_models(
+            &base_url,
+            api.as_deref(),
+            api_key_env.as_deref(),
+            headers.as_ref(),
+        ))
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn model_test_connection(
     base_url: String,
     api: String,
@@ -301,12 +442,20 @@ pub async fn model_remote_list_with_headers(
     headers: Option<BTreeMap<String, String>>,
 ) -> Result<Vec<String>, String> {
     crate::dsh::ipc_blocking(move || {
-        fetch_remote_models(
+        let models = fetch_remote_models(
             &base_url,
             api.as_deref(),
             api_key_env.as_deref(),
             headers.as_ref(),
-        )
+        )?;
+        remember_provider_models(
+            &base_url,
+            api.as_deref(),
+            api_key_env.as_deref(),
+            headers.as_ref(),
+            &models,
+        );
+        Ok(models)
     })
     .await
 }
@@ -377,6 +526,43 @@ mod tests {
 
         let anthropic = provider_test_body("anthropic-messages", "m").unwrap();
         assert_eq!(anthropic["max_tokens"], 16);
+    }
+
+    #[test]
+    fn provider_cache_key_tracks_connection_fingerprint_without_secret_values() {
+        let mut headers = BTreeMap::new();
+        headers.insert("X-Tenant".to_string(), "desktop".to_string());
+        let a = provider_models_cache_key(
+            "https://api.example.com/v1/",
+            Some("openai-responses"),
+            Some("API_KEY_ENV"),
+            Some(&headers),
+        );
+        let b = provider_models_cache_key(
+            "https://api.example.com/v1",
+            Some("openai-responses"),
+            Some("API_KEY_ENV"),
+            Some(&headers),
+        );
+        assert_eq!(a, b);
+
+        headers.insert("X-Tenant".to_string(), "other".to_string());
+        let c = provider_models_cache_key(
+            "https://api.example.com/v1",
+            Some("openai-responses"),
+            Some("API_KEY_ENV"),
+            Some(&headers),
+        );
+        assert_ne!(a, c);
+
+        headers.insert("Authorization".to_string(), "Bearer ignored".to_string());
+        let d = provider_models_cache_key(
+            "https://api.example.com/v1",
+            Some("openai-responses"),
+            Some("API_KEY_ENV"),
+            Some(&headers),
+        );
+        assert_eq!(c, d);
     }
 
     #[test]

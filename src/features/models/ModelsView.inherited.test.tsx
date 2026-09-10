@@ -40,6 +40,7 @@ beforeEach(() => {
   useAppStore.setState({ toasts: [], modelConfigBusy: false });
   vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
   vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(catalog);
+  vi.spyOn(cmd, "modelRemoteCacheGet").mockResolvedValue(null);
   vi.spyOn(cmd, "modelEnvStatus").mockResolvedValue({ OPENAI_API_KEY: true });
   vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
 });

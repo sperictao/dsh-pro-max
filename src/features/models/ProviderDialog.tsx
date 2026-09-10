@@ -10,7 +10,8 @@ import { BTN, BTN_PRIMARY, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/li
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 import { HeadersEditor } from "./HeadersEditor";
-import { ModelPanes, fetchProviderModels } from "./ModelPanes";
+import { ModelPanes } from "./ModelPanes";
+import { useProviderModels } from "./useProviderModels";
 import {
   API_OPTIONS,
   EFFORT_OPTIONS,
@@ -46,9 +47,6 @@ export function ProviderDialog({
   const [serviceChosen, setServiceChosen] = useState(isEdit);
   const [urlError, setUrlError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [remote, setRemote] = useState<string[] | null>(null);
-  const [fetching, setFetching] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
@@ -66,22 +64,22 @@ export function ProviderDialog({
   const knownService = effectivePreset != null;
   const showComposer = isEdit || serviceChosen;
 
-  // 连接参数/凭据引用/请求头变化后，旧拉取结果不再可信。
-  const revokeRemote = () => {
-    setRemote(null);
-    setFetchError(null);
-  };
-
   const updateConnection = (value: Partial<ProviderConfig>) => {
     patch(value);
-    revokeRemote();
     setTestResult(null);
     setSubmitError(null);
   };
 
   const currentUrlIssue = validateBaseUrl(draft.baseURL ?? "");
+  // 托管预设在凭据引用尚未填写时不主动撞匿名请求；自定义端点允许无认证发现。
+  const discoveryActive =
+    showComposer &&
+    !currentUrlIssue &&
+    Boolean(draft.baseURL?.trim()) &&
+    (!knownService || Boolean(draft.apiKeyEnv?.trim()));
+  const discovery = useProviderModels(discoveryActive, draft);
   const testTarget = providerConnectionTarget(draft);
-  const canTest = showComposer && !currentUrlIssue && Boolean(testTarget) && !saving && !fetching && !testing;
+  const canTest = showComposer && !currentUrlIssue && Boolean(testTarget) && !saving && !testing;
 
   const onBaseURLBlur = () => {
     if (draft.baseURL) {
@@ -114,19 +112,6 @@ export function ProviderDialog({
     }
   };
 
-  const fetchModels = async () => {
-    setFetching(true);
-    setFetchError(null);
-    try {
-      setRemote(await fetchProviderModels(draft));
-    } catch (error) {
-      setRemote(null);
-      setFetchError(tErr(String(error)));
-    } finally {
-      setFetching(false);
-    }
-  };
-
   const applyPreset = (preset: ModelPreset | null) => {
     setServiceChosen(true);
     setPickedPreset(preset);
@@ -134,7 +119,6 @@ export function ProviderDialog({
     setUrlError(null);
     setSubmitError(null);
     setTestResult(null);
-    revokeRemote();
 
     if (!preset) {
       // 自定义端点从干净连接配置开始；extra 等初始为空，不产生第二份事实。
@@ -411,11 +395,11 @@ export function ProviderDialog({
               <ModelPanes
                 provider={draft}
                 catalog={catalog}
-                remote={remote}
-                fetching={fetching}
-                fetchError={fetchError}
+                remote={discovery.models}
+                fetching={discovery.status === "loading"}
+                fetchError={discovery.error ? tErr(discovery.error) : null}
                 onModelsChange={setModels}
-                onFetch={() => void fetchModels()}
+                onFetch={discovery.reload}
               />
 
               {advancedOpen && (

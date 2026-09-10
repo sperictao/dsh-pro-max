@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   vi.spyOn(cmd, "modelTestConnection").mockResolvedValue(undefined);
+  vi.spyOn(cmd, "modelRemoteCacheGet").mockResolvedValue(null);
 });
 
 describe("ProviderDialog connection test", () => {

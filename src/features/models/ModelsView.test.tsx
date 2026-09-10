@@ -67,6 +67,7 @@ beforeEach(() => {
   useAppStore.setState({ toasts: [], modelConfigBusy: false });
   vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
   vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(catalog);
+  vi.spyOn(cmd, "modelRemoteCacheGet").mockResolvedValue(null);
   vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
   vi.spyOn(cmd, "modelEnvStatus").mockImplementation(async (names) =>
     Object.fromEntries(names.map((name) => [name, true])),

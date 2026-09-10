@@ -108,6 +108,20 @@ export const modelCatalogRefresh = () => invokeTyped<ModelCatalogFile>("model_ca
 // launcher 进程环境中的密钥引用状态；只返回 env name -> available，不返回 secret。
 export const modelEnvStatus = (names: string[]) =>
   invokeTyped<Record<string, boolean>>("model_env_status", { names });
+export type ProviderModelsCacheEntry = { models: string[]; fetchedAt: number };
+// Provider 模型发现缓存：按连接指纹读取，只返回模型 ID 与时间戳。
+export const modelRemoteCacheGet = (
+  baseURL: string,
+  api: string | null,
+  apiKeyEnv: string | null,
+  headers: Record<string, string | undefined> | null = null,
+) =>
+  invokeTyped<ProviderModelsCacheEntry | null>("model_remote_cache_get", {
+    baseUrl: baseURL,
+    api,
+    apiKeyEnv,
+    headers,
+  });
 // 独立连接测试：向真实推理端点发送最多 16 个输出 token 的最小请求；不依赖 /models。
 export const modelTestConnection = (
   baseURL: string,

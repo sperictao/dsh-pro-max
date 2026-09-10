@@ -1,10 +1,9 @@
 // 模型双栏：左栏该服务的候选模型（上游拉取 ∪ models.dev 目录，搜索/全选/点选），
 // 右栏已选模型（每条可展开高级面板：显示名/上下文窗口/最大输出/推理档/图片输入）。
-// 端点三元组变更后旧拉取结果不可信，由父组件在变更时撤下（remote 置 null）。
+// 候选列表由 useProviderModels 以 cache-first SWR 提供；连接指纹变化时旧结果立即失效。
 
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import * as cmd from "@/shared/commands";
 import { BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import {
@@ -409,11 +408,3 @@ function ModelAdvancedPanel({
   );
 }
 
-export async function fetchProviderModels(provider: ProviderConfig): Promise<string[]> {
-  return await cmd.modelRemoteList(
-    provider.baseURL ?? "",
-    provider.api ?? null,
-    provider.apiKeyEnv ?? null,
-    provider.headers,
-  );
-}
