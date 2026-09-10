@@ -236,9 +236,9 @@ export function ModelsView() {
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
 
-  /** 服务行快捷探测：复用 model_remote_list。成功既证明凭据/端点可达，也返回模型数。 */
+  /** 服务行快捷探测：复用 model_remote_list。无 apiKeyEnv 时按匿名端点探测。 */
   const probeProvider = async (provider: ProviderConfig) => {
-    if (!provider.baseURL?.trim() || !provider.apiKeyEnv?.trim()) return;
+    if (!provider.baseURL?.trim()) return;
     setBusyRoute(provider.route);
     try {
       const models = await cmd.modelRemoteList(provider.baseURL, provider.api, provider.apiKeyEnv);
@@ -370,7 +370,7 @@ export function ModelsView() {
                 const armed = armedDelete === provider.route;
                 const rowBusy = busyRoute === provider.route;
                 const firstModel = provider.models[0]?.id ?? null;
-                const canProbe = Boolean(provider.baseURL?.trim() && provider.apiKeyEnv?.trim());
+                const canProbe = Boolean(provider.baseURL?.trim());
                 return (
                   <div
                     key={provider.route}
