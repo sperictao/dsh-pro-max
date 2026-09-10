@@ -13,7 +13,6 @@ import {
   familyOf,
   inputView,
   reasoningView,
-  SUGGESTION_LIMIT,
 } from "./shared";
 
 const modelIdKey = (id: string) => id.toLowerCase();
@@ -83,7 +82,7 @@ export function ModelPanes({
     const visible = q
       ? rows.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
       : rows;
-    return visible.slice(0, SUGGESTION_LIMIT);
+    return visible;
   }, [remote, catalog, family, query, provider.models, index]);
 
   const visibleSelected = candidates.filter((e) => selectedIds.has(modelIdKey(e.id)));
@@ -453,4 +452,3 @@ function ModelAdvancedPanel({
     </div>
   );
 }
-
