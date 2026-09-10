@@ -111,7 +111,7 @@ export function ModelPanes({
   };
 
   const patchModel = (id: string, patch: Partial<ModelEntry>) => {
-    onModelsChange(provider.models.map((m) => (m.id === id ? { ...m, ...patch } : m));
+    onModelsChange(provider.models.map((m) => (m.id === id ? { ...m, ...patch } : m)));
   };
 
   return (
