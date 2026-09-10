@@ -105,10 +105,16 @@ export const modelConfigSave = (config: ModelConfig) => invokeTyped<void>("model
 // models.dev 全量目录：load 读本地快照（缺失/损坏为 null），refresh 拉取并落快照
 export const modelCatalogLoad = () => invokeTyped<ModelCatalogFile | null>("model_catalog_load");
 export const modelCatalogRefresh = () => invokeTyped<ModelCatalogFile>("model_catalog_refresh");
-// 上游模型列表（兼连通性验证）；密钥经环境变量名解析，值不落盘
-export const modelRemoteList = (baseURL: string, api: string | null, apiKeyEnv: string | null) =>
+// 上游模型列表（兼连通性验证）；密钥经环境变量名解析，普通 Provider headers 一并发送，
+// 凭据类保留头由 Rust 层再次过滤，不能覆盖 apiKeyEnv 认证。
+export const modelRemoteList = (
+  baseURL: string,
+  api: string | null,
+  apiKeyEnv: string | null,
+  headers: Record<string, string | undefined> | null = null,
+) =>
   // Tauri 按 camelCase 形参名取参：base_url → baseUrl（baseURL 永不命中）
-  invokeTyped<string[]>("model_remote_list", { baseUrl: baseURL, api, apiKeyEnv });
+  invokeTyped<string[]>("model_remote_list_with_headers", { baseUrl: baseURL, api, apiKeyEnv, headers });
 // 配置导入：扫描本机其他工具的 provider 声明（缺失来源静默为空组），按 key 导入
 export const modelConfigImportScan = () => invokeTyped<ImportGroup[]>("model_config_import_scan");
 export const modelConfigImportRun = (keys: string[]) =>
