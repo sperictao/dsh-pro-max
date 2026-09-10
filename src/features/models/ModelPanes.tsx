@@ -57,17 +57,22 @@ export function ModelPanes({
         if (!family || e.family === family) push(e.id, e.name, e.context);
       }
     }
-    const q = query.trim().toLowerCase();
-    const matched = q
-      ? pool.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
-      : pool;
-    // 已选模型也出现在左栏（勾选态），便于对照
+    // 已选但上游/目录不再返回的模型仍保留在完整候选池，未搜索时可继续对照和取消。
+    // 搜索是这个完整列表的纯视图过滤，因此 Select all / Clear 只作用于当前可见行。
     for (const m of provider.models) {
-      if (!matched.some((e) => e.id === m.id)) {
-        matched.push({ id: m.id, name: index.get(m.id)?.name ?? m.name ?? m.id, context: index.get(m.id)?.context ?? null });
+      if (!pool.some((e) => e.id === m.id)) {
+        pool.push({
+          id: m.id,
+          name: index.get(m.id)?.name ?? m.name ?? m.id,
+          context: index.get(m.id)?.context ?? null,
+        });
       }
     }
-    return matched.slice(0, SUGGESTION_LIMIT);
+    const q = query.trim().toLowerCase();
+    const visible = q
+      ? pool.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
+      : pool;
+    return visible.slice(0, SUGGESTION_LIMIT);
   }, [remote, catalog, family, query, provider.models, index]);
 
   const visibleSelected = candidates.filter((e) => selectedIds.has(e.id));
