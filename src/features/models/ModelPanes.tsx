@@ -1,5 +1,5 @@
 // 模型双栏：左栏该服务的候选模型（上游拉取 ∪ models.dev 目录，搜索/全选/点选），
-// 右栏已选模型（每条可展开高级面板：显示名/上下文窗口/最大输出/推理档/图片输入）。
+// 右栏已选模型（每条可展开高级面板：显示名/上下文窗口/最大输出/推理档/原生图片输入/目录 PDF 能力）。
 // 候选列表由 useProviderModels 以 cache-first SWR 提供；连接指纹变化时旧结果立即失效。
 
 import { useMemo, useState } from "react";
@@ -259,7 +259,11 @@ export function ModelPanes({
                   </button>
                 </div>
                 {isExpanded && (
-                  <ModelAdvancedPanel model={m} onChange={(patch) => patchModel(m.id, patch)} />
+                  <ModelAdvancedPanel
+                    model={m}
+                    catalogEntry={index.get(m.id) ?? null}
+                    onChange={(patch) => patchModel(m.id, patch)}
+                  />
                 )}
                 {view.kind === "disabled" && (
                   <p className="px-2 pb-1.5 text-xs opacity-60">
@@ -279,9 +283,11 @@ export function ModelPanes({
 
 function ModelAdvancedPanel({
   model,
+  catalogEntry,
   onChange,
 }: {
   model: ModelEntry;
+  catalogEntry: ModelCatalogEntry | null;
   onChange: (patch: Partial<ModelEntry>) => void;
 }) {
   const { t } = useTranslation();
@@ -289,6 +295,11 @@ function ModelAdvancedPanel({
   const levels = view.kind === "levels" ? view.levels : new Map<string, string | null>();
   const enabledLevels = EFFORT_OPTIONS.filter((l) => levels.has(l));
   const iview = inputView(model);
+  const publishedCapabilities = new Set(catalogEntry?.capabilities ?? []);
+  const publishedVision =
+    publishedCapabilities.has("vision") || Boolean(catalogEntry?.input?.includes("image"));
+  const publishedPdf =
+    publishedCapabilities.has("pdf") || Boolean(catalogEntry?.input?.includes("pdf"));
 
   const toggleLevel = (level: string) => {
     const base = view.kind === "levels" ? levels : new Map<string, string | null>();
@@ -308,7 +319,7 @@ function ModelAdvancedPanel({
   };
 
   const setInputView = (next: "inherit" | "text" | "text-image" | "custom") => {
-    // custom = 手写模态列表（如 ["audio"]）：无对应三态投影，保持原样不动
+    // custom = 非 llm-pi-ai 原生模态（如 pdf/audio）或无法无损投影的手写列表：保持原样。
     if (next === "custom") return;
     onChange({ input: next === "inherit" ? null : next === "text" ? ["text"] : ["text", "image"] });
   };
@@ -390,6 +401,24 @@ function ModelAdvancedPanel({
           </div>
         )}
       </div>
+      {(publishedVision || publishedPdf) && (
+        <div className="flex flex-col gap-1" data-testid="published-input-capabilities">
+          <span className="text-xs opacity-70">{t("Published capabilities")}</span>
+          <div className="flex flex-wrap gap-1">
+            {publishedVision && (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{t("Vision")}</span>
+            )}
+            {publishedPdf && <span className="rounded bg-muted px-1.5 py-0.5 text-xs">PDF</span>}
+          </div>
+          {publishedPdf && (
+            <p className="text-xs opacity-60">
+              {t(
+                "PDF is catalog metadata only. DSH uploads documents as file references; llm-pi-ai does not send PDF content blocks.",
+              )}
+            </p>
+          )}
+        </div>
+      )}
       <label className="flex flex-col gap-1 text-xs opacity-70">
         {t("Image input")}
         <select

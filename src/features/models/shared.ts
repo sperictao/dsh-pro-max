@@ -155,15 +155,21 @@ export function reasoningView(entry: ModelEntry): ReasoningView {
   return { kind: "levels", levels };
 }
 
-/** 输入模态三态投影：null=继承目录；["text"]=关；含 image=开；其余=手写自定义（保留） */
+/**
+ * DSH llm-pi-ai 当前原生请求模态只有 text/image。空数组与未声明在上游均表示继承；
+ * UI 只投影能无损往返的两种显式集合。任何额外模态（pdf/audio/...）都视为 custom，
+ * 保持原值，避免用户编辑图片能力时静默丢失手写配置。
+ */
 export type InputView = "inherit" | "text" | "text-image" | "custom";
 
 export function inputView(entry: ModelEntry): InputView {
   const input = entry.input;
-  if (input == null) return "inherit";
-  const set = new Set(input);
-  if (set.size === 1 && set.has("text")) return "text";
-  if (set.has("image")) return "text-image";
+  if (input == null || input.length === 0) return "inherit";
+  if (input.length === 1 && input[0] === "text") return "text";
+  if (input.length === 2) {
+    const set = new Set(input);
+    if (set.size === 2 && set.has("text") && set.has("image")) return "text-image";
+  }
   return "custom";
 }
 
