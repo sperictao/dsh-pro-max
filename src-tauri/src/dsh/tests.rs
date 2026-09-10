@@ -3988,6 +3988,7 @@ fn catalog_snapshot_roundtrip_and_corruption() {
     let path = dir.join("snapshot.json");
     let file = CatalogFile {
         fetched_at: 5_000,
+        provider_count: Some(1),
         entries: vec![CatalogEntry {
             id: "glm-5.2".into(),
             name: "GLM-5.2".into(),
@@ -4003,6 +4004,7 @@ fn catalog_snapshot_roundtrip_and_corruption() {
     std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
     let loaded = load_model_catalog_snapshot(&path).expect("loaded");
     assert_eq!(loaded.fetched_at, 5_000);
+    assert_eq!(loaded.provider_count, Some(1));
     assert_eq!(loaded.entries[0].id, "glm-5.2");
 
     // 快照是缓存：损坏一律 None

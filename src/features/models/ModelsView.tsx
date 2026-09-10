@@ -148,6 +148,9 @@ export function ModelsView() {
   const [busyGlobal, setBusyGlobal] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
   const [catalogFetchedAt, setCatalogFetchedAt] = useState<number | null>(null);
+  const [catalogProviderCount, setCatalogProviderCount] = useState<number | null>(null);
+  const [catalogSource, setCatalogSource] = useState<"snapshot" | "remote" | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogState, setCatalogState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const [dialog, setDialog] = useState<ProviderDialogState | null>(null);
@@ -193,21 +196,33 @@ export function ModelsView() {
         if (file) {
           setCatalog(file.entries);
           setCatalogFetchedAt(file.fetchedAt);
+          setCatalogProviderCount(file.providerCount ?? null);
+          setCatalogSource("snapshot");
+          setCatalogError(null);
           setCatalogState("ready");
         } else {
+          setCatalogProviderCount(null);
+          setCatalogSource(null);
           setCatalogState("unavailable");
         }
         const missingCapabilityMetadata =
           file?.entries.some((entry) => entry.capabilities == null) ?? false;
+        const missingObservabilityMetadata = file?.providerCount == null;
         if (
           !file ||
           missingCapabilityMetadata ||
+          missingObservabilityMetadata ||
           Date.now() / 1000 - file.fetchedAt >= CATALOG_STALE_SECS
         ) {
           void refreshCatalog(true);
         }
-      } catch {
-        if (!disposed) setCatalogState("unavailable");
+      } catch (error) {
+        if (!disposed) {
+          setCatalogProviderCount(null);
+          setCatalogSource(null);
+          setCatalogError(String(error));
+          setCatalogState("unavailable");
+        }
       }
     })();
     return () => {
@@ -242,8 +257,12 @@ export function ModelsView() {
       const fresh = await cmd.modelCatalogRefresh();
       setCatalog(fresh.entries);
       setCatalogFetchedAt(fresh.fetchedAt);
+      setCatalogProviderCount(fresh.providerCount ?? null);
+      setCatalogSource("remote");
+      setCatalogError(null);
       setCatalogState("ready");
     } catch (error) {
+      setCatalogError(String(error));
       if (!background) toast(tErr(String(error)), "error");
     } finally {
       setCatalogRefreshing(false);
@@ -688,18 +707,35 @@ export function ModelsView() {
         </section>
 
         {/* —— 目录状态：辅助信息退到页面底部，不与配置主任务抢层级 —— */}
-        <div className="flex items-center justify-between gap-4 text-xs opacity-70" id="models-catalog">
-          <span>
-            {catalogState === "ready"
-              ? t("Catalog: {{source}} · {{models}} models · updated {{time}}", {
-                  source: "models.dev",
-                  models: catalog.length,
-                  time: catalogFetchedAt ? new Date(catalogFetchedAt * 1000).toLocaleString() : "—",
-                })
-              : catalogState === "loading"
-                ? t("Loading catalog…")
-                : t("Catalog: unavailable")}
-          </span>
+        <div className="flex items-start justify-between gap-4 text-xs opacity-70" id="models-catalog">
+          <div className="min-w-0">
+            <div
+              data-testid="catalog-status-line"
+              data-catalog-source={catalogSource ?? "none"}
+              data-provider-count={catalogProviderCount ?? ""}
+            >
+              {catalogState === "ready"
+                ? t("Catalog: {{source}} · {{providers}} providers · {{models}} models · updated {{time}}", {
+                    source:
+                      catalogSource === "snapshot"
+                        ? t("Local snapshot")
+                        : catalogSource === "remote"
+                          ? "models.dev"
+                          : "—",
+                    providers: catalogProviderCount ?? "—",
+                    models: catalog.length,
+                    time: catalogFetchedAt ? new Date(catalogFetchedAt * 1000).toLocaleString() : "—",
+                  })
+                : catalogState === "loading"
+                  ? t("Loading catalog…")
+                  : t("Catalog: unavailable")}
+            </div>
+            {catalogError && (
+              <div className="mt-0.5 text-destructive" role="status" data-testid="catalog-error">
+                {t("Catalog error: {{error}}", { error: tErr(catalogError) })}
+              </div>
+            )}
+          </div>
           <button
             className={BTN_SM}
             id="btn-refresh-catalog"

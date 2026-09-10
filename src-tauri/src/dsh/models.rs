@@ -592,6 +592,10 @@ pub struct CatalogFile {
     /// unix 秒（IPC 走 JSON number）
     #[ts(type = "number")]
     pub fetched_at: i64,
+    /// models.dev 中至少发布一个模型的 provider 数；旧快照缺席时为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub provider_count: Option<usize>,
     pub entries: Vec<CatalogEntry>,
 }
 
@@ -741,6 +745,12 @@ pub(crate) fn project_catalog(raw: &str, fetched_at: i64) -> Result<CatalogFile,
         crate::logging::error("解析 models.dev 目录", &e.to_string());
         keyf("Failed to parse the model catalog", &[])
     })?;
+    // providerCount 表达目录覆盖面，不从跨 provider 去重后的 model 数反推。
+    // 空 provider 不计入可用覆盖面；旧快照没有该字段时由 UI 触发后台刷新。
+    let provider_count = root
+        .values()
+        .filter(|provider| !provider.models.is_empty())
+        .count();
     let mut by_id: BTreeMap<String, CatalogEntry> = BTreeMap::new();
     for (provider_key, provider) in root {
         let family = catalog_family(&provider_key);
@@ -778,6 +788,7 @@ pub(crate) fn project_catalog(raw: &str, fetched_at: i64) -> Result<CatalogFile,
     }
     Ok(CatalogFile {
         fetched_at,
+        provider_count: Some(provider_count),
         entries: by_id.into_values().collect(),
     })
 }
@@ -802,7 +813,10 @@ fn fetch_url_text(url: &str, timeout_secs: u64) -> Result<String, String> {
     if !resp.status().is_success() {
         let status = resp.status().as_u16();
         crate::logging::warn("模型目录请求失败", &format!("HTTP {status}: {url}"));
-        return Err(keyf("The model catalog request returned an HTTP error", &[]));
+        return Err(keyf(
+            "The model catalog request returned an HTTP error",
+            &[],
+        ));
     }
     resp.text()
         .map_err(|_| keyf("Failed to read the model catalog response", &[]))
@@ -854,10 +868,7 @@ pub async fn model_catalog_refresh(app: tauri::AppHandle) -> Result<CatalogFile,
 pub(crate) fn remote_models_url(base_url: &str, api: Option<&str>) -> Result<String, String> {
     let base = base_url.trim().trim_end_matches('/');
     if base.is_empty() {
-        return Err(keyf(
-            "Provider base URL is required to fetch models",
-            &[],
-        ));
+        return Err(keyf("Provider base URL is required to fetch models", &[]));
     }
     if api == Some("anthropic-messages") {
         Ok(format!("{base}/v1/models"))
@@ -953,4 +964,32 @@ pub async fn model_remote_list(
         fetch_remote_models(&base_url, api.as_deref(), api_key_env.as_deref())
     })
     .await
+}
+
+#[cfg(test)]
+mod catalog_observability_tests {
+    use super::{project_catalog, CatalogFile};
+
+    #[test]
+    fn catalog_reports_provider_coverage_independent_of_model_deduplication() {
+        let raw = r#"{
+            "alpha": {"models": {"a": {"id": "shared", "name": "Shared A"}}},
+            "beta": {"models": {"b": {"id": "shared", "name": "Shared B"}}},
+            "empty": {"models": {}}
+        }"#;
+        let catalog = project_catalog(raw, 123).expect("project catalog");
+        assert_eq!(catalog.provider_count, Some(2));
+        assert_eq!(
+            catalog.entries.len(),
+            1,
+            "model ids remain globally deduplicated"
+        );
+    }
+
+    #[test]
+    fn legacy_catalog_snapshot_without_provider_count_remains_readable() {
+        let legacy = r#"{"fetchedAt":123,"entries":[]}"#;
+        let catalog: CatalogFile = serde_json::from_str(legacy).expect("legacy snapshot");
+        assert_eq!(catalog.provider_count, None);
+    }
 }

@@ -8,4 +8,4 @@ export type CatalogFile = {
 /**
  * unix 秒（IPC 走 JSON number）
  */
-fetchedAt: number, entries: Array<CatalogEntry>, };
+fetchedAt: number, providerCount?: number, entries: Array<CatalogEntry>, };
