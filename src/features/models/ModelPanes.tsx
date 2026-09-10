@@ -111,7 +111,7 @@ export function ModelPanes({
   };
 
   const patchModel = (id: string, patch: Partial<ModelEntry>) => {
-    onModelsChange(provider.models.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+    onModelsChange(provider.models.map((m) => (m.id === id ? { ...m, ...patch } : m));
   };
 
   return (
@@ -414,5 +414,6 @@ export async function fetchProviderModels(provider: ProviderConfig): Promise<str
     provider.baseURL ?? "",
     provider.api ?? null,
     provider.apiKeyEnv ?? null,
+    provider.headers,
   );
 }
