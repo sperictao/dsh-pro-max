@@ -744,18 +744,25 @@ pub(crate) fn parse_remote_models(json: &str) -> Vec<String> {
     ids
 }
 
-/// 密钥只在本函数内存中出现，不落盘、不进日志
-pub(crate) fn fetch_remote_models(base_url: &str, api: Option<&str>, api_key_env: Option<&str>) -> Result<Vec<String>, String> {
-    let env_holder = api_key_env.map(str::to_string);
-    let env_name = non_empty(&env_holder)
-        .ok_or_else(|| keyf("Provider API key environment variable is not configured", &[]))?;
-    let key = std::env::var(env_name).map_err(|_| {
-        crate::logging::warn("模型列表拉取缺密钥环境变量", env_name);
-        keyf(
-            "Environment variable is not set in the environment where dsh-pro-max was launched",
-            &[],
-        )
-    })?;
+/// 可选凭据仅在本函数内存中出现，不落盘、不进日志。
+/// 未配置 apiKeyEnv 时按无认证服务请求；一旦显式配置环境变量名，则变量
+/// 缺失仍视为配置错误，不静默降级成匿名请求。
+pub(crate) fn fetch_remote_models(
+    base_url: &str,
+    api: Option<&str>,
+    api_key_env: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let env_name = api_key_env.map(str::trim).filter(|name| !name.is_empty());
+    let key = match env_name {
+        Some(name) => Some(std::env::var(name).map_err(|_| {
+            crate::logging::warn("模型列表拉取缺密钥环境变量", name);
+            keyf(
+                "Environment variable is not set in the environment where dsh-pro-max was launched",
+                &[],
+            )
+        })?),
+        None => None,
+    };
     let url = remote_models_url(base_url, api)?;
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(REMOTE_LIST_TIMEOUT_SECS))
@@ -766,12 +773,14 @@ pub(crate) fn fetch_remote_models(base_url: &str, api: Option<&str>, api_key_env
             keyf("Cannot initialize the HTTP client", &[])
         })?;
     let mut req = client.get(&url);
-    req = if api == Some("anthropic-messages") {
-        req.header("x-api-key", key)
-            .header("anthropic-version", "2023-06-01")
-    } else {
-        req.bearer_auth(key)
-    };
+    if api == Some("anthropic-messages") {
+        req = req.header("anthropic-version", "2023-06-01");
+        if let Some(key) = key.as_deref() {
+            req = req.header("x-api-key", key);
+        }
+    } else if let Some(key) = key.as_deref() {
+        req = req.bearer_auth(key);
+    }
     let resp = req.send().map_err(|e| {
         // 细节（URL/原因）只进日志；key 值任何路径都不出现
         crate::logging::error("拉取模型列表失败", &format!("{url}: {e}"));
