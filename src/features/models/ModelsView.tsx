@@ -14,6 +14,7 @@ import { tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
 import { ImportDialog } from "./ImportDialog";
 import {
+  launcherRemoteProbeAllowed,
   providerEnvNames,
   providerReadiness,
   type ProviderReadiness,
@@ -365,7 +366,8 @@ export function ModelsView() {
   /** 连接测试与模型发现分离：真实推理请求验证 endpoint/auth/model，绝不调用 /models。 */
   const testProvider = async (provider: ProviderConfig) => {
     const target = providerConnectionTarget(provider);
-    if (!target || !readyRoutes.has(provider.route)) return;
+    const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
+    if (!target || !launcherRemoteProbeAllowed(readiness)) return;
     setTestingRoute(provider.route);
     try {
       await cmd.modelTestConnection(
@@ -383,9 +385,10 @@ export function ModelsView() {
     }
   };
 
-  /** 服务行模型发现：仅 Ready Provider 可请求；自定义无 apiKeyEnv 仍可匿名探测。 */
+  /** 服务行模型发现：显式 env 或匿名自定义端点由 Launcher 探测；provider-auth 留给 dsh/pi-ai。 */
   const probeProvider = async (provider: ProviderConfig) => {
-    if (!provider.baseURL?.trim() || !readyRoutes.has(provider.route)) return;
+    const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
+    if (!provider.baseURL?.trim() || !launcherRemoteProbeAllowed(readiness)) return;
     setBusyRoute(provider.route);
     try {
       const models = await cmd.modelRemoteList(
@@ -564,8 +567,9 @@ export function ModelsView() {
                 const displayModel = provider.models[0]?.id ?? null;
                 const readiness =
                   readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
-                const canTest = Boolean(providerConnectionTarget(provider)) && readiness.ready;
-                const canProbe = Boolean(provider.baseURL?.trim()) && readiness.ready;
+                const launcherProbeAllowed = launcherRemoteProbeAllowed(readiness);
+                const canTest = Boolean(providerConnectionTarget(provider)) && launcherProbeAllowed;
+                const canProbe = Boolean(provider.baseURL?.trim()) && launcherProbeAllowed;
                 return (
                   <div
                     key={provider.route}
@@ -764,8 +768,8 @@ function ReadinessBadge({
   const label =
     readiness.kind === "checking"
       ? t("Detecting…")
-      : readiness.kind === "missing-credential"
-        ? t("No API key reference yet")
+      : readiness.kind === "provider-auth"
+        ? `${t("Ready")} · pi-ai`
         : readiness.kind === "missing-env"
           ? `${readiness.envName}: ${t("Not set")}`
           : readiness.kind === "anonymous"
@@ -774,8 +778,8 @@ function ReadinessBadge({
   const title =
     readiness.kind === "missing-env"
       ? t("Environment variable is not set in the environment where dsh-pro-max was launched")
-      : readiness.kind === "missing-credential"
-        ? t("No API key reference yet")
+      : readiness.kind === "provider-auth"
+        ? "pi-ai"
         : readiness.kind === "anonymous"
           ? t("Custom endpoint")
           : readiness.kind === "checking"

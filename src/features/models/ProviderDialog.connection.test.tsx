@@ -59,4 +59,31 @@ describe("ProviderDialog connection test", () => {
     );
     expect(await screen.findByRole("status")).toHaveTextContent("Connection successful");
   });
+
+  it("does not send an unauthenticated launcher test for a built-in provider using dsh/pi-ai auth", () => {
+    render(
+      <ProviderDialog
+        state={{
+          mode: "edit",
+          index: 0,
+          provider: {
+            ...provider,
+            route: "openai",
+            displayName: "OpenAI",
+            baseURL: "https://api.openai.com/v1",
+            api: "openai-responses",
+            apiKeyEnv: null,
+          },
+        }}
+        catalog={[]}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Test connection" })).toBeDisabled();
+    expect(cmd.modelTestConnection).not.toHaveBeenCalled();
+    expect(screen.getByTestId("catalog-route-hint")).toHaveTextContent("Inherits the built-in catalog");
+  });
+
 });

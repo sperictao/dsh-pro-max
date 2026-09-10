@@ -1,6 +1,7 @@
 // Provider 可用性只由现有配置 + launcher 进程环境事实推导，不写回 settings.yaml。
-// 内置目录 route 代表托管服务，必须配置 apiKeyEnv；自定义 route 未配置
-// apiKeyEnv 时按显式匿名端点处理（Ollama / LM Studio / 本地兼容网关等）。
+// 内置目录 route 省略 apiKeyEnv 时遵循 dsh llm-pi-ai 原生语义：保持 configured-but-keyless，
+// 由 pi-ai / harness 的 ambient 或已存登录凭据完成认证；自定义 route 无 apiKeyEnv 时
+// 仍按显式匿名端点处理（Ollama / LM Studio / 本地兼容网关等）。
 
 import type { ProviderConfig } from "@/shared/types";
 import { MODEL_PRESETS } from "@/shared/lib/model-presets.generated";
@@ -11,7 +12,7 @@ export type ProviderReadinessKind =
   | "checking"
   | "ready"
   | "anonymous"
-  | "missing-credential"
+  | "provider-auth"
   | "missing-env";
 
 export type ProviderReadiness = {
@@ -39,7 +40,7 @@ export function providerReadiness(
 
   if (!envName) {
     return builtin
-      ? { kind: "missing-credential", ready: false, envName: null }
+      ? { kind: "provider-auth", ready: true, envName: null }
       : { kind: "anonymous", ready: true, envName: null };
   }
 
@@ -50,4 +51,13 @@ export function providerReadiness(
   return envStatus[envName]
     ? { kind: "ready", ready: true, envName }
     : { kind: "missing-env", ready: false, envName };
+}
+
+
+/**
+ * Launcher 自己的 HTTP Test/Fetch 只能使用显式 apiKeyEnv 或匿名端点；
+ * provider-auth 由 dsh/pi-ai 内部解析，不能被 launcher 伪装成匿名请求。
+ */
+export function launcherRemoteProbeAllowed(readiness: ProviderReadiness): boolean {
+  return readiness.ready && readiness.kind !== "provider-auth";
 }

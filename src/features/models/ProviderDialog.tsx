@@ -71,7 +71,8 @@ export function ProviderDialog({
   };
 
   const currentUrlIssue = validateBaseUrl(draft.baseURL ?? "");
-  // 托管预设在凭据引用尚未填写时不主动撞匿名请求；自定义端点允许无认证发现。
+  // 托管预设无显式 apiKeyEnv 时可能由 dsh/pi-ai 的 ambient/已存登录认证；
+  // Launcher 自身拿不到那条凭据 seam，因此不主动撞匿名请求。自定义端点仍允许匿名发现。
   const discoveryActive =
     showComposer &&
     !currentUrlIssue &&
@@ -79,7 +80,9 @@ export function ProviderDialog({
     (!knownService || Boolean(draft.apiKeyEnv?.trim()));
   const discovery = useProviderModels(discoveryActive, draft);
   const testTarget = providerConnectionTarget(draft);
-  const canTest = showComposer && !currentUrlIssue && Boolean(testTarget) && !saving && !testing;
+  const launcherCanTest = !knownService || Boolean(draft.apiKeyEnv?.trim());
+  const canTest =
+    showComposer && launcherCanTest && !currentUrlIssue && Boolean(testTarget) && !saving && !testing;
 
   const onBaseURLBlur = () => {
     if (draft.baseURL) {
@@ -312,9 +315,7 @@ export function ProviderDialog({
                     </div>
                     {presetOfRoute && (
                       <p className="col-span-2 text-xs opacity-60" data-testid="catalog-route-hint">
-                        {t(
-                          "Route matches the built-in catalog: endpoint, protocol and models are inherited; only the credential reference is required.",
-                        )}
+                        {t("Inherits the built-in catalog")}
                       </p>
                     )}
                   </div>

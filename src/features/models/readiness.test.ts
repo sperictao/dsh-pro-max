@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderConfig } from "@/shared/types";
-import { providerEnvNames, providerReadiness } from "./readiness";
+import { launcherRemoteProbeAllowed, providerEnvNames, providerReadiness } from "./readiness";
 
 const provider = (patch: Partial<ProviderConfig>): ProviderConfig => ({
   route: "custom",
@@ -25,12 +25,14 @@ describe("provider readiness", () => {
     });
   });
 
-  it("requires a credential reference for built-in catalog providers", () => {
-    expect(providerReadiness(provider({ route: "openai" }), {})).toEqual({
-      kind: "missing-credential",
-      ready: false,
+  it("defers built-in providers without apiKeyEnv to dsh/pi-ai provider auth", () => {
+    const readiness = providerReadiness(provider({ route: "openai" }), {});
+    expect(readiness).toEqual({
+      kind: "provider-auth",
+      ready: true,
       envName: null,
     });
+    expect(launcherRemoteProbeAllowed(readiness)).toBe(false);
   });
 
   it("distinguishes checking, missing env and available env", () => {
@@ -42,6 +44,7 @@ describe("provider readiness", () => {
       ready: true,
       envName: "MY_KEY",
     });
+    expect(launcherRemoteProbeAllowed(providerReadiness(configured, { MY_KEY: true }))).toBe(true);
   });
 
   it("normalizes and deduplicates env names before IPC", () => {

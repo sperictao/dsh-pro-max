@@ -265,6 +265,41 @@ describe("ModelsView provider studio", () => {
     expect(useAppStore.getState().toasts.at(-1)?.message).toContain("2 models");
   });
 
+  it("keeps configured-but-keyless built-in providers runtime-ready without launcher probes", async () => {
+    loadWith({
+      defaultProvider: null,
+      defaultModel: null,
+      defaultReasoningEffort: null,
+      providers: [
+        {
+          route: "openai",
+          displayName: "OpenAI",
+          baseURL: "https://api.openai.com/v1",
+          api: "openai-responses",
+          apiKeyEnv: null,
+          models: [{ id: "gpt-test", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
+          headers: null,
+          timeoutMs: null,
+          reasoning: null,
+          extra: null,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-readiness-0")).toHaveAttribute("data-readiness", "provider-auth"),
+    );
+    expect(screen.getByTestId("provider-readiness-0")).toHaveTextContent("Ready · pi-ai");
+    expect(screen.queryByRole("button", { name: "Test connection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fetch list" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Change" }));
+    const listbox = await screen.findByRole("listbox", { name: "Default model" });
+    expect(within(listbox).getByRole("option", { name: /OpenAI · gpt-test/ })).toBeInTheDocument();
+  });
+
   it("excludes a provider with a missing env from defaults while allowing an anonymous custom provider", async () => {
     loadWith({
       defaultProvider: "openai",
