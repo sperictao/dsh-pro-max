@@ -17,6 +17,40 @@ export const DELETE_CONFIRM_MS = 3000;
 export { MODEL_PRESETS };
 export type { ModelPreset } from "@/shared/lib/model-presets.generated";
 
+const PRESET_BY_ROUTE = new Map(MODEL_PRESETS.map((preset) => [preset.id, preset] as const));
+
+export type ProviderModelChoice = {
+  id: string;
+  contextWindow: number | null;
+  inherited: boolean;
+};
+
+/**
+ * Provider 的有效模型目录：显式 models 一旦存在即覆盖内置目录；只有 models=[]
+ * 且 route 命中同版本 pi-ai 预设时，才投影继承目录。这里只返回选择视图，绝不
+ * 把继承模型物化回 settings.yaml。
+ */
+export function providerModelChoices(provider: ProviderConfig): ProviderModelChoice[] {
+  if (provider.models.length > 0) {
+    return provider.models.map((model) => ({
+      id: model.id,
+      contextWindow: model.contextWindow ?? null,
+      inherited: false,
+    }));
+  }
+
+  const preset = PRESET_BY_ROUTE.get(provider.route.trim());
+  return (preset?.modelIds ?? []).map((id) => ({
+    id,
+    contextWindow: null,
+    inherited: true,
+  }));
+}
+
+export function firstProviderModelId(provider: ProviderConfig): string | null {
+  return providerModelChoices(provider)[0]?.id ?? null;
+}
+
 export const emptyProvider = (): ProviderConfig => ({
   route: "",
   displayName: null,
