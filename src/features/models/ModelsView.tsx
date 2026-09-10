@@ -236,12 +236,17 @@ export function ModelsView() {
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
 
-  /** 服务行快捷探测：复用 model_remote_list。无 apiKeyEnv 时按匿名端点探测。 */
+  /** 服务行快捷探测：复用模型发现请求。无 apiKeyEnv 时按匿名端点探测。 */
   const probeProvider = async (provider: ProviderConfig) => {
     if (!provider.baseURL?.trim()) return;
     setBusyRoute(provider.route);
     try {
-      const models = await cmd.modelRemoteList(provider.baseURL, provider.api, provider.apiKeyEnv);
+      const models = await cmd.modelRemoteList(
+        provider.baseURL,
+        provider.api,
+        provider.apiKeyEnv,
+        provider.headers,
+      );
       toast(`${t("Models from this service")}: ${t("{{count}} models", { count: models.length })}`, "success");
     } catch (error) {
       toast(tErr(String(error)), "error");
