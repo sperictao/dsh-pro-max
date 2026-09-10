@@ -163,6 +163,7 @@ describe("ModelsView provider studio", () => {
 
     await user.click(screen.getByTestId("empty-add-provider"));
     const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByTestId("preset-input"));
     await user.click(within(dialog).getByRole("option", { name: /Custom endpoint/ }));
 
     expect(within(dialog).getByLabelText("Route key")).toBeInTheDocument();
