@@ -23,14 +23,19 @@ jobs:
           cache: "pnpm"
       - run: pnpm install
       - run: pnpm gen:model-presets
-      - name: Commit generated preset data
+      - name: Apply Step 4 view patch when present
         run: |
-          if git diff --quiet -- src/shared/lib/model-presets.generated.ts; then
-            echo "Generated presets already current."
+          if [ -f scripts/step4-apply-temp.mjs ]; then
+            node scripts/step4-apply-temp.mjs
+          fi
+      - name: Commit generated Step 4 files
+        run: |
+          git add src/shared/lib/model-presets.generated.ts src/features/models/ModelsView.tsx
+          if git diff --cached --quiet; then
+            echo "Step 4 generated files already current."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/shared/lib/model-presets.generated.ts
-          git commit -m "chore(models): regenerate provider presets"
+          git commit -m "feat(models): wire inherited models into defaults"
           git push origin HEAD:fix/models-step4-inherited-defaults
