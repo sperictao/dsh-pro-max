@@ -262,20 +262,30 @@ async function main() {
       await expectVisible(page.getByText("managed by launcher"));
     });
 
-    await step("models: configuration renders from settings.yaml", async () => {
+    await step("models: provider studio renders and progressively reveals setup", async () => {
       await page.getByRole("button", { name: "Models" }).click();
       await expectVisible(page.locator("#models-view"));
-      // 默认模型行 + 更改菜单 + 服务列表行
+      // 默认模型摘要 + 更改菜单 + 服务工作台 + 目录状态
       await expectVisible(page.getByTestId("default-model-summary"));
       await expectVisible(page.locator("#btn-change-default-model"));
       await expectVisible(page.locator("#provider-row-0"));
       await expectVisible(page.locator("#models-catalog"));
-      // 打开添加对话框：预设选择器 + 双栏
+
+      // Add provider 采用渐进披露：先只有 Service 选择，选 Custom 后才出现连接字段和模型双栏。
       await page.locator("#btn-add-provider").click();
-      await expectVisible(page.getByTestId("preset-input"));
+      const servicePicker = page.getByTestId("preset-input");
+      await expectVisible(servicePicker);
+      assert.equal(await page.getByTestId("model-panes").count(), 0, "model panes should stay hidden before service selection");
+      await servicePicker.click();
+      await page.getByRole("option", { name: /Custom endpoint/ }).click();
+      await expectVisible(page.getByLabel("Route key"));
+      await expectVisible(page.getByLabel("Base URL"));
       await expectVisible(page.getByTestId("model-panes"));
+
       await page.getByRole("button", { name: "Cancel" }).click();
-      await expectVisible(page.getByRole("button", { name: "Save" }));
+      assert.equal(await page.locator("#provider-dialog").count(), 0, "provider dialog should close on cancel");
+      assert.equal(await page.getByRole("button", { name: "Save", exact: true }).count(), 0, "models page should not expose a second page-level Save action");
+      await expectVisible(page.locator("#provider-row-0"));
     });
 
     await step("navigation returns home", async () => {

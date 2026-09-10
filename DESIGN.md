@@ -28,7 +28,8 @@ max-w-3xl 单列居中。本文件描述该次美化后的现状。）
 
 - 各视图统一：顶栏（border-b，px-4 py-2.5）+ `p-6` 内容区 + `overflow-y-auto`。
 - 首页：单列居中 `max-w-3xl`，四段自上而下——eyebrow 标题行（`text-xs tracking-widest opacity-60` 服务名 + 版本胶囊随行，右侧仅条件操作胶囊）→ 状态球区（170px 呼吸球 + 24px 状态文字 + 模式说明小字，视觉重心）→ 访问模式行卡（两行制：模式名即 toggle 语义标签 + 说明小字）→ 主卡（条件诊断块 + 地址行 + 三按钮行 Start/Stop/Restart 主次分明 + 卡内时间轴）。
-- 市场：全宽 `grid-cols-1 xl:grid-cols-2` 卡片网格；设置：`w-52` 侧栏 + 内容列；模型：`p-6` 单列 + `grid-cols-2` 表单格。
+- 市场：全宽 `grid-cols-1 xl:grid-cols-2` 卡片网格；设置：`w-52` 侧栏 + 内容列。
+- 模型：`p-6`、`max-w-4xl` 单列 Provider Studio。主视图只保留 Defaults 卡、AI services 管理卡与 models.dev 状态行；服务行展示名称/默认与凭据状态/host/首个模型，并提供设默认、连通性探测、编辑、两步删除。新增/编辑进入居中对话框：先选服务，预设服务只暴露高频字段，自定义服务展示完整连接字段；模型双栏与高级设置按需渐进披露。模型域操作保存即落盘并热加载，不再设置页面级二次 Save。
 
 ## Motion
 
