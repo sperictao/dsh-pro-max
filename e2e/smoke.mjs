@@ -1,5 +1,5 @@
 // E2E 冒烟（playwright-core + vite dev server）：
-// 验证壳渲染（品牌/导航/Home 卡片）与 Home ↔ Settings 导航，无报错 toast、无页面异常。
+// 验证壳渲染/导航，以及 Provider Studio 的关键配置闭环，无报错 toast、无页面异常。
 // Tauri IPC 用 addInitScript 注入的 __TAURI_INTERNALS__ mock 替身——命令清单必须与
 // src/shared/commands.ts 对齐；出现未 mock 命令即失败（防止启动链路静默漂移）。
 // 浏览器优先系统 Chrome → Edge → playwright 自带 Chromium（需自行 install）。
@@ -133,6 +133,23 @@ const MOCK = {
       },
     ],
   },
+  modelCatalog: {
+    fetchedAt: Math.floor(Date.now() / 1000),
+    providerCount: 1,
+    entries: [
+      {
+        id: "glm-5.2",
+        name: "GLM 5.2",
+        family: "openai",
+        context: 131072,
+        maxTokens: 32768,
+        input: ["text"],
+        reasoning: true,
+        reasoningLevels: ["low", "medium", "high", "max"],
+        capabilities: ["text", "reasoning", "tools"],
+      },
+    ],
+  },
 };
 
 async function main() {
@@ -143,11 +160,12 @@ async function main() {
     const page = await browser.newPage();
     page.on("pageerror", (e) => failures.push(`pageerror: ${e.message}`));
 
-    await page.addInitScript(({ config, dshStatus, marketCatalog, marketInstalled, modelConfig }) => {
+    await page.addInitScript(({ config, dshStatus, marketCatalog, marketInstalled, modelConfig, modelCatalog }) => {
       // 结构对齐 @tauri-apps/api/mocks.js 的 mockInternals：
       // 事件解绑路径依赖 __TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener 与回调注册表
       let nextId = 1;
       const callbacks = new Map();
+      window.__e2eSavedConfigs = [];
       const handlers = {
         get_resolved_language: () => "en",
         load_config: () => config,
@@ -172,9 +190,19 @@ async function main() {
         market_installed: () => marketInstalled,
         market_check_updates: () => [],
         model_config_load: () => modelConfig,
-        model_catalog_load: () => ({ fetchedAt: Math.floor(Date.now() / 1000), entries: [] }),
-        model_catalog_refresh: () => ({ fetchedAt: Math.floor(Date.now() / 1000), entries: [] }),
-        model_remote_list: () => [],
+        model_config_save: ({ config }) => {
+          window.__e2eSavedConfigs.push(structuredClone(config));
+          return null;
+        },
+        model_catalog_load: () => modelCatalog,
+        model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
+        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_remote_cache_get: () => null,
+        model_test_connection: () => null,
+        model_remote_list_with_headers: ({ baseUrl }) =>
+          baseUrl.includes("e2e.example.com")
+            ? Array.from({ length: 75 }, (_, index) => `e2e-model-${String(index).padStart(3, "0")}`)
+            : ["glm-5.2", "glm-5.2-fast"],
         model_config_import_scan: () => [
           { source: "claude-code", entries: [] },
           { source: "codex", entries: [] },
@@ -187,6 +215,7 @@ async function main() {
         "plugin:notification|is_permission_granted": () => true,
       };
       window.__e2eInvoked = [];
+      window.__e2eCalls = [];
       window.__TAURI_INTERNALS__ = {
         metadata: {
           currentWindow: { label: "main" },
@@ -200,13 +229,14 @@ async function main() {
         unregisterCallback: (id) => callbacks.delete(id),
         runCallback: (id, data) => callbacks.get(id)?.(data),
         callbacks,
-        invoke: (cmd) => {
+        invoke: (cmd, args) => {
           window.__e2eInvoked.push(cmd);
+          window.__e2eCalls.push({ cmd, args: args == null ? null : structuredClone(args) });
           if (cmd === "plugin:event|listen") return Promise.resolve(nextId++);
           if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
           const h = handlers[cmd];
           if (!h) return Promise.reject(new Error(`e2e-mock: unhandled command "${cmd}"`));
-          return Promise.resolve(h());
+          return Promise.resolve(h(args));
         },
       };
       window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
@@ -218,6 +248,25 @@ async function main() {
       await fn();
       console.log(`  ✓ ${name}`);
     };
+    const commandCount = (name) =>
+      page.evaluate((command) => window.__e2eCalls.filter((call) => call.cmd === command).length, name);
+    const commandCalls = (name) =>
+      page.evaluate((command) => window.__e2eCalls.filter((call) => call.cmd === command), name);
+    const savedConfigCount = () => page.evaluate(() => window.__e2eSavedConfigs.length);
+    const lastSavedConfig = () => page.evaluate(() => window.__e2eSavedConfigs.at(-1));
+    const waitForCommandCount = (name, count) =>
+      page.waitForFunction(
+        ({ command, minimum }) =>
+          window.__e2eCalls.filter((call) => call.cmd === command).length >= minimum,
+        { command: name, minimum: count },
+        { timeout: 15_000 },
+      );
+    const waitForSavedConfigCount = (count) =>
+      page.waitForFunction(
+        (minimum) => window.__e2eSavedConfigs.length >= minimum,
+        count,
+        { timeout: 15_000 },
+      );
 
     console.log("E2E smoke");
     await step("app boots: brand header renders", async () => {
@@ -262,30 +311,167 @@ async function main() {
       await expectVisible(page.getByText("managed by launcher"));
     });
 
-    await step("models: provider studio renders and progressively reveals setup", async () => {
+    await step("models: provider studio loads readiness and catalog facts", async () => {
       await page.getByRole("button", { name: "Models" }).click();
       await expectVisible(page.locator("#models-view"));
-      // 默认模型摘要 + 更改菜单 + 服务工作台 + 目录状态
       await expectVisible(page.getByTestId("default-model-summary"));
       await expectVisible(page.locator("#btn-change-default-model"));
       await expectVisible(page.locator("#provider-row-0"));
-      await expectVisible(page.locator("#models-catalog"));
 
-      // Add provider 采用渐进披露：先只有 Service 选择，选 Custom 后才出现连接字段和模型双栏。
+      const readiness = page.getByTestId("provider-readiness-0");
+      await expectVisible(readiness);
+      assert.equal(await readiness.getAttribute("data-readiness"), "ready");
+
+      const catalogStatus = page.getByTestId("catalog-status-line");
+      await expectVisible(catalogStatus);
+      assert.equal(await catalogStatus.getAttribute("data-catalog-source"), "snapshot");
+      assert.equal(await catalogStatus.getAttribute("data-provider-count"), "1");
+
+      await page.locator("#btn-refresh-catalog").click();
+      await page.waitForFunction(
+        () => document.querySelector('[data-testid="catalog-status-line"]')?.dataset.catalogSource === "remote",
+      );
+    });
+
+    await step("models: reasoning changes save immediately", async () => {
+      const before = await savedConfigCount();
+      const reasoning = page.getByLabel("Reasoning Effort");
+      assert.equal(await reasoning.getAttribute("data-reasoning-capability"), "supported");
+      await reasoning.selectOption("medium");
+      await waitForSavedConfigCount(before + 1);
+
+      const saved = await lastSavedConfig();
+      assert.equal(saved.defaultProvider, "spero-ai");
+      assert.equal(saved.defaultModel, "glm-5.2");
+      assert.equal(saved.defaultReasoningEffort, "medium");
+    });
+
+    await step("models: connection test and model discovery stay separate", async () => {
+      const row = page.locator("#provider-row-0");
+      const testsBefore = await commandCount("model_test_connection");
+      const discoveryBefore = await commandCount("model_remote_list_with_headers");
+
+      await row.getByRole("button", { name: "Test connection" }).click();
+      await waitForCommandCount("model_test_connection", testsBefore + 1);
+      assert.equal(
+        await commandCount("model_remote_list_with_headers"),
+        discoveryBefore,
+        "connection test must not call model discovery",
+      );
+      const testCall = (await commandCalls("model_test_connection")).at(-1);
+      assert.deepEqual(testCall.args, {
+        baseUrl: "https://proxy.example.com/v1",
+        api: "openai-responses",
+        apiKeyEnv: "SPERO_AI_API_KEY",
+        headers: null,
+        model: "glm-5.2",
+      });
+
+      await row.getByRole("button", { name: "Fetch list" }).click();
+      await waitForCommandCount("model_remote_list_with_headers", discoveryBefore + 1);
+      assert.equal(
+        await commandCount("model_test_connection"),
+        testsBefore + 1,
+        "model discovery must not run an inference test",
+      );
+    });
+
+    await step("models: custom provider auto-discovers a virtualized full candidate set", async () => {
       await page.locator("#btn-add-provider").click();
-      const servicePicker = page.getByTestId("preset-input");
+      const dialog = page.locator("#provider-dialog");
+      await expectVisible(dialog);
+      const servicePicker = dialog.getByTestId("preset-input");
       await expectVisible(servicePicker);
-      assert.equal(await page.getByTestId("model-panes").count(), 0, "model panes should stay hidden before service selection");
-      await servicePicker.click();
-      await page.getByRole("option", { name: /Custom endpoint/ }).click();
-      await expectVisible(page.getByLabel("Route key"));
-      await expectVisible(page.getByLabel("Base URL"));
-      await expectVisible(page.getByTestId("model-panes"));
+      assert.equal(await dialog.getByTestId("model-panes").count(), 0, "model panes should stay hidden before service selection");
 
-      await page.getByRole("button", { name: "Cancel" }).click();
-      assert.equal(await page.locator("#provider-dialog").count(), 0, "provider dialog should close on cancel");
-      assert.equal(await page.getByRole("button", { name: "Save", exact: true }).count(), 0, "models page should not expose a second page-level Save action");
-      await expectVisible(page.locator("#provider-row-0"));
+      await servicePicker.click();
+      await dialog.getByRole("option", { name: /Custom endpoint/ }).click();
+      await expectVisible(dialog.getByTestId("model-panes"));
+      await dialog.getByLabel("Display Name").fill("E2E Gateway");
+      await dialog.getByLabel("Route key").fill("e2e-gateway");
+      await dialog.getByLabel("API Key Env Var").fill("E2E_API_KEY");
+      await dialog.getByLabel("Wire Protocol").selectOption("openai-responses");
+
+      const discoveryBefore = await commandCount("model_remote_list_with_headers");
+      await dialog.getByLabel("Base URL").fill("https://e2e.example.com/v1");
+      await dialog.getByLabel("Base URL").press("Tab");
+      await waitForCommandCount("model_remote_list_with_headers", discoveryBefore + 1);
+
+      const candidates = dialog.getByRole("list", { name: "Models from this service" });
+      await page.waitForFunction(
+        () => document.querySelector('#provider-dialog ul[aria-label="Models from this service"]')?.dataset.totalCount === "75",
+      );
+      assert.equal(await candidates.getAttribute("data-total-count"), "75");
+      assert.ok(
+        Number(await candidates.getAttribute("data-rendered-count")) < 75,
+        "large candidate list should render only a window",
+      );
+      assert.equal(
+        await candidates.getByRole("checkbox", { name: "e2e-model-074" }).count(),
+        0,
+        "deep rows should start outside the DOM window",
+      );
+
+      await candidates.evaluate((list) => {
+        list.scrollTop = list.scrollHeight;
+        list.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await expectVisible(candidates.getByRole("checkbox", { name: "e2e-model-074" }));
+
+      const dialogTest = dialog.getByRole("button", { name: "Test connection" });
+      assert.equal(await dialogTest.isDisabled(), true, "connection test needs a selected model");
+      await dialog.getByRole("checkbox", { name: "Select all" }).check();
+      assert.equal(await dialogTest.isEnabled(), true, "selecting models should enable connection test");
+
+      const testsBefore = await commandCount("model_test_connection");
+      await dialogTest.click();
+      await waitForCommandCount("model_test_connection", testsBefore + 1);
+      const testCall = (await commandCalls("model_test_connection")).at(-1);
+      assert.equal(testCall.args.baseUrl, "https://e2e.example.com/v1");
+      assert.equal(testCall.args.api, "openai-responses");
+      assert.equal(testCall.args.apiKeyEnv, "E2E_API_KEY");
+      assert.equal(testCall.args.model, "e2e-model-000");
+
+      const savesBefore = await savedConfigCount();
+      await dialog.locator("#btn-save-provider").click();
+      await waitForSavedConfigCount(savesBefore + 1);
+      await dialog.waitFor({ state: "detached" });
+      await expectVisible(page.locator("#provider-row-1"));
+
+      const saved = await lastSavedConfig();
+      const added = saved.providers.find((provider) => provider.route === "e2e-gateway");
+      assert.ok(added, "saved custom provider missing");
+      assert.equal(added.models.length, 75, "Select all must persist the full filtered candidate set");
+      assert.equal(added.models[74].id, "e2e-model-074");
+      assert.equal(added.apiKeyEnv, "E2E_API_KEY");
+    });
+
+    await step("models: default switch clears invalid reasoning and delete falls back", async () => {
+      const row = page.locator("#provider-row-1");
+      const makeDefaultBefore = await savedConfigCount();
+      await row.getByRole("button", { name: "Make default" }).click();
+      await waitForSavedConfigCount(makeDefaultBefore + 1);
+
+      let saved = await lastSavedConfig();
+      assert.equal(saved.defaultProvider, "e2e-gateway");
+      assert.equal(saved.defaultModel, "e2e-model-000");
+      assert.equal(saved.defaultReasoningEffort, null, "unsupported reasoning must be cleared atomically");
+      assert.equal((await page.getByTestId("default-model-summary").innerText()).trim(), "E2E Gateway · e2e-model-000");
+
+      const deleteBefore = await savedConfigCount();
+      await row.getByRole("button", { name: "Remove provider" }).click();
+      await expectVisible(page.locator("#btn-confirm-delete-1"));
+      await page.locator("#btn-confirm-delete-1").click();
+      await waitForSavedConfigCount(deleteBefore + 1);
+      await page.locator("#provider-row-1").waitFor({ state: "detached" });
+
+      saved = await lastSavedConfig();
+      assert.equal(saved.providers.length, 1);
+      assert.equal(saved.defaultProvider, "spero-ai");
+      assert.equal(saved.defaultModel, "glm-5.2");
+      assert.equal(saved.defaultReasoningEffort, null);
+      assert.equal((await page.getByTestId("default-model-summary").innerText()).trim(), "Spero AI · glm-5.2");
+      await expectVisible(page.locator("#badge-default-0"));
     });
 
     await step("navigation returns home", async () => {
@@ -301,9 +487,23 @@ async function main() {
 
     await step("boot chain used only mocked commands, no error toasts", async () => {
       const invoked = await page.evaluate(() => window.__e2eInvoked);
-      for (const expected of ["load_config", "get_updater_config_health", "check_update", "dsh_detect"]) {
+      for (const expected of [
+        "load_config",
+        "get_updater_config_health",
+        "check_update",
+        "dsh_detect",
+        "model_config_load",
+        "model_catalog_load",
+        "model_catalog_refresh",
+        "model_env_status",
+        "model_remote_cache_get",
+        "model_test_connection",
+        "model_remote_list_with_headers",
+        "model_config_save",
+      ]) {
         assert.ok(invoked.includes(expected), `expected command not invoked: ${expected}`);
       }
+      assert.equal(await savedConfigCount(), 4, "test/fetch/catalog actions must not add hidden model-config saves");
       assert.equal(await page.locator("#toast-container .toast.error").count(), 0, "error toast appeared");
     });
 
