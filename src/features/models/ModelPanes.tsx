@@ -7,7 +7,6 @@ import { useTranslation } from "react-i18next";
 import { BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import {
-  catalogIndex,
   EFFORT_OPTIONS,
   emptyModelEntry,
   fmtTokens,
@@ -16,6 +15,8 @@ import {
   reasoningView,
   SUGGESTION_LIMIT,
 } from "./shared";
+
+const modelIdKey = (id: string) => id.toLowerCase();
 
 export function ModelPanes({
   provider,
@@ -39,16 +40,24 @@ export function ModelPanes({
   const [customId, setCustomId] = useState("");
   const [customError, setCustomError] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const index = useMemo(() => catalogIndex(catalog), [catalog]);
+  const index = useMemo(
+    () => new Map(catalog.map((entry) => [modelIdKey(entry.id), entry] as const)),
+    [catalog],
+  );
 
-  const selectedIds = new Set(provider.models.map((m) => m.id));
+  const selectedIds = new Set(provider.models.map((m) => modelIdKey(m.id)));
   const family = familyOf(provider.api);
 
   // 候选池：上游拉取优先；未拉取时回落目录按协议家族过滤
   const candidates = useMemo(() => {
-    const pool: { id: string; name: string; context: number | null }[] = [];
+    const pool = new Map<string, { id: string; name: string; context: number | null }>();
     const push = (id: string, name?: string, context?: number | null) => {
-      pool.push({ id, name: name ?? id, context: context ?? index.get(id)?.context ?? null });
+      const key = modelIdKey(id);
+      pool.set(key, {
+        id,
+        name: name ?? id,
+        context: context ?? index.get(key)?.context ?? null,
+      });
     };
     if (remote) {
       for (const id of remote) push(id);
@@ -57,31 +66,34 @@ export function ModelPanes({
         if (!family || e.family === family) push(e.id, e.name, e.context);
       }
     }
+    // Model ID identity follows PI-Desktop: case-insensitive for merging/selection, original spelling for display/save.
     // 已选但上游/目录不再返回的模型仍保留在完整候选池，未搜索时可继续对照和取消。
-    // 搜索是这个完整列表的纯视图过滤，因此 Select all / Clear 只作用于当前可见行。
     for (const m of provider.models) {
-      if (!pool.some((e) => e.id === m.id)) {
-        pool.push({
+      const key = modelIdKey(m.id);
+      if (!pool.has(key)) {
+        pool.set(key, {
           id: m.id,
-          name: index.get(m.id)?.name ?? m.name ?? m.id,
-          context: index.get(m.id)?.context ?? null,
+          name: index.get(key)?.name ?? m.name ?? m.id,
+          context: index.get(key)?.context ?? null,
         });
       }
     }
     const q = query.trim().toLowerCase();
+    const rows = [...pool.values()];
     const visible = q
-      ? pool.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
-      : pool;
+      ? rows.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
+      : rows;
     return visible.slice(0, SUGGESTION_LIMIT);
   }, [remote, catalog, family, query, provider.models, index]);
 
-  const visibleSelected = candidates.filter((e) => selectedIds.has(e.id));
+  const visibleSelected = candidates.filter((e) => selectedIds.has(modelIdKey(e.id)));
   const allChecked = visibleSelected.length > 0 && visibleSelected.length === candidates.length;
   const someChecked = visibleSelected.length > 0 && visibleSelected.length < candidates.length;
 
   const toggle = (id: string) => {
-    if (selectedIds.has(id)) {
-      onModelsChange(provider.models.filter((m) => m.id !== id));
+    const key = modelIdKey(id);
+    if (selectedIds.has(key)) {
+      onModelsChange(provider.models.filter((m) => modelIdKey(m.id) !== key));
     } else {
       onModelsChange([...provider.models, emptyModelEntry(id)]);
     }
@@ -89,11 +101,11 @@ export function ModelPanes({
 
   const toggleAll = () => {
     if (allChecked) {
-      const visible = new Set(candidates.map((e) => e.id));
-      onModelsChange(provider.models.filter((m) => !visible.has(m.id)));
+      const visible = new Set(candidates.map((e) => modelIdKey(e.id)));
+      onModelsChange(provider.models.filter((m) => !visible.has(modelIdKey(m.id))));
     } else {
       const additions = candidates
-        .filter((e) => !selectedIds.has(e.id))
+        .filter((e) => !selectedIds.has(modelIdKey(e.id)))
         .map((e) => emptyModelEntry(e.id));
       onModelsChange([...provider.models, ...additions]);
     }
@@ -105,7 +117,7 @@ export function ModelPanes({
       setCustomError(true);
       return;
     }
-    if (selectedIds.has(id)) {
+    if (selectedIds.has(modelIdKey(id))) {
       setCustomError(true);
       return;
     }
@@ -170,7 +182,7 @@ export function ModelPanes({
         )}
         <ul className="max-h-64 overflow-y-auto" aria-label={t("Models from this service")}>
           {candidates.map((e) => {
-            const checked = selectedIds.has(e.id);
+            const checked = selectedIds.has(modelIdKey(e.id));
             const tokens = fmtTokens(e.context);
             return (
               <li key={e.id}>
@@ -236,7 +248,7 @@ export function ModelPanes({
         )}
         <ul className="flex flex-col gap-1 overflow-y-auto" aria-label={t("Model settings")}>
           {provider.models.map((m) => {
-            const tokens = fmtTokens(index.get(m.id)?.context ?? null);
+            const tokens = fmtTokens(index.get(modelIdKey(m.id))?.context ?? null);
             const isExpanded = expanded === m.id;
             const view = reasoningView(m);
             return (
@@ -266,7 +278,7 @@ export function ModelPanes({
                 {isExpanded && (
                   <ModelAdvancedPanel
                     model={m}
-                    catalogEntry={index.get(m.id) ?? null}
+                    catalogEntry={index.get(modelIdKey(m.id)) ?? null}
                     onChange={(patch) => patchModel(m.id, patch)}
                   />
                 )}

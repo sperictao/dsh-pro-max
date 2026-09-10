@@ -27,12 +27,16 @@ const provider = (models: ModelEntry[]): ProviderConfig => ({
   extra: null,
 });
 
-const renderPanes = (models: ModelEntry[], onModelsChange: (models: ModelEntry[]) => void) =>
+const renderPanes = (
+  models: ModelEntry[],
+  onModelsChange: (models: ModelEntry[]) => void,
+  remote: string[] = ["alpha-model", "beta-model"],
+) =>
   render(
     <ModelPanes
       provider={provider(models)}
       catalog={[]}
-      remote={["alpha-model", "beta-model"]}
+      remote={remote}
       fetching={false}
       fetchError={null}
       onModelsChange={onModelsChange}
@@ -83,4 +87,51 @@ describe("ModelPanes visible selection semantics", () => {
       model("legacy-custom", "Legacy"),
     ]);
   });
+
+  it("dedupes case variants and treats the configured spelling as the same selected model", async () => {
+    const user = userEvent.setup();
+    const onModelsChange = vi.fn();
+    renderPanes(
+      [model("ALPHA-MODEL", "Pinned override")],
+      onModelsChange,
+      ["alpha-model", "ALPHA-MODEL", "beta-model"],
+    );
+
+    const list = screen.getByRole("list", { name: "Models from this service" });
+    const alpha = within(list).getByRole("checkbox", { name: /alpha-model/i });
+    expect(within(list).getAllByRole("checkbox")).toHaveLength(2);
+    expect(alpha).toBeChecked();
+
+    await user.click(alpha);
+
+    expect(onModelsChange).toHaveBeenCalledOnce();
+    expect(onModelsChange.mock.calls[0][0]).toEqual([]);
+  });
+
+  it("select all does not duplicate an already-selected case variant", async () => {
+    const user = userEvent.setup();
+    const onModelsChange = vi.fn();
+    renderPanes([model("ALPHA-MODEL", "Pinned override")], onModelsChange);
+
+    await user.click(screen.getByRole("checkbox", { name: "Select all" }));
+
+    expect(onModelsChange).toHaveBeenCalledOnce();
+    expect(onModelsChange.mock.calls[0][0]).toEqual([
+      model("ALPHA-MODEL", "Pinned override"),
+      model("beta-model"),
+    ]);
+  });
+
+  it("rejects a custom model ID that differs only by case", async () => {
+    const user = userEvent.setup();
+    const onModelsChange = vi.fn();
+    renderPanes([model("Alpha-Model")], onModelsChange);
+
+    await user.type(screen.getByLabelText("Custom model ID"), "alpha-model");
+    await user.click(screen.getByRole("button", { name: "Add custom model" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Model already added");
+    expect(onModelsChange).not.toHaveBeenCalled();
+  });
+
 });
