@@ -8,9 +8,8 @@ import { MODEL_PRESETS } from "@/shared/lib/model-presets.generated";
 export const API_OPTIONS = ["openai-completions", "openai-responses", "anthropic-messages"] as const;
 // pi-ai ModelThinkingLevel 全集（escalation order）
 export const EFFORT_OPTIONS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-// 目录快照过期窗口与候选截断（浮层不渲染全量 4000+ 条）
+// 目录快照过期窗口
 export const CATALOG_STALE_SECS = 24 * 60 * 60;
-export const SUGGESTION_LIMIT = 50;
 // 两步删除的还原窗口（PI 同款交互：3 秒未确认自动还原）
 export const DELETE_CONFIRM_MS = 3000;
 
