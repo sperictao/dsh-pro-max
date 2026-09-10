@@ -2,9 +2,13 @@
 //!
 //! UI 管理域 = `agent-default-model`（默认模型选择）+ `llm-pi-ai.providers`
 //! （自定义提供商路由）。settings.yaml 其余顶层键（llm-deepseek、
-//! agent-presets、ui-onboarding 等）不属于本域，save 一律原样保留；每个
-//! 提供商路由的非管理键（超时、compat 等高级字段）经 extra 原样透传，
-//! 编辑不丢失。凭据只存环境变量名（apiKeyEnv），密钥永不进配置文件。
+//! agent-presets、ui-onboarding 等）不属于本域，save 一律原样保留。管理键
+//! 以 dsh `PiAiProviderProfile` / `PiAiModelProfile` schema（UI 子集）为准：
+//! 提供商级 = displayName/baseURL/api/apiKeyEnv/models/headers/timeoutMs/
+//! reasoning，模型条目级 = id/name/contextWindow/maxTokens/input/
+//! reasoningEfforts；每个提供商与其模型条目的非管理键（compat、重试策略等）
+//! 分别经 extra 原样透传，编辑不丢失。凭据只存环境变量名（apiKeyEnv），
+//! 密钥永不进配置文件。
 
 use super::components::dsh_dir;
 use crate::i18n::keyf;
@@ -14,8 +18,26 @@ use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// UI 管理的提供商字段；其余字段经 extra 透传保留
-const MANAGED_PROVIDER_KEYS: [&str; 5] = ["displayName", "baseURL", "api", "apiKeyEnv", "models"];
+/// UI 管理的提供商字段；其余字段经 extra 透传保留（dsh schema UI 子集）
+const MANAGED_PROVIDER_KEYS: [&str; 8] = [
+    "displayName",
+    "baseURL",
+    "api",
+    "apiKeyEnv",
+    "models",
+    "headers",
+    "timeoutMs",
+    "reasoning",
+];
+/// UI 管理的模型条目字段；其余字段（compat 等）经条目 extra 透传保留
+const MANAGED_MODEL_KEYS: [&str; 6] = [
+    "id",
+    "name",
+    "contextWindow",
+    "maxTokens",
+    "input",
+    "reasoningEfforts",
+];
 /// agent-default-model 与 llm-pi-ai 在 settings.yaml 的键名
 const DEFAULT_MODEL_KEY: &str = "agent-default-model";
 const PI_AI_KEY: &str = "llm-pi-ai";
@@ -36,19 +58,69 @@ pub struct ProviderConfig {
     #[serde(default, rename = "baseURL")]
     #[ts(rename = "baseURL")]
     pub base_url: Option<String>,
-    /// wire 协议：openai-completions | openai-responses | anthropic-messages
+    /// wire 协议：openai-completions | openai-responses | anthropic-messages；
+    /// 缺省时目录路由继承目录协议
     #[serde(default)]
     pub api: Option<String>,
     /// 凭据引用（环境变量名），密钥永不落盘
     #[serde(default)]
     pub api_key_env: Option<String>,
-    /// 模型 id 列表（models[].id）
+    /// 本路由的模型条目；空 = 不写 models 键（继承内置目录）
     #[serde(default)]
-    pub models: Vec<String>,
-    /// 本路由的非管理键（高级字段），原样透传
+    pub models: Vec<ModelEntry>,
+    /// 请求头（凭据类保留头由 UI 拒收；dsh Harness 归因头优先）
+    #[serde(default)]
+    pub headers: Option<BTreeMap<String, String>>,
+    /// 请求超时（毫秒）
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub timeout_ms: Option<u64>,
+    /// 本路由默认推理档：off..max
+    #[serde(default)]
+    pub reasoning: Option<String>,
+    /// 本路由的非管理键（compat、重试策略等高级字段），原样透传
     #[serde(default)]
     #[ts(type = "import(\"./serde_json/JsonValue\").JsonValue")]
     pub extra: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub struct ModelEntry {
+    /// 模型 id（请求身份），非空
+    pub id: String,
+    /// 显示名；缺省回落目录名或 id
+    #[serde(default)]
+    pub name: Option<String>,
+    /// 上下文窗口（token）；缺省继承目录
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub context_window: Option<u64>,
+    /// 最大输出（token）；缺省继承目录
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub max_tokens: Option<u64>,
+    /// 输入模态原样保留（text/image/...）；UI 以三态开关投影，缺省=继承目录
+    #[serde(default)]
+    pub input: Option<Vec<String>>,
+    /// 推理档声明原样；缺省=继承目录（手写模型视为不支持推理）
+    #[serde(default)]
+    pub reasoning_efforts: Option<ReasoningEfforts>,
+    /// 条目内非管理键（compat 等），原样透传
+    #[serde(default)]
+    #[ts(type = "import(\"./serde_json/JsonValue\").JsonValue")]
+    pub extra: serde_json::Value,
+}
+
+/// dsh reasoningEfforts 原样形态：false = 手写声明不支持推理（UI 不改写，
+/// 原样保留）；map = 档位 → wire 拼写（null = 支持但不发参，仅 off 档合法）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(untagged)]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub enum ReasoningEfforts {
+    Disabled(bool),
+    Levels(BTreeMap<String, Option<String>>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
@@ -78,25 +150,83 @@ fn yaml_str(map: Option<&Mapping>, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn provider_from_yaml(route: &str, value: &Yaml) -> Option<ProviderConfig> {
-    let map = value.as_mapping()?;
+/// 剥出 mapping 中管理键后的剩余键（透传集合）；
+/// 病态 YAML（非字符串键）序列化失败时记日志并以空透传兜底，不炸整个加载
+fn unmanaged_fields(map: &Mapping, managed: &[&str]) -> serde_json::Value {
     let mut rest = map.clone();
-    for key in MANAGED_PROVIDER_KEYS {
-        rest.remove(Yaml::String(key.into()));
+    for key in managed {
+        rest.remove(Yaml::String((*key).into()));
     }
-    let models = map
-        .get(Yaml::String("models".into()))
+    serde_json::to_value(&rest).unwrap_or_else(|e| {
+        crate::logging::warn("透传字段序列化失败", &e.to_string());
+        serde_json::Value::Null
+    })
+}
+
+/// 类型不符的管理键按"丢弃"处理（与提供商级 extra 同名键丢弃规则一致）：
+/// UI 字段是其唯一事实来源，schema 不接受的形态 dsh 也会拒收整个段落
+fn model_entry_from_yaml(value: &Yaml) -> Option<ModelEntry> {
+    if let Some(id) = value.as_str() {
+        // 裸字符串条目（手写容错）= 仅 id
+        return Some(ModelEntry {
+            id: id.to_string(),
+            name: None,
+            context_window: None,
+            max_tokens: None,
+            input: None,
+            reasoning_efforts: None,
+            extra: serde_json::Value::Null,
+        });
+    }
+    let map = value.as_mapping()?;
+    let id = yaml_str(Some(map), "id")?;
+    let input = map
+        .get(Yaml::String("input".into()))
         .and_then(Yaml::as_sequence)
         .map(|seq| {
             seq.iter()
-                .filter_map(|e| {
-                    e.get(Yaml::String("id".into()))
-                        .and_then(Yaml::as_str)
-                        .map(str::to_string)
-                })
-                .collect()
-        })
+                .filter_map(Yaml::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        });
+    let reasoning_efforts = map
+        .get(Yaml::String("reasoningEfforts".into()))
+        .and_then(|v| serde_json::to_value(v).ok())
+        .and_then(|v| serde_json::from_value::<ReasoningEfforts>(v).ok());
+    Some(ModelEntry {
+        id,
+        name: yaml_str(Some(map), "name"),
+        context_window: map
+            .get(Yaml::String("contextWindow".into()))
+            .and_then(Yaml::as_u64),
+        max_tokens: map
+            .get(Yaml::String("maxTokens".into()))
+            .and_then(Yaml::as_u64),
+        input,
+        reasoning_efforts,
+        extra: unmanaged_fields(map, &MANAGED_MODEL_KEYS),
+    })
+}
+
+fn provider_from_yaml(route: &str, value: &Yaml) -> Option<ProviderConfig> {
+    let map = value.as_mapping()?;
+    let models = map
+        .get(Yaml::String("models".into()))
+        .and_then(Yaml::as_sequence)
+        .map(|seq| seq.iter().filter_map(model_entry_from_yaml).collect())
         .unwrap_or_default();
+    let headers = map
+        .get(Yaml::String("headers".into()))
+        .and_then(Yaml::as_mapping)
+        .map(|hm| {
+            hm.iter()
+                .filter_map(|(k, v)| {
+                    let key = k.as_str()?;
+                    let value = v.as_str()?;
+                    Some((key.to_string(), value.to_string()))
+                })
+                .collect::<BTreeMap<_, _>>()
+        });
     Some(ProviderConfig {
         route: route.to_string(),
         display_name: yaml_str(Some(map), "displayName"),
@@ -104,7 +234,12 @@ fn provider_from_yaml(route: &str, value: &Yaml) -> Option<ProviderConfig> {
         api: yaml_str(Some(map), "api"),
         api_key_env: yaml_str(Some(map), "apiKeyEnv"),
         models,
-        extra: serde_json::to_value(&rest).unwrap_or(serde_json::Value::Null),
+        headers,
+        timeout_ms: map
+            .get(Yaml::String("timeoutMs".into()))
+            .and_then(Yaml::as_u64),
+        reasoning: yaml_str(Some(map), "reasoning"),
+        extra: unmanaged_fields(map, &MANAGED_PROVIDER_KEYS),
     })
 }
 
@@ -155,9 +290,69 @@ fn non_empty(s: &Option<String>) -> Option<&str> {
     s.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
+fn reasoning_efforts_to_yaml(re: &ReasoningEfforts) -> Yaml {
+    match re {
+        ReasoningEfforts::Disabled(b) => Yaml::Bool(*b),
+        ReasoningEfforts::Levels(levels) => {
+            let mut map = Mapping::new();
+            for (level, spelling) in levels {
+                let value = spelling
+                    .as_deref()
+                    .map(|s| Yaml::String(s.to_string()))
+                    .unwrap_or(Yaml::Null);
+                map.insert(Yaml::String(level.clone()), value);
+            }
+            Yaml::Mapping(map)
+        }
+    }
+}
+
+fn model_entry_to_yaml(e: &ModelEntry) -> Result<Yaml, String> {
+    if e.id.trim().is_empty() {
+        return Err("Model id cannot be empty".to_string());
+    }
+    let mut map = Mapping::new();
+    // 条目透传字段先进且无条件剥离管理键：与提供商级同规则，管理键的唯一
+    // 事实来源是 UI 字段
+    match &e.extra {
+        serde_json::Value::Null => {}
+        serde_json::Value::Object(fields) => {
+            for (k, v) in fields {
+                if !MANAGED_MODEL_KEYS.contains(&k.as_str()) {
+                    map.insert(Yaml::String(k.clone()), yaml_from_json(v));
+                }
+            }
+        }
+        _ => return Err("Model entry advanced fields must be an object".to_string()),
+    }
+    map.insert(Yaml::String("id".into()), Yaml::String(e.id.clone()));
+    if let Some(v) = non_empty(&e.name) {
+        map.insert(Yaml::String("name".into()), v.into());
+    }
+    if let Some(v) = e.context_window {
+        map.insert(Yaml::String("contextWindow".into()), v.into());
+    }
+    if let Some(v) = e.max_tokens {
+        map.insert(Yaml::String("maxTokens".into()), v.into());
+    }
+    if let Some(input) = &e.input {
+        let seq: Vec<Yaml> = input.iter().map(|m| Yaml::String(m.clone())).collect();
+        if !seq.is_empty() {
+            map.insert(Yaml::String("input".into()), seq.into());
+        }
+    }
+    if let Some(re) = &e.reasoning_efforts {
+        map.insert(
+            Yaml::String("reasoningEfforts".into()),
+            reasoning_efforts_to_yaml(re),
+        );
+    }
+    Ok(Yaml::Mapping(map))
+}
+
 fn provider_to_yaml(p: &ProviderConfig) -> Result<Yaml, String> {
     let mut map = Mapping::new();
-    // 高级字段先进且无条件剥离管理键：这 5 个键的唯一事实来源是 UI 字段，
+    // 高级字段先进且无条件剥离管理键：这些键的唯一事实来源是 UI 字段，
     // extra 混入同名键时一律丢弃；UI 提供值则随后写入，未提供则不出现
     match &p.extra {
         serde_json::Value::Null => {}
@@ -182,18 +377,30 @@ fn provider_to_yaml(p: &ProviderConfig) -> Result<Yaml, String> {
     if let Some(v) = non_empty(&p.api_key_env) {
         map.insert(Yaml::String("apiKeyEnv".into()), v.into());
     }
-    let models: Vec<Yaml> = p
-        .models
-        .iter()
-        .filter(|id| !id.trim().is_empty())
-        .map(|id| {
-            let mut entry = Mapping::new();
-            entry.insert(Yaml::String("id".into()), Yaml::String(id.clone()));
-            Yaml::Mapping(entry)
-        })
-        .collect();
-    if !models.is_empty() {
+    // 空列表 = 不写 models 键：dsh 里缺省即继承内置目录，写空数组反而会
+    // 把目录路由清成零模型
+    if !p.models.is_empty() {
+        let models: Vec<Yaml> = p
+            .models
+            .iter()
+            .map(model_entry_to_yaml)
+            .collect::<Result<_, _>>()?;
         map.insert(Yaml::String("models".into()), models.into());
+    }
+    if let Some(headers) = &p.headers {
+        if !headers.is_empty() {
+            let mut hm = Mapping::new();
+            for (k, v) in headers {
+                hm.insert(Yaml::String(k.clone()), Yaml::String(v.clone()));
+            }
+            map.insert(Yaml::String("headers".into()), Yaml::Mapping(hm));
+        }
+    }
+    if let Some(v) = p.timeout_ms {
+        map.insert(Yaml::String("timeoutMs".into()), v.into());
+    }
+    if let Some(v) = non_empty(&p.reasoning) {
+        map.insert(Yaml::String("reasoning".into()), v.into());
     }
     Ok(Yaml::Mapping(map))
 }
@@ -341,7 +548,7 @@ pub fn model_config_save(config: ModelConfig) -> Result<(), String> {
 
 // ============ 模型目录（models.dev 全量快照）============
 
-/// models.dev 投影条目：模型 id + 展示名 + 协议家族
+/// models.dev 投影条目：模型 id + 展示名 + 协议家族 + 上下文窗口
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/shared/bindings/")]
@@ -350,6 +557,10 @@ pub struct CatalogEntry {
     pub name: String,
     /// openai | anthropic（dsh pi-ai 无 gemini 原生协议，google 端点经 openai 兼容）
     pub family: String,
+    /// 目录标注的上下文窗口（token）；缺失为 null（UI 不显示缩写）
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub context: Option<i64>,
 }
 
 /// 目录快照：缓存不是事实来源，fetched_at 供过期判断
@@ -375,6 +586,14 @@ struct ModelsDevModel {
     id: Option<String>,
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    limit: Option<ModelsDevLimit>,
+}
+
+#[derive(Deserialize)]
+struct ModelsDevLimit {
+    #[serde(default)]
+    context: Option<i64>,
 }
 
 /// family 归类：anthropic 官方键 → anthropic，其余（含 google）→ openai
@@ -409,6 +628,7 @@ pub(crate) fn project_catalog(raw: &str, fetched_at: i64) -> Result<CatalogFile,
                 .or_insert_with(|| CatalogEntry {
                     name: model.name.unwrap_or_else(|| id.clone()),
                     family: family.to_string(),
+                    context: model.limit.and_then(|l| l.context),
                     id,
                 });
         }

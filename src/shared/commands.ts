@@ -12,6 +12,8 @@ import type {
   InstallOutcome,
   LauncherConfig,
   MarketCatalog,
+  ImportGroup,
+  ImportRunResult,
   MarketDiagnostics,
   ModelCatalogFile,
   ModelConfig,
@@ -107,6 +109,10 @@ export const modelCatalogRefresh = () => invokeTyped<ModelCatalogFile>("model_ca
 export const modelRemoteList = (baseURL: string, api: string | null, apiKeyEnv: string | null) =>
   // Tauri 按 camelCase 形参名取参：base_url → baseUrl（baseURL 永不命中）
   invokeTyped<string[]>("model_remote_list", { baseUrl: baseURL, api, apiKeyEnv });
+// 配置导入：扫描本机其他工具的 provider 声明（缺失来源静默为空组），按 key 导入
+export const modelConfigImportScan = () => invokeTyped<ImportGroup[]>("model_config_import_scan");
+export const modelConfigImportRun = (keys: string[]) =>
+  invokeTyped<ImportRunResult>("model_config_import_run", { keys });
 
 // ============ 更新 ============
 export const getUpdaterConfigHealth = () => invokeTyped<UpdaterConfigHealth>("get_updater_config_health");

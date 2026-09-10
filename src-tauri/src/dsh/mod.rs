@@ -33,6 +33,7 @@ mod compat;
 mod components;
 mod detect;
 mod market;
+mod model_import;
 mod models;
 mod probe;
 mod process;
@@ -84,6 +85,8 @@ reexport_commands! {
     models::model_catalog_load,
     models::model_catalog_refresh,
     models::model_remote_list,
+    model_import::model_config_import_scan,
+    model_import::model_config_import_run,
 }
 
 // ============ 共享常量 ============

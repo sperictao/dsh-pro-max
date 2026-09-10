@@ -23,6 +23,8 @@ tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml = "0.9"
+# Codex config.toml 导入解析（[model_providers] 表）
+toml = "0.9"
 # 插件市场目录拉取（约 27MB 静态 JSON）：rustls 免系统 openssl 依赖，gzip 压缩传输
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json", "gzip"] }
 tokio = { version = "1", features = ["full"] }

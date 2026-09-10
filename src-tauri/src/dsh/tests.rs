@@ -1504,7 +1504,23 @@ fn serve_failure_solution_branches_on_tls_hint() {
 
 // ============ 模型配置（models.rs）============
 
-use super::models::{load_model_config_at, save_model_config_at, ModelConfig, ProviderConfig};
+use super::models::{
+    load_model_config_at, save_model_config_at, ModelConfig, ModelEntry, ProviderConfig,
+    ReasoningEfforts,
+};
+
+/// 空 shadow 字段的纯 id 模型条目（测试夹具）
+fn plain_model() -> ModelEntry {
+    ModelEntry {
+        id: String::new(),
+        name: None,
+        context_window: None,
+        max_tokens: None,
+        input: None,
+        reasoning_efforts: None,
+        extra: serde_json::Value::Null,
+    }
+}
 
 fn temp_settings_path(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("dsh-pro-max-models-{}-{tag}", std::process::id()));
@@ -1526,8 +1542,33 @@ fn model_config_save_then_load_roundtrip() {
             base_url: Some("https://proxy.example.com/v1".into()),
             api: Some("openai-responses".into()),
             api_key_env: Some("SPERO_AI_API_KEY".into()),
-            models: vec!["glm-5.2".into(), "kimi-for-coding".into()],
-            extra: serde_json::json!({ "timeoutMs": 60000 }),
+            models: vec![
+                ModelEntry {
+                    id: "glm-5.2".into(),
+                    ..plain_model()
+                },
+                ModelEntry {
+                    id: "kimi-for-coding".into(),
+                    name: Some("Kimi".into()),
+                    context_window: Some(262144),
+                    max_tokens: Some(32768),
+                    input: Some(vec!["text".into(), "image".into()]),
+                    reasoning_efforts: Some(ReasoningEfforts::Levels(
+                        [("off".into(), None), ("high".into(), Some("high".into()))]
+                            .into_iter()
+                            .collect(),
+                    )),
+                    extra: serde_json::json!({ "compat": { "supportsStore": true } }),
+                },
+            ],
+            headers: Some(
+                [("X-Title".into(), "my-app".into()), ("X-Client".into(), "dsh".into())]
+                    .into_iter()
+                    .collect(),
+            ),
+            timeout_ms: Some(60000),
+            reasoning: Some("high".into()),
+            extra: serde_json::json!({ "retryPolicy": { "mode": "normal" } }),
         }],
     };
     save_model_config_at(&path, &config).expect("save");
@@ -1536,6 +1577,11 @@ fn model_config_save_then_load_roundtrip() {
     assert!(text.contains("agent-default-model:"));
     assert!(text.contains("reasoningEffort: max"));
     assert!(text.contains("apiKeyEnv: SPERO_AI_API_KEY"));
+    assert!(text.contains("contextWindow: 262144"));
+    assert!(text.contains("reasoningEfforts:"));
+    assert!(text.contains("timeoutMs: 60000"));
+    assert!(text.contains("reasoning: high"));
+    assert!(text.contains("X-Title: my-app"));
 
     let loaded = load_model_config_at(&path).expect("load");
     assert_eq!(loaded.default_provider.as_deref(), Some("spero-ai"));
@@ -1546,12 +1592,22 @@ fn model_config_save_then_load_roundtrip() {
     assert_eq!(p.route, "spero-ai");
     assert_eq!(p.display_name.as_deref(), Some("Spero AI"));
     assert_eq!(p.api.as_deref(), Some("openai-responses"));
-    assert_eq!(
-        p.models,
-        vec!["glm-5.2".to_string(), "kimi-for-coding".to_string()]
-    );
-    // 非管理键经 extra 原样保留
-    assert_eq!(p.extra, serde_json::json!({ "timeoutMs": 60000 }));
+    assert_eq!(p.timeout_ms, Some(60000));
+    assert_eq!(p.reasoning.as_deref(), Some("high"));
+    assert_eq!(p.headers.as_ref().map(|h| h.get("X-Title").unwrap()), Some(&"my-app".to_string()));
+    // 模型条目结构化字段逐项往返
+    assert_eq!(p.models.len(), 2);
+    assert_eq!(p.models[0].id, "glm-5.2");
+    let rich = &p.models[1];
+    assert_eq!(rich.id, "kimi-for-coding");
+    assert_eq!(rich.name.as_deref(), Some("Kimi"));
+    assert_eq!(rich.context_window, Some(262144));
+    assert_eq!(rich.max_tokens, Some(32768));
+    assert_eq!(rich.input, Some(vec!["text".into(), "image".into()]));
+    assert!(matches!(rich.reasoning_efforts, Some(ReasoningEfforts::Levels(_))));
+    // 非管理键经 extra 原样保留（提供商级与模型条目级）
+    assert_eq!(p.extra, serde_json::json!({ "retryPolicy": { "mode": "normal" } }));
+    assert_eq!(rich.extra, serde_json::json!({ "compat": { "supportsStore": true } }));
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -1576,6 +1632,9 @@ fn model_config_save_preserves_foreign_keys_and_strips_managed_from_extra() {
             api: Some("anthropic-messages".into()),
             api_key_env: None,
             models: Vec::new(),
+            headers: None,
+            timeout_ms: None,
+            reasoning: None,
             // extra 混入管理键：保存时必须被剥离（后写覆盖语义不许出现）
             extra: serde_json::json!({ "displayName": "HACK", "retryPolicy": { "mode": "normal" } }),
         }],
@@ -1617,6 +1676,51 @@ fn model_config_empty_providers_removes_llm_pi_ai_key() {
     assert!(!text.contains("llm-pi-ai"));
     assert!(!text.contains("agent-default-model"));
     assert!(text.contains("agent-presets:"));
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn model_config_roundtrip_disabled_reasoning_empty_models_and_wrong_typed_managed_keys() {
+    set_current("en");
+    let path = temp_settings_path("roundtrip-edge");
+    // 手写形态：reasoningEfforts=false 声明、headers 值非字符串、timeoutMs 布尔
+    std::fs::write(
+        &path,
+        "llm-pi-ai:\n  providers:\n    a:\n      headers:\n        X-Ok: fine\n        Authorization: 123\n      timeoutMs: true\n      models:\n        - id: m1\n          reasoningEfforts: false\n          contextWindow: \"not-a-number\"\n",
+    )
+    .unwrap();
+    let loaded = load_model_config_at(&path).expect("load");
+    let p = &loaded.providers[0];
+    // 错型管理键按丢弃处理：headers 只剩字符串值条目，timeoutMs 落 None
+    assert_eq!(p.headers.as_ref().map(|h| h.len()), Some(1));
+    assert_eq!(p.timeout_ms, None);
+    // reasoningEfforts=false（手写声明不支持推理）原样保留
+    assert_eq!(p.models[0].reasoning_efforts, Some(ReasoningEfforts::Disabled(false)));
+    // 错型 contextWindow 丢弃
+    assert_eq!(p.models[0].context_window, None);
+
+    // 空 models 保存 → 不写 models 键（继承内置目录）
+    let config = ModelConfig {
+        default_provider: None,
+        default_model: None,
+        default_reasoning_effort: None,
+        providers: vec![ProviderConfig {
+            route: "b".into(),
+            display_name: None,
+            base_url: None,
+            api: None,
+            api_key_env: None,
+            models: Vec::new(),
+            headers: None,
+            timeout_ms: None,
+            reasoning: None,
+            extra: serde_json::Value::Null,
+        }],
+    };
+    save_model_config_at(&path, &config).expect("save");
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("b:"));
+    assert!(!text.contains("models"));
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
@@ -3844,6 +3948,7 @@ fn catalog_snapshot_roundtrip_and_corruption() {
             id: "glm-5.2".into(),
             name: "GLM-5.2".into(),
             family: "openai".into(),
+            context: Some(262144),
         }],
     };
     std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
@@ -3866,4 +3971,196 @@ fn fetch_remote_models_requires_env_value() {
     let err = fetch_remote_models("https://gw.example.com", Some("openai-completions"), Some(KEY))
         .unwrap_err();
     assert!(err.contains("Environment variable is not set"));
+}
+
+// ============ 模型配置导入（model_import.rs）============
+
+use super::model_import::{parse_cc_switch, parse_claude_code, parse_codex, parse_opencode, parse_pi, run_at, scan_at};
+use serde_json::json;
+
+fn j(value: serde_json::Value) -> serde_json::Value {
+    value
+}
+
+#[test]
+fn import_claude_code_maps_base_url_and_counts_literal_secret() {
+    set_current("en");
+    let settings = j(json!({
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://gw.example.com",
+            "ANTHROPIC_AUTH_TOKEN": "sk-literal-value",
+            "ANTHROPIC_MODEL": "claude-sonnet-4-5"
+        }
+    }));
+    let out = parse_claude_code(&settings, None);
+    assert_eq!(out.len(), 1);
+    let c = &out[0].1;
+    // 有自定义端点 → claude-code 路由；密钥是明文 → 只计数不导入
+    assert_eq!(c.route, "claude-code");
+    assert_eq!(c.base_url.as_deref(), Some("https://gw.example.com"));
+    assert_eq!(c.api.as_deref(), Some("anthropic-messages"));
+    assert_eq!(c.credential, "literal");
+    assert_eq!(c.api_key_env, None);
+    assert_eq!(c.models, vec!["claude-sonnet-4-5".to_string()]);
+}
+
+#[test]
+fn import_claude_code_without_base_url_targets_catalog_route() {
+    set_current("en");
+    let settings = j(json!({ "env": { "ANTHROPIC_API_KEY": "sk-x" } }));
+    let out = parse_claude_code(&settings, None);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].1.route, "anthropic");
+    // 无端点无模型：继承内置目录
+    assert_eq!(out[0].1.base_url, None);
+}
+
+#[test]
+fn import_codex_maps_env_key_to_credential_reference() {
+    set_current("en");
+    let toml = r#"
+model = "gpt-5"
+[model_providers.openrouter]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"
+wire_api = "responses"
+"#;
+    let out = parse_codex(toml);
+    assert_eq!(out.len(), 1);
+    let c = &out[0].1;
+    // env_key 是环境变量名引用 → 直接映射 apiKeyEnv
+    assert_eq!(c.credential, "env");
+    assert_eq!(c.api_key_env.as_deref(), Some("OPENROUTER_API_KEY"));
+    assert_eq!(c.api.as_deref(), Some("openai-responses"));
+    assert_eq!(c.models, vec!["gpt-5".to_string()]);
+}
+
+#[test]
+fn import_opencode_resolves_env_reference_and_literal_auth() {
+    set_current("en");
+    let config = j(json!({
+        "provider": {
+            "mygateway": {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": "My Gateway",
+                "options": { "baseURL": "https://gw.example.com/v1", "apiKey": "{env:GW_API_KEY}" },
+                "models": { "large": {}, "small": {} }
+            },
+            "litgateway": {
+                "npm": "@ai-sdk/anthropic",
+                "options": { "baseURL": "https://lit.example.com" },
+                "models": { "claude-sonnet-4-5": {} }
+            }
+        }
+    }));
+    let auth = j(json!({ "litgateway": { "api_key": "sk-literal" } }));
+    let out = parse_opencode(&config, Some(&auth));
+    assert_eq!(out.len(), 2);
+    let by_route: std::collections::BTreeMap<&str, &super::model_import::ImportCandidate> =
+        out.iter().map(|(_, c)| (c.route.as_str(), c)).collect();
+    let env_ref = by_route.get("mygateway").unwrap();
+    assert_eq!(env_ref.credential, "env");
+    assert_eq!(env_ref.api_key_env.as_deref(), Some("GW_API_KEY"));
+    assert_eq!(env_ref.models.len(), 2);
+    let lit = by_route.get("litgateway").unwrap();
+    assert_eq!(lit.credential, "literal");
+    // anthropic npm 适配器 → anthropic-messages
+    assert_eq!(lit.api.as_deref(), Some("anthropic-messages"));
+}
+
+#[test]
+fn import_pi_and_cc_switch_round_shapes() {
+    set_current("en");
+    let models_json = j(json!({
+        "providers": {
+            "custom-llm": {
+                "name": "Custom",
+                "baseUrl": "https://custom.example.com/v1",
+                "api": "openai-completions",
+                "apiKey": "env:CUSTOM_KEY",
+                "models": [{ "id": "custom-large" }, { "id": "custom-small" }]
+            }
+        }
+    }));
+    let out = parse_pi(&models_json);
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].1.credential, "env");
+    assert_eq!(out[0].1.api_key_env.as_deref(), Some("CUSTOM_KEY"));
+
+    let cc = j(json!({
+        "claude": { "providers": { "primary": {
+            "name": "CC Primary",
+            "settingsConfig": { "env": { "ANTHROPIC_BASE_URL": "https://cc.example.com" } }
+        } } }
+    }));
+    let out = parse_cc_switch(&cc);
+    assert_eq!(out.len(), 1);
+    // 路由键带 appType 前缀防多 app 同名冲突
+    assert_eq!(out[0].1.route, "claude-primary");
+    assert_eq!(out[0].1.name, "CC Primary");
+}
+
+#[test]
+fn import_placeholder_secrets_are_treated_as_absent() {
+    set_current("en");
+    let toml = r#"
+[model_providers.a]
+base_url = "https://a.example.com"
+env_key = "A_KEY"
+[model_providers.b]
+base_url = "https://b.example.com"
+api_key = "changeme"
+[model_providers.c]
+base_url = "https://c.example.com"
+api_key = "sk-real-value"
+"#;
+    let out = parse_codex(toml);
+    let by_route: std::collections::BTreeMap<&str, &super::model_import::ImportCandidate> =
+        out.iter().map(|(_, c)| (c.route.as_str(), c)).collect();
+    assert_eq!(by_route["a"].credential, "env");
+    // 占位值（changeme）视同无凭据声明
+    assert_eq!(by_route["b"].credential, "none");
+    assert_eq!(by_route["c"].credential, "literal");
+}
+
+#[test]
+fn import_scan_and_run_merge_into_settings_then_dedupe() {
+    set_current("en");
+    let home = std::env::temp_dir().join(format!("dsh-pro-max-import-{}", std::process::id()));
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    std::fs::write(
+        home.join(".codex").join("config.toml"),
+        "[model_providers.openrouter]\nname = \"OpenRouter\"\nbase_url = \"https://openrouter.ai/api/v1\"\nenv_key = \"OPENROUTER_API_KEY\"\nwire_api = \"responses\"\n",
+    )
+    .unwrap();
+    let settings = home.join("settings.yaml");
+    std::fs::write(&settings, "agent-presets:\n  default: minimal\n").unwrap();
+
+    // 空 keys：结构化返回且不动 settings
+    let result = run_at(&home, &settings, &[]).unwrap();
+    assert_eq!(result.imported, 0);
+
+    let groups = scan_at(&home);
+    let codex = groups.iter().find(|g| g.source == "codex").unwrap();
+    assert_eq!(codex.entries.len(), 1);
+    let key = codex.entries[0].key.clone();
+
+    let result = run_at(&home, &settings, &[key]).unwrap();
+    assert_eq!(result.imported, 1);
+    assert_eq!(result.literal, 0);
+    let text = std::fs::read_to_string(&settings).unwrap();
+    assert!(text.contains("openrouter"));
+    assert!(text.contains("OPENROUTER_API_KEY"));
+    // 非模型域顶层键原样保留
+    assert!(text.contains("agent-presets:"));
+
+    // 重复导入：端点+凭据引用全同 → skipped
+    let groups = scan_at(&home);
+    let key = groups.iter().find(|g| g.source == "codex").unwrap().entries[0].key.clone();
+    let result = run_at(&home, &settings, &[key]).unwrap();
+    assert_eq!(result.imported, 0);
+    assert_eq!(result.skipped, 1);
+
+    std::fs::remove_dir_all(&home).ok();
 }

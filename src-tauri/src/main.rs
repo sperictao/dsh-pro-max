@@ -248,6 +248,8 @@ pub fn run() {
             dsh::model_catalog_load,
             dsh::model_catalog_refresh,
             dsh::model_remote_list,
+            dsh::model_config_import_scan,
+            dsh::model_config_import_run,
             updater::get_updater_config_health,
             updater::get_updater_help_paths,
             updater::check_update,
