@@ -125,7 +125,6 @@ describe("ModelsView provider studio", () => {
 
     await user.click(screen.getByTestId("empty-add-provider"));
     const dialog = await screen.findByRole("dialog");
-    // 未选服务前不暴露路由/Base URL 等底层连接字段。
     expect(within(dialog).queryByLabelText("Route key")).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Base URL")).not.toBeInTheDocument();
 
@@ -185,15 +184,16 @@ describe("ModelsView provider studio", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Fetch list" }));
     await waitFor(() => expect(remote).toHaveBeenCalledTimes(1));
+    expect(remote.mock.calls[0][3]).toEqual({ "X-Title": "my-app" });
     expect(within(dialog).getByRole("list", { name: "Models from this service" })).toHaveTextContent("kimi-k2");
 
     await user.clear(within(dialog).getByLabelText("API Key Env Var"));
     await user.type(within(dialog).getByLabelText("API Key Env Var"), "NEW_KEY");
-    // 远端结果被撤下，候选立即回到目录投影；再次 Fetch 才使用新凭据。
     expect(within(dialog).getByRole("list", { name: "Models from this service" })).not.toHaveTextContent("kimi-k2");
     await user.click(within(dialog).getByRole("button", { name: "Fetch list" }));
     await waitFor(() => expect(remote).toHaveBeenCalledTimes(2));
     expect(remote.mock.calls[1][2]).toBe("NEW_KEY");
+    expect(remote.mock.calls[1][3]).toEqual({ "X-Title": "my-app" });
   });
 
   it("probes a configured provider directly from its row", async () => {
@@ -209,6 +209,7 @@ describe("ModelsView provider studio", () => {
         "https://proxy.example.com/v1",
         "openai-responses",
         "SPERO_AI_API_KEY",
+        { "X-Title": "my-app" },
       ),
     );
     expect(useAppStore.getState().toasts.at(-1)?.message).toContain("2 models");
