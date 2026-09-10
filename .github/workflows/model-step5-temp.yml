@@ -18,7 +18,9 @@ jobs:
         with:
           node-version: "22"
       - name: Apply Step 5 patch
-        run: node scripts/step5-apply-temp.mjs
+        run: |
+          node scripts/step5-apply-temp.mjs
+          node scripts/step5-fix-temp.mjs
       - name: Commit Step 5 source changes
         run: |
           git add src-tauri/src/model_remote.rs src-tauri/src/main.rs src/shared/commands.ts src/shared/i18n/en.ts src/shared/i18n/zh-CN.ts src/features/models/shared.ts src/features/models/inheritedModels.test.ts src/features/models/ModelsView.tsx src/features/models/ProviderDialog.tsx src/features/models/ModelsView.connection.test.tsx src/features/models/ProviderDialog.connection.test.tsx
@@ -28,5 +30,5 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "feat(models): add dedicated provider connection test [skip ci]"
+          git commit -m "fix(models): isolate provider test and discovery busy states [skip ci]"
           git push origin HEAD:fix/models-step5-test-connection
