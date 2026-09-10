@@ -13,6 +13,11 @@ import type { ModelCatalogEntry, ModelConfig, ProviderConfig } from "@/shared/ty
 import { tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
 import { ImportDialog } from "./ImportDialog";
+import {
+  providerEnvNames,
+  providerReadiness,
+  type ProviderReadiness,
+} from "./readiness";
 import { CATALOG_STALE_SECS, DELETE_CONFIRM_MS, EFFORT_OPTIONS, fmtTokens } from "./shared";
 
 const EMPTY_CONFIG: ModelConfig = {
@@ -36,8 +41,18 @@ function configValidationError(config: ModelConfig): string | null {
   return null;
 }
 
+async function resolveProviderEnvStatus(providers: ProviderConfig[]): Promise<Record<string, boolean>> {
+  const names = providerEnvNames(providers);
+  return names.length > 0 ? cmd.modelEnvStatus(names) : {};
+}
+
 /** 新增/编辑服务后同步默认引用；纯函数便于保持配置只有一个事实来源。 */
-function upsertProvider(config: ModelConfig, provider: ProviderConfig, originalRoute: string | null): ModelConfig {
+function upsertProvider(
+  config: ModelConfig,
+  provider: ProviderConfig,
+  originalRoute: string | null,
+  canAutoDefault: boolean,
+): ModelConfig {
   const locate = originalRoute ?? provider.route;
   const existing = config.providers.findIndex((item) => item.route === locate);
   const providers =
@@ -53,9 +68,9 @@ function upsertProvider(config: ModelConfig, provider: ProviderConfig, originalR
     defaultProvider = provider.route;
   }
 
-  // 第一个真正拥有显式模型的服务自动成为默认；继承目录但未选择模型的服务
-  // 不猜默认模型，避免写入一个不存在的 id。
-  if (!defaultProvider?.trim() && provider.models.length > 0) {
+  // 第一个真正拥有显式模型且凭据条件已满足的服务自动成为默认；继承目录但
+  // 未选择模型、或凭据尚未 Ready 的服务不写入一个不可运行的默认模型。
+  if (!defaultProvider?.trim() && provider.models.length > 0 && canAutoDefault) {
     defaultProvider = provider.route;
     defaultModel = provider.models[0]?.id ?? null;
   }
@@ -69,12 +84,18 @@ function upsertProvider(config: ModelConfig, provider: ProviderConfig, originalR
   return { ...config, providers, defaultProvider, defaultModel };
 }
 
-function removeProviderFromConfig(config: ModelConfig, route: string): ModelConfig {
+function removeProviderFromConfig(
+  config: ModelConfig,
+  route: string,
+  readyRoutes: ReadonlySet<string>,
+): ModelConfig {
   const providers = config.providers.filter((provider) => provider.route !== route);
   if (config.defaultProvider !== route) return { ...config, providers };
 
-  // 优先回退到有显式模型的服务，避免产生 provider 有值但 model 为空的无效默认。
-  const next = providers.find((provider) => provider.models.length > 0);
+  // 删除默认服务时只回退到当前真正 Ready 且有显式模型的服务。
+  const next = providers.find(
+    (provider) => readyRoutes.has(provider.route) && provider.models.length > 0,
+  );
   return {
     ...config,
     providers,
@@ -88,6 +109,7 @@ export function ModelsView() {
   const toast = useAppStore((state) => state.toast);
   const loadModelConfig = useAppStore((state) => state.loadModelConfig);
   const [config, setConfig] = useState<ModelConfig | null>(null);
+  const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyRoute, setBusyRoute] = useState<string | null>(null);
   const [busyGlobal, setBusyGlobal] = useState(false);
@@ -106,7 +128,16 @@ export function ModelsView() {
     void (async () => {
       try {
         const loaded = await loadModelConfig();
-        if (!disposed) setConfig(loaded);
+        let status: Record<string, boolean> = {};
+        try {
+          status = await resolveProviderEnvStatus(loaded.providers);
+        } catch {
+          // IPC 已统一记日志；这里 fail-closed，避免把未知状态误标成 Ready。
+        }
+        if (!disposed) {
+          setConfig(loaded);
+          setEnvStatus(status);
+        }
       } catch (error) {
         if (!disposed) toast(tErr(String(error)), "error");
       } finally {
@@ -153,6 +184,19 @@ export function ModelsView() {
     [],
   );
 
+  const cfg = config ?? EMPTY_CONFIG;
+  const readinessByRoute = new Map(
+    cfg.providers.map((provider) => [provider.route, providerReadiness(provider, envStatus)] as const),
+  );
+  const readyRoutes = new Set(
+    cfg.providers
+      .filter((provider) => readinessByRoute.get(provider.route)?.ready)
+      .map((provider) => provider.route),
+  );
+  const hasReadyModel = cfg.providers.some(
+    (provider) => readyRoutes.has(provider.route) && provider.models.length > 0,
+  );
+
   const refreshCatalog = async (background: boolean) => {
     setCatalogRefreshing(true);
     try {
@@ -181,7 +225,14 @@ export function ModelsView() {
     else setBusyGlobal(true);
     try {
       await cmd.modelConfigSave(next);
+      let status: Record<string, boolean> = {};
+      try {
+        status = await resolveProviderEnvStatus(next.providers);
+      } catch {
+        // 保存事实仍成功；readiness 查询失败时保持 fail-closed。
+      }
       setConfig(next);
+      setEnvStatus(status);
     } catch (error) {
       toast(tErr(String(error)), "error");
       throw error;
@@ -192,6 +243,7 @@ export function ModelsView() {
   };
 
   const persistDefault = async (route: string, model: string) => {
+    if (!readyRoutes.has(route)) return;
     const current = config ?? EMPTY_CONFIG;
     await persist({ ...current, defaultProvider: route, defaultModel: model });
     toast(t("Model configuration saved — changes take effect immediately"), "success");
@@ -205,7 +257,21 @@ export function ModelsView() {
 
   const submitProvider = async (provider: ProviderConfig, originalRoute: string | null) => {
     const current = config ?? EMPTY_CONFIG;
-    const next = upsertProvider(current, provider, originalRoute);
+    let status = envStatus;
+    const envName = provider.apiKeyEnv?.trim();
+    if (envName && status?.[envName] === undefined) {
+      try {
+        status = { ...(status ?? {}), ...(await cmd.modelEnvStatus([envName])) };
+      } catch {
+        status = status ?? {};
+      }
+    }
+    const next = upsertProvider(
+      current,
+      provider,
+      originalRoute,
+      providerReadiness(provider, status).ready,
+    );
     await persist(next, provider.route);
     setDialog(null);
     toast(t("Model configuration saved — changes take effect immediately"), "success");
@@ -213,7 +279,7 @@ export function ModelsView() {
 
   const makeDefault = async (provider: ProviderConfig) => {
     const model = provider.models[0]?.id;
-    if (!model) return;
+    if (!model || !readyRoutes.has(provider.route)) return;
     await persistDefault(provider.route, model);
   };
 
@@ -231,14 +297,14 @@ export function ModelsView() {
   const removeProvider = async (route: string) => {
     disarmDelete();
     const current = config ?? EMPTY_CONFIG;
-    const next = removeProviderFromConfig(current, route);
+    const next = removeProviderFromConfig(current, route, readyRoutes);
     await persist(next, route);
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
 
-  /** 服务行快捷探测：复用模型发现请求。无 apiKeyEnv 时按匿名端点探测。 */
+  /** 服务行快捷探测：仅 Ready Provider 可请求；自定义无 apiKeyEnv 仍可匿名探测。 */
   const probeProvider = async (provider: ProviderConfig) => {
-    if (!provider.baseURL?.trim()) return;
+    if (!provider.baseURL?.trim() || !readyRoutes.has(provider.route)) return;
     setBusyRoute(provider.route);
     try {
       const models = await cmd.modelRemoteList(
@@ -265,10 +331,12 @@ export function ModelsView() {
     );
   }
 
-  const cfg = config ?? EMPTY_CONFIG;
   const defaultProvider = cfg.providers.find(
     (provider) => provider.route === (cfg.defaultProvider ?? "").trim(),
   );
+  const defaultReadiness = defaultProvider
+    ? readinessByRoute.get(defaultProvider.route) ?? null
+    : null;
 
   return (
     <main className="flex-1 overflow-y-auto p-6" id="models-view">
@@ -294,17 +362,28 @@ export function ModelsView() {
             <div className="flex min-h-14 items-center gap-4 py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm">{t("Default model")}</div>
-                <div className="mt-0.5 truncate text-xs opacity-60" data-testid="default-model-summary">
-                  {defaultProvider && cfg.defaultModel
-                    ? `${defaultProvider.displayName ?? defaultProvider.route} · ${cfg.defaultModel}`
-                    : t("No AI provider ready")}
+                <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs">
+                  <span className="truncate opacity-60" data-testid="default-model-summary">
+                    {defaultProvider && cfg.defaultModel
+                      ? `${defaultProvider.displayName ?? defaultProvider.route} · ${cfg.defaultModel}`
+                      : hasReadyModel
+                        ? t("Not set")
+                        : t("No AI provider ready")}
+                  </span>
+                  {defaultProvider && cfg.defaultModel && defaultReadiness && (
+                    <ReadinessBadge
+                      readiness={defaultReadiness}
+                      testId="default-provider-readiness"
+                    />
+                  )}
                 </div>
               </div>
               <DefaultModelMenu
                 providers={cfg.providers}
+                readyRoutes={readyRoutes}
                 currentRoute={cfg.defaultProvider}
                 currentModel={cfg.defaultModel}
-                disabled={busyGlobal || cfg.providers.every((provider) => provider.models.length === 0)}
+                disabled={busyGlobal || !hasReadyModel}
                 onPick={persistDefault}
               />
             </div>
@@ -375,7 +454,9 @@ export function ModelsView() {
                 const armed = armedDelete === provider.route;
                 const rowBusy = busyRoute === provider.route;
                 const firstModel = provider.models[0]?.id ?? null;
-                const canProbe = Boolean(provider.baseURL?.trim());
+                const readiness =
+                  readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
+                const canProbe = Boolean(provider.baseURL?.trim()) && readiness.ready;
                 return (
                   <div
                     key={provider.route}
@@ -406,11 +487,10 @@ export function ModelsView() {
                             {t("default")}
                           </span>
                         )}
-                        {!provider.apiKeyEnv && (
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs opacity-70">
-                            {t("No API key reference yet")}
-                          </span>
-                        )}
+                        <ReadinessBadge
+                          readiness={readiness}
+                          testId={`provider-readiness-${index}`}
+                        />
                       </div>
                       <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1 text-xs opacity-60">
                         <span className="truncate">
@@ -430,7 +510,7 @@ export function ModelsView() {
                     </div>
 
                     <div className="flex shrink-0 items-center gap-1.5">
-                      {!isDefault && firstModel && (
+                      {!isDefault && firstModel && readiness.ready && (
                         <button
                           className={BTN_SM}
                           disabled={rowBusy || busyGlobal}
@@ -524,7 +604,14 @@ export function ModelsView() {
             void (async () => {
               try {
                 const fresh = await loadModelConfig();
+                let status: Record<string, boolean> = {};
+                try {
+                  status = await resolveProviderEnvStatus(fresh.providers);
+                } catch {
+                  // IPC 已记日志；导入配置本身仍有效，readiness fail-closed。
+                }
                 setConfig(fresh);
+                setEnvStatus(status);
               } catch {
                 // 重载失败保持现状；下次进入页面自动重读。
               }
@@ -547,16 +634,64 @@ export function ModelsView() {
   );
 }
 
+function ReadinessBadge({
+  readiness,
+  testId,
+}: {
+  readiness: ProviderReadiness;
+  testId?: string;
+}) {
+  const { t } = useTranslation();
+  const label =
+    readiness.kind === "checking"
+      ? t("Detecting…")
+      : readiness.kind === "missing-credential"
+        ? t("No API key reference yet")
+        : readiness.kind === "missing-env"
+          ? `${readiness.envName}: ${t("Not set")}`
+          : readiness.kind === "anonymous"
+            ? `${t("Ready")} · ${t("Custom endpoint")}`
+            : t("Ready");
+  const title =
+    readiness.kind === "missing-env"
+      ? t("Environment variable is not set in the environment where dsh-pro-max was launched")
+      : readiness.kind === "missing-credential"
+        ? t("No API key reference yet")
+        : readiness.kind === "anonymous"
+          ? t("Custom endpoint")
+          : readiness.kind === "checking"
+            ? t("Detecting…")
+            : readiness.envName ?? t("Ready");
+  const classes = readiness.ready
+    ? "bg-primary/10 text-primary"
+    : readiness.kind === "checking"
+      ? "bg-muted opacity-70"
+      : "bg-destructive/10 text-destructive";
+
+  return (
+    <span
+      className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${classes}`}
+      data-testid={testId}
+      data-readiness={readiness.kind}
+      title={title}
+    >
+      {label}
+    </span>
+  );
+}
+
 // ============ 默认模型锚定菜单 ============
 
 function DefaultModelMenu({
   providers,
+  readyRoutes,
   currentRoute,
   currentModel,
   disabled,
   onPick,
 }: {
   providers: ProviderConfig[];
+  readyRoutes: ReadonlySet<string>;
   currentRoute: string | null;
   currentModel: string | null;
   disabled: boolean;
@@ -570,10 +705,11 @@ function DefaultModelMenu({
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 候选 = 已配置路由的显式模型，按服务分组；搜索过滤（服务名 + 模型 id）。
+  // 候选 = Ready 路由的显式模型，按服务分组；搜索过滤（服务名 + 模型 id）。
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     return providers
+      .filter((provider) => readyRoutes.has(provider.route))
       .map((provider) => ({
         name: provider.displayName ?? provider.route,
         route: provider.route,
@@ -585,7 +721,7 @@ function DefaultModelMenu({
         ),
       }))
       .filter((group) => group.models.length > 0);
-  }, [providers, query]);
+  }, [providers, readyRoutes, query]);
 
   const flat = useMemo(
     () => groups.flatMap((group) => group.models.map((model) => ({ route: group.route, model }))),
