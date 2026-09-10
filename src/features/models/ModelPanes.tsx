@@ -2,7 +2,7 @@
 // 右栏已选模型（每条可展开高级面板：显示名/上下文窗口/最大输出/推理档/原生图片输入/目录 PDF 能力）。
 // 候选列表由 useProviderModels 以 cache-first SWR 提供；连接指纹变化时旧结果立即失效。
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
@@ -16,6 +16,12 @@ import {
 } from "./shared";
 
 const modelIdKey = (id: string) => id.toLowerCase();
+
+// 左侧候选行是单行 28px；大列表只渲染视口附近节点，完整 candidates 仍承担搜索/全选语义。
+const CANDIDATE_ROW_HEIGHT = 28;
+const CANDIDATE_VIEWPORT_HEIGHT = 256;
+const CANDIDATE_OVERSCAN = 4;
+const CANDIDATE_VIRTUALIZE_AT = 40;
 
 export function ModelPanes({
   provider,
@@ -39,6 +45,8 @@ export function ModelPanes({
   const [customId, setCustomId] = useState("");
   const [customError, setCustomError] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [candidateScrollTop, setCandidateScrollTop] = useState(0);
+  const candidateListRef = useRef<HTMLUListElement>(null);
   const index = useMemo(
     () => new Map(catalog.map((entry) => [modelIdKey(entry.id), entry] as const)),
     [catalog],
@@ -84,6 +92,32 @@ export function ModelPanes({
       : rows;
     return visible;
   }, [remote, catalog, family, query, provider.models, index]);
+
+  useEffect(() => {
+    // 上游/目录切换会改变候选顺序；回到顶部避免保留一个已经无意义的旧滚动位置。
+    setCandidateScrollTop(0);
+    if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
+  }, [remote, catalog, family]);
+
+  const candidateWindow = useMemo(() => {
+    if (candidates.length <= CANDIDATE_VIRTUALIZE_AT) {
+      return { start: 0, end: candidates.length, top: 0, bottom: 0 };
+    }
+    const visibleRows = Math.ceil(CANDIDATE_VIEWPORT_HEIGHT / CANDIDATE_ROW_HEIGHT);
+    const firstVisible = Math.floor(candidateScrollTop / CANDIDATE_ROW_HEIGHT);
+    const start = Math.max(0, firstVisible - CANDIDATE_OVERSCAN);
+    const end = Math.min(
+      candidates.length,
+      firstVisible + visibleRows + CANDIDATE_OVERSCAN,
+    );
+    return {
+      start,
+      end,
+      top: start * CANDIDATE_ROW_HEIGHT,
+      bottom: (candidates.length - end) * CANDIDATE_ROW_HEIGHT,
+    };
+  }, [candidates.length, candidateScrollTop]);
+  const renderedCandidates = candidates.slice(candidateWindow.start, candidateWindow.end);
 
   const visibleSelected = candidates.filter((e) => selectedIds.has(modelIdKey(e.id)));
   const allChecked = visibleSelected.length > 0 && visibleSelected.length === candidates.length;
@@ -159,7 +193,11 @@ export function ModelPanes({
         <input
           className={INPUT}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setCandidateScrollTop(0);
+            if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
+          }}
           placeholder={t("Search model ID…")}
           aria-label={t("Search model ID…")}
         />
@@ -179,13 +217,31 @@ export function ModelPanes({
             {t("This service returned no models. Add a model ID below.")}
           </p>
         )}
-        <ul className="max-h-64 overflow-y-auto" aria-label={t("Models from this service")}>
-          {candidates.map((e) => {
+        <ul
+          ref={candidateListRef}
+          className="max-h-64 overflow-y-auto"
+          aria-label={t("Models from this service")}
+          onScroll={(event) => setCandidateScrollTop(event.currentTarget.scrollTop)}
+          data-total-count={candidates.length}
+          data-rendered-count={renderedCandidates.length}
+        >
+          {candidateWindow.top > 0 && (
+            <li aria-hidden="true" role="presentation" style={{ height: candidateWindow.top }} />
+          )}
+          {renderedCandidates.map((e, offset) => {
             const checked = selectedIds.has(modelIdKey(e.id));
             const tokens = fmtTokens(e.context);
+            const absoluteIndex = candidateWindow.start + offset;
             return (
-              <li key={e.id}>
-                <label className="flex cursor-pointer items-baseline gap-2 rounded px-1 py-1 text-sm hover:bg-accent">
+              <li
+                key={e.id}
+                aria-posinset={absoluteIndex + 1}
+                aria-setsize={candidates.length}
+              >
+                <label
+                  className="flex cursor-pointer items-baseline gap-2 rounded px-1 py-1 text-sm hover:bg-accent"
+                  style={{ height: CANDIDATE_ROW_HEIGHT }}
+                >
                   <input
                     type="checkbox"
                     checked={checked}
@@ -201,6 +257,9 @@ export function ModelPanes({
               </li>
             );
           })}
+          {candidateWindow.bottom > 0 && (
+            <li aria-hidden="true" role="presentation" style={{ height: candidateWindow.bottom }} />
+          )}
           {candidates.length === 0 && query.trim() && (
             <li className="px-1 py-2 text-xs opacity-60">{t("No matching models")}</li>
           )}

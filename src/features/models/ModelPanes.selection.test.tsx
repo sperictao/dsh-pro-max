@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelEntry, ProviderConfig } from "@/shared/types";
@@ -134,20 +134,39 @@ describe("ModelPanes visible selection semantics", () => {
     expect(onModelsChange).not.toHaveBeenCalled();
   });
 
-  it("does not truncate the visible model list or select-all scope at 50 rows", async () => {
+  it("virtualizes large candidate DOM without truncating select-all scope", async () => {
     const user = userEvent.setup();
     const onModelsChange = vi.fn();
     const remote = Array.from({ length: 75 }, (_, index) => `model-${String(index).padStart(3, "0")}`);
     renderPanes([], onModelsChange, remote);
 
     const list = screen.getByRole("list", { name: "Models from this service" });
-    expect(within(list).getAllByRole("checkbox")).toHaveLength(75);
-    expect(within(list).getByRole("checkbox", { name: "model-074" })).toBeInTheDocument();
+    expect(list).toHaveAttribute("data-total-count", "75");
+    expect(Number(list.getAttribute("data-rendered-count"))).toBeLessThan(75);
+    expect(within(list).getAllByRole("checkbox").length).toBeLessThan(75);
+    expect(within(list).queryByRole("checkbox", { name: "model-074" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("checkbox", { name: "Select all" }));
 
     expect(onModelsChange).toHaveBeenCalledOnce();
     expect(onModelsChange.mock.calls[0][0]).toHaveLength(75);
     expect(onModelsChange.mock.calls[0][0][74].id).toBe("model-074");
+  });
+
+  it("renders deep candidate rows when the virtual list scrolls", () => {
+    const onModelsChange = vi.fn();
+    const remote = Array.from({ length: 120 }, (_, index) => `model-${String(index).padStart(3, "0")}`);
+    renderPanes([], onModelsChange, remote);
+
+    const list = screen.getByRole("list", { name: "Models from this service" });
+    expect(within(list).queryByRole("checkbox", { name: "model-119" })).not.toBeInTheDocument();
+
+    Object.defineProperty(list, "scrollTop", { value: 110 * 28, writable: true, configurable: true });
+    fireEvent.scroll(list);
+
+    const last = within(list).getByRole("checkbox", { name: "model-119" });
+    expect(last).toBeInTheDocument();
+    expect(last.closest("li")).toHaveAttribute("aria-posinset", "120");
+    expect(last.closest("li")).toHaveAttribute("aria-setsize", "120");
   });
 });
