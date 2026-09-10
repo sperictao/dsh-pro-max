@@ -52,15 +52,15 @@ export function ProviderDialog({
 
   const patch = (value: Partial<ProviderConfig>) => setDraft((current) => ({ ...current, ...value }));
 
-  // 编辑态或手工修改路由键时仍按路由识别已知目录服务。
+  // 编辑态按路由识别既有目录服务；添加态一旦明确选择“自定义”，即使用户
+  // 手工输入与目录同名的 route，也不突然切换回预设服务布局。
   const presetOfRoute = useMemo(
     () => MODEL_PRESETS.find((preset) => preset.id === draft.route.trim()) ?? null,
     [draft.route],
   );
-  const effectivePreset = pickedPreset ?? presetOfRoute;
+  const effectivePreset = pickedPreset ?? (isEdit ? presetOfRoute : null);
   const knownService = effectivePreset != null;
   const showComposer = isEdit || serviceChosen;
-  const customService = showComposer && !knownService;
 
   // 连接三元组/凭据引用变化后，旧拉取结果不再可信。
   const revokeRemote = () => {
