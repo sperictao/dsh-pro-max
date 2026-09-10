@@ -49,12 +49,14 @@ for (const provider of providers) {
   }
   // 多数协议即该服务的默认协议（混协议网关按模型级 api 覆盖）
   const api = [...apis.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const modelIds = models.map((model) => model.id);
   presets.push({
     id: provider.id,
     name: provider.name ?? provider.id,
     baseUrl: provider.baseUrl,
     api: UI_WIRE_APIS.has(api) ? api : null,
-    models: models.length,
+    models: modelIds.length,
+    modelIds,
   });
 }
 presets.sort((a, b) => a.id.localeCompare(b.id));
@@ -71,6 +73,8 @@ export type ModelPreset = {
   api: string | null;
   /** 目录模型数量（选择器副行展示） */
   models: number;
+  /** pi-ai 同版本内置目录模型 id，保持上游目录顺序；仅供继承目录选择，不写回 settings.yaml */
+  modelIds: string[];
 };
 
 export const MODEL_PRESETS: ModelPreset[] = ${JSON.stringify(presets, null, 2)};
@@ -78,4 +82,4 @@ export const MODEL_PRESETS: ModelPreset[] = ${JSON.stringify(presets, null, 2)};
 
 const target = resolve(import.meta.dirname, "../src/shared/lib/model-presets.generated.ts");
 writeFileSync(target, out);
-console.log(`✓ ${presets.length} presets (@earendil-works/pi-ai@${version}) -> ${target}`);
+console.log(`✓ ${presets.length} presets / ${presets.reduce((n, preset) => n + preset.modelIds.length, 0)} models (@earendil-works/pi-ai@${version}) -> ${target}`);

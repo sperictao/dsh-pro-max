@@ -73,13 +73,14 @@ export function HeadersEditor({
       setJsonError(true);
       return;
     }
-    // 同名键合并：JSON 值覆盖现有行
+    // 同名键合并：JSON 值覆盖现有行；最终仍走 setEntries，确保 JSON 导入
+    // 与逐行编辑使用同一保留头过滤规则。
     const merged: Record<string, string> = {};
     for (const [k, v] of entries) merged[k] = v;
     for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
       if (typeof v === "string") merged[k.trim()] = v;
     }
-    onChange(merged);
+    setEntries(Object.entries(merged));
     setJsonOpen(false);
     setJsonDraft("");
     setJsonError(false);

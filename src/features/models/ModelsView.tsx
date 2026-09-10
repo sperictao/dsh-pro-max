@@ -13,7 +13,22 @@ import type { ModelCatalogEntry, ModelConfig, ProviderConfig } from "@/shared/ty
 import { tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
 import { ImportDialog } from "./ImportDialog";
-import { CATALOG_STALE_SECS, DELETE_CONFIRM_MS, EFFORT_OPTIONS, fmtTokens } from "./shared";
+import {
+  launcherRemoteProbeAllowed,
+  providerEnvNames,
+  providerReadiness,
+  type ProviderReadiness,
+} from "./readiness";
+import {
+  CATALOG_STALE_SECS,
+  DELETE_CONFIRM_MS,
+  EFFORT_OPTIONS,
+  firstProviderModelId,
+  fmtTokens,
+  modelReasoningCapability,
+  providerConnectionTarget,
+  providerModelChoices,
+} from "./shared";
 
 const EMPTY_CONFIG: ModelConfig = {
   defaultProvider: null,
@@ -36,8 +51,33 @@ function configValidationError(config: ModelConfig): string | null {
   return null;
 }
 
+async function resolveProviderEnvStatus(providers: ProviderConfig[]): Promise<Record<string, boolean>> {
+  const names = providerEnvNames(providers);
+  return names.length > 0 ? cmd.modelEnvStatus(names) : {};
+}
+
+/** 默认模型变化时同步清理已经不被新模型支持的全局 reasoning level。 */
+function withValidDefaultReasoning(
+  config: ModelConfig,
+  catalog: ModelCatalogEntry[],
+): ModelConfig {
+  const effort = config.defaultReasoningEffort?.trim();
+  if (!effort) return config;
+  const provider = config.providers.find((item) => item.route === config.defaultProvider);
+  const model = config.defaultModel?.trim();
+  if (!provider || !model) return { ...config, defaultReasoningEffort: null };
+  const capability = modelReasoningCapability(provider, model, catalog);
+  if (capability.kind === "unknown" || capability.levels.includes(effort)) return config;
+  return { ...config, defaultReasoningEffort: null };
+}
+
 /** 新增/编辑服务后同步默认引用；纯函数便于保持配置只有一个事实来源。 */
-function upsertProvider(config: ModelConfig, provider: ProviderConfig, originalRoute: string | null): ModelConfig {
+function upsertProvider(
+  config: ModelConfig,
+  provider: ProviderConfig,
+  originalRoute: string | null,
+  canAutoDefault: boolean,
+): ModelConfig {
   const locate = originalRoute ?? provider.route;
   const existing = config.providers.findIndex((item) => item.route === locate);
   const providers =
@@ -53,33 +93,46 @@ function upsertProvider(config: ModelConfig, provider: ProviderConfig, originalR
     defaultProvider = provider.route;
   }
 
-  // 第一个真正拥有显式模型的服务自动成为默认；继承目录但未选择模型的服务
-  // 不猜默认模型，避免写入一个不存在的 id。
-  if (!defaultProvider?.trim() && provider.models.length > 0) {
+  // 第一个 Ready 且拥有有效模型目录的服务自动成为默认。models=[] 的内置
+  // Provider 从 pi-ai 同版本目录取首个模型，但不会把继承目录写回 settings.yaml。
+  const firstModel = firstProviderModelId(provider);
+  if (!defaultProvider?.trim() && firstModel && canAutoDefault) {
     defaultProvider = provider.route;
-    defaultModel = provider.models[0]?.id ?? null;
+    defaultModel = firstModel;
   }
 
-  // 默认服务的模型集合被编辑后，若旧默认模型已不存在则回落到首个模型。
+  // 显式 models 代表覆盖内置目录：编辑后旧默认不在覆盖集合时回落首个显式模型。
+  // models=[] 则继续继承目录，并保留已存 defaultModel；DSH 允许引用目录未广告的 id。
   const active = providers.find((item) => item.route === defaultProvider);
-  if (active && !active.models.some((model) => model.id === defaultModel)) {
+  if (
+    active &&
+    active.models.length > 0 &&
+    !active.models.some((model) => model.id === defaultModel)
+  ) {
     defaultModel = active.models[0]?.id ?? null;
   }
 
   return { ...config, providers, defaultProvider, defaultModel };
 }
 
-function removeProviderFromConfig(config: ModelConfig, route: string): ModelConfig {
+function removeProviderFromConfig(
+  config: ModelConfig,
+  route: string,
+  readyRoutes: ReadonlySet<string>,
+): ModelConfig {
   const providers = config.providers.filter((provider) => provider.route !== route);
   if (config.defaultProvider !== route) return { ...config, providers };
 
-  // 优先回退到有显式模型的服务，避免产生 provider 有值但 model 为空的无效默认。
-  const next = providers.find((provider) => provider.models.length > 0);
+  // 删除默认服务时回退到当前 Ready 且拥有有效模型目录的服务；继承目录与
+  // 显式 models 使用同一选择语义。
+  const next = providers.find(
+    (provider) => readyRoutes.has(provider.route) && firstProviderModelId(provider),
+  );
   return {
     ...config,
     providers,
     defaultProvider: next?.route ?? null,
-    defaultModel: next?.models[0]?.id ?? null,
+    defaultModel: next ? firstProviderModelId(next) : null,
   };
 }
 
@@ -88,11 +141,16 @@ export function ModelsView() {
   const toast = useAppStore((state) => state.toast);
   const loadModelConfig = useAppStore((state) => state.loadModelConfig);
   const [config, setConfig] = useState<ModelConfig | null>(null);
+  const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyRoute, setBusyRoute] = useState<string | null>(null);
+  const [testingRoute, setTestingRoute] = useState<string | null>(null);
   const [busyGlobal, setBusyGlobal] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
   const [catalogFetchedAt, setCatalogFetchedAt] = useState<number | null>(null);
+  const [catalogProviderCount, setCatalogProviderCount] = useState<number | null>(null);
+  const [catalogSource, setCatalogSource] = useState<"snapshot" | "remote" | null>(null);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogState, setCatalogState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const [dialog, setDialog] = useState<ProviderDialogState | null>(null);
@@ -106,7 +164,16 @@ export function ModelsView() {
     void (async () => {
       try {
         const loaded = await loadModelConfig();
-        if (!disposed) setConfig(loaded);
+        let status: Record<string, boolean> = {};
+        try {
+          status = await resolveProviderEnvStatus(loaded.providers);
+        } catch {
+          // IPC 已统一记日志；这里 fail-closed，避免把未知状态误标成 Ready。
+        }
+        if (!disposed) {
+          setConfig(loaded);
+          setEnvStatus(status);
+        }
       } catch (error) {
         if (!disposed) toast(tErr(String(error)), "error");
       } finally {
@@ -129,15 +196,33 @@ export function ModelsView() {
         if (file) {
           setCatalog(file.entries);
           setCatalogFetchedAt(file.fetchedAt);
+          setCatalogProviderCount(file.providerCount ?? null);
+          setCatalogSource("snapshot");
+          setCatalogError(null);
           setCatalogState("ready");
         } else {
+          setCatalogProviderCount(null);
+          setCatalogSource(null);
           setCatalogState("unavailable");
         }
-        if (!file || Date.now() / 1000 - file.fetchedAt >= CATALOG_STALE_SECS) {
+        const missingCapabilityMetadata =
+          file?.entries.some((entry) => entry.capabilities == null) ?? false;
+        const missingObservabilityMetadata = file?.providerCount == null;
+        if (
+          !file ||
+          missingCapabilityMetadata ||
+          missingObservabilityMetadata ||
+          Date.now() / 1000 - file.fetchedAt >= CATALOG_STALE_SECS
+        ) {
           void refreshCatalog(true);
         }
-      } catch {
-        if (!disposed) setCatalogState("unavailable");
+      } catch (error) {
+        if (!disposed) {
+          setCatalogProviderCount(null);
+          setCatalogSource(null);
+          setCatalogError(String(error));
+          setCatalogState("unavailable");
+        }
       }
     })();
     return () => {
@@ -153,14 +238,31 @@ export function ModelsView() {
     [],
   );
 
+  const cfg = config ?? EMPTY_CONFIG;
+  const readinessByRoute = new Map(
+    cfg.providers.map((provider) => [provider.route, providerReadiness(provider, envStatus)] as const),
+  );
+  const readyRoutes = new Set(
+    cfg.providers
+      .filter((provider) => readinessByRoute.get(provider.route)?.ready)
+      .map((provider) => provider.route),
+  );
+  const hasReadyModel = cfg.providers.some(
+    (provider) => readyRoutes.has(provider.route) && Boolean(firstProviderModelId(provider)),
+  );
+
   const refreshCatalog = async (background: boolean) => {
     setCatalogRefreshing(true);
     try {
       const fresh = await cmd.modelCatalogRefresh();
       setCatalog(fresh.entries);
       setCatalogFetchedAt(fresh.fetchedAt);
+      setCatalogProviderCount(fresh.providerCount ?? null);
+      setCatalogSource("remote");
+      setCatalogError(null);
       setCatalogState("ready");
     } catch (error) {
+      setCatalogError(String(error));
       if (!background) toast(tErr(String(error)), "error");
     } finally {
       setCatalogRefreshing(false);
@@ -181,7 +283,14 @@ export function ModelsView() {
     else setBusyGlobal(true);
     try {
       await cmd.modelConfigSave(next);
+      let status: Record<string, boolean> = {};
+      try {
+        status = await resolveProviderEnvStatus(next.providers);
+      } catch {
+        // 保存事实仍成功；readiness 查询失败时保持 fail-closed。
+      }
       setConfig(next);
+      setEnvStatus(status);
     } catch (error) {
       toast(tErr(String(error)), "error");
       throw error;
@@ -192,28 +301,62 @@ export function ModelsView() {
   };
 
   const persistDefault = async (route: string, model: string) => {
+    if (!readyRoutes.has(route)) return;
     const current = config ?? EMPTY_CONFIG;
-    await persist({ ...current, defaultProvider: route, defaultModel: model });
+    const next = withValidDefaultReasoning(
+      { ...current, defaultProvider: route, defaultModel: model },
+      catalog,
+    );
+    await persist(next);
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
 
   const persistReasoning = async (value: string) => {
     const current = config ?? EMPTY_CONFIG;
+    if (value) {
+      const provider = current.providers.find((item) => item.route === current.defaultProvider);
+      const model = current.defaultModel?.trim();
+      if (!provider || !model) return;
+      const capability = modelReasoningCapability(provider, model, catalog);
+      if (
+        capability.kind === "unsupported" ||
+        (capability.kind === "supported" && !capability.levels.includes(value))
+      ) {
+        return;
+      }
+    }
     await persist({ ...current, defaultReasoningEffort: value || null });
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
 
   const submitProvider = async (provider: ProviderConfig, originalRoute: string | null) => {
     const current = config ?? EMPTY_CONFIG;
-    const next = upsertProvider(current, provider, originalRoute);
+    let status = envStatus;
+    const envName = provider.apiKeyEnv?.trim();
+    if (envName && status?.[envName] === undefined) {
+      try {
+        status = { ...(status ?? {}), ...(await cmd.modelEnvStatus([envName])) };
+      } catch {
+        status = status ?? {};
+      }
+    }
+    const next = withValidDefaultReasoning(
+      upsertProvider(
+        current,
+        provider,
+        originalRoute,
+        providerReadiness(provider, status).ready,
+      ),
+      catalog,
+    );
     await persist(next, provider.route);
     setDialog(null);
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
 
   const makeDefault = async (provider: ProviderConfig) => {
-    const model = provider.models[0]?.id;
-    if (!model) return;
+    const model = firstProviderModelId(provider);
+    if (!model || !readyRoutes.has(provider.route)) return;
     await persistDefault(provider.route, model);
   };
 
@@ -231,17 +374,48 @@ export function ModelsView() {
   const removeProvider = async (route: string) => {
     disarmDelete();
     const current = config ?? EMPTY_CONFIG;
-    const next = removeProviderFromConfig(current, route);
+    const next = withValidDefaultReasoning(
+      removeProviderFromConfig(current, route, readyRoutes),
+      catalog,
+    );
     await persist(next, route);
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
 
-  /** 服务行快捷探测：复用 model_remote_list。成功既证明凭据/端点可达，也返回模型数。 */
+  /** 连接测试与模型发现分离：真实推理请求验证 endpoint/auth/model，绝不调用 /models。 */
+  const testProvider = async (provider: ProviderConfig) => {
+    const target = providerConnectionTarget(provider);
+    const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
+    if (!target || !launcherRemoteProbeAllowed(readiness)) return;
+    setTestingRoute(provider.route);
+    try {
+      await cmd.modelTestConnection(
+        target.baseURL,
+        target.api,
+        provider.apiKeyEnv,
+        provider.headers,
+        target.model,
+      );
+      toast(t("Connection successful"), "success");
+    } catch (error) {
+      toast(tErr(String(error)), "error");
+    } finally {
+      setTestingRoute(null);
+    }
+  };
+
+  /** 服务行模型发现：显式 env 或匿名自定义端点由 Launcher 探测；provider-auth 留给 dsh/pi-ai。 */
   const probeProvider = async (provider: ProviderConfig) => {
-    if (!provider.baseURL?.trim() || !provider.apiKeyEnv?.trim()) return;
+    const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
+    if (!provider.baseURL?.trim() || !launcherRemoteProbeAllowed(readiness)) return;
     setBusyRoute(provider.route);
     try {
-      const models = await cmd.modelRemoteList(provider.baseURL, provider.api, provider.apiKeyEnv);
+      const models = await cmd.modelRemoteList(
+        provider.baseURL,
+        provider.api,
+        provider.apiKeyEnv,
+        provider.headers,
+      );
       toast(`${t("Models from this service")}: ${t("{{count}} models", { count: models.length })}`, "success");
     } catch (error) {
       toast(tErr(String(error)), "error");
@@ -260,10 +434,30 @@ export function ModelsView() {
     );
   }
 
-  const cfg = config ?? EMPTY_CONFIG;
   const defaultProvider = cfg.providers.find(
     (provider) => provider.route === (cfg.defaultProvider ?? "").trim(),
   );
+  const defaultReadiness = defaultProvider
+    ? readinessByRoute.get(defaultProvider.route) ?? null
+    : null;
+  const defaultReasoningCapability =
+    defaultProvider && cfg.defaultModel
+      ? modelReasoningCapability(defaultProvider, cfg.defaultModel, catalog)
+      : { kind: "unsupported" as const, levels: [] as string[] };
+  const reasoningOptions =
+    defaultReasoningCapability.kind === "supported"
+      ? defaultReasoningCapability.levels
+      : defaultReasoningCapability.kind === "unknown"
+        ? [...EFFORT_OPTIONS]
+        : [];
+  const currentReasoning = cfg.defaultReasoningEffort ?? "";
+  const invalidCurrentReasoning =
+    Boolean(currentReasoning) && !reasoningOptions.includes(currentReasoning);
+  const reasoningDisabled =
+    busyGlobal ||
+    !defaultProvider ||
+    !cfg.defaultModel ||
+    (defaultReasoningCapability.kind === "unsupported" && !currentReasoning);
 
   return (
     <main className="flex-1 overflow-y-auto p-6" id="models-view">
@@ -289,17 +483,28 @@ export function ModelsView() {
             <div className="flex min-h-14 items-center gap-4 py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm">{t("Default model")}</div>
-                <div className="mt-0.5 truncate text-xs opacity-60" data-testid="default-model-summary">
-                  {defaultProvider && cfg.defaultModel
-                    ? `${defaultProvider.displayName ?? defaultProvider.route} · ${cfg.defaultModel}`
-                    : t("No AI provider ready")}
+                <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs">
+                  <span className="truncate opacity-60" data-testid="default-model-summary">
+                    {defaultProvider && cfg.defaultModel
+                      ? `${defaultProvider.displayName ?? defaultProvider.route} · ${cfg.defaultModel}`
+                      : hasReadyModel
+                        ? t("Not set")
+                        : t("No AI provider ready")}
+                  </span>
+                  {defaultProvider && cfg.defaultModel && defaultReadiness && (
+                    <ReadinessBadge
+                      readiness={defaultReadiness}
+                      testId="default-provider-readiness"
+                    />
+                  )}
                 </div>
               </div>
               <DefaultModelMenu
                 providers={cfg.providers}
+                readyRoutes={readyRoutes}
                 currentRoute={cfg.defaultProvider}
                 currentModel={cfg.defaultModel}
-                disabled={busyGlobal || cfg.providers.every((provider) => provider.models.length === 0)}
+                disabled={busyGlobal || !hasReadyModel}
                 onPick={persistDefault}
               />
             </div>
@@ -310,13 +515,19 @@ export function ModelsView() {
               </div>
               <select
                 className={`${SELECT} w-44`}
-                value={cfg.defaultReasoningEffort ?? ""}
-                disabled={busyGlobal}
+                value={currentReasoning}
+                disabled={reasoningDisabled}
                 onChange={(event) => void persistReasoning(event.target.value).catch(() => undefined)}
                 aria-label={t("Reasoning Effort")}
+                data-reasoning-capability={defaultReasoningCapability.kind}
               >
                 <option value="">{t("Not set")}</option>
-                {EFFORT_OPTIONS.map((value) => (
+                {invalidCurrentReasoning && (
+                  <option value={currentReasoning} disabled>
+                    {currentReasoning}
+                  </option>
+                )}
+                {reasoningOptions.map((value) => (
                   <option key={value} value={value}>
                     {value}
                   </option>
@@ -368,9 +579,16 @@ export function ModelsView() {
               {cfg.providers.map((provider, index) => {
                 const isDefault = provider.route === (cfg.defaultProvider ?? "").trim();
                 const armed = armedDelete === provider.route;
-                const rowBusy = busyRoute === provider.route;
-                const firstModel = provider.models[0]?.id ?? null;
-                const canProbe = Boolean(provider.baseURL?.trim() && provider.apiKeyEnv?.trim());
+                const probing = busyRoute === provider.route;
+                const testing = testingRoute === provider.route;
+                const rowBusy = probing || testing;
+                const firstModel = firstProviderModelId(provider);
+                const displayModel = provider.models[0]?.id ?? null;
+                const readiness =
+                  readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
+                const launcherProbeAllowed = launcherRemoteProbeAllowed(readiness);
+                const canTest = Boolean(providerConnectionTarget(provider)) && launcherProbeAllowed;
+                const canProbe = Boolean(provider.baseURL?.trim()) && launcherProbeAllowed;
                 return (
                   <div
                     key={provider.route}
@@ -401,11 +619,10 @@ export function ModelsView() {
                             {t("default")}
                           </span>
                         )}
-                        {!provider.apiKeyEnv && (
-                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs opacity-70">
-                            {t("No API key reference yet")}
-                          </span>
-                        )}
+                        <ReadinessBadge
+                          readiness={readiness}
+                          testId={`provider-readiness-${index}`}
+                        />
                       </div>
                       <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1 text-xs opacity-60">
                         <span className="truncate">
@@ -413,7 +630,7 @@ export function ModelsView() {
                         </span>
                         <span aria-hidden>·</span>
                         <span className="truncate font-mono">
-                          {firstModel ?? t("Inherits catalog models")}
+                          {displayModel ?? t("Inherits catalog models")}
                         </span>
                         {provider.models.length > 0 && (
                           <>
@@ -425,13 +642,23 @@ export function ModelsView() {
                     </div>
 
                     <div className="flex shrink-0 items-center gap-1.5">
-                      {!isDefault && firstModel && (
+                      {!isDefault && firstModel && readiness.ready && (
                         <button
                           className={BTN_SM}
                           disabled={rowBusy || busyGlobal}
                           onClick={() => void makeDefault(provider).catch(() => undefined)}
                         >
                           {t("Make default")}
+                        </button>
+                      )}
+                      {canTest && (
+                        <button
+                          className={BTN_SM}
+                          disabled={rowBusy || busyGlobal}
+                          onClick={() => void testProvider(provider)}
+                          title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+                        >
+                          {testing ? t("Testing…") : t("Test connection")}
                         </button>
                       )}
                       {canProbe && (
@@ -441,7 +668,7 @@ export function ModelsView() {
                           onClick={() => void probeProvider(provider)}
                           title={t("Fetch models")}
                         >
-                          {rowBusy ? t("Loading models…") : t("Fetch list")}
+                          {probing ? t("Loading models…") : t("Fetch list")}
                         </button>
                       )}
                       <button
@@ -480,18 +707,35 @@ export function ModelsView() {
         </section>
 
         {/* —— 目录状态：辅助信息退到页面底部，不与配置主任务抢层级 —— */}
-        <div className="flex items-center justify-between gap-4 text-xs opacity-70" id="models-catalog">
-          <span>
-            {catalogState === "ready"
-              ? t("Catalog: {{source}} · {{models}} models · updated {{time}}", {
-                  source: "models.dev",
-                  models: catalog.length,
-                  time: catalogFetchedAt ? new Date(catalogFetchedAt * 1000).toLocaleString() : "—",
-                })
-              : catalogState === "loading"
-                ? t("Loading catalog…")
-                : t("Catalog: unavailable")}
-          </span>
+        <div className="flex items-start justify-between gap-4 text-xs opacity-70" id="models-catalog">
+          <div className="min-w-0">
+            <div
+              data-testid="catalog-status-line"
+              data-catalog-source={catalogSource ?? "none"}
+              data-provider-count={catalogProviderCount ?? ""}
+            >
+              {catalogState === "ready"
+                ? t("Catalog: {{source}} · {{providers}} providers · {{models}} models · updated {{time}}", {
+                    source:
+                      catalogSource === "snapshot"
+                        ? t("Local snapshot")
+                        : catalogSource === "remote"
+                          ? "models.dev"
+                          : "—",
+                    providers: catalogProviderCount ?? "—",
+                    models: catalog.length,
+                    time: catalogFetchedAt ? new Date(catalogFetchedAt * 1000).toLocaleString() : "—",
+                  })
+                : catalogState === "loading"
+                  ? t("Loading catalog…")
+                  : t("Catalog: unavailable")}
+            </div>
+            {catalogError && (
+              <div className="mt-0.5 text-destructive" role="status" data-testid="catalog-error">
+                {t("Catalog error: {{error}}", { error: tErr(catalogError) })}
+              </div>
+            )}
+          </div>
           <button
             className={BTN_SM}
             id="btn-refresh-catalog"
@@ -519,7 +763,14 @@ export function ModelsView() {
             void (async () => {
               try {
                 const fresh = await loadModelConfig();
+                let status: Record<string, boolean> = {};
+                try {
+                  status = await resolveProviderEnvStatus(fresh.providers);
+                } catch {
+                  // IPC 已记日志；导入配置本身仍有效，readiness fail-closed。
+                }
                 setConfig(fresh);
+                setEnvStatus(status);
               } catch {
                 // 重载失败保持现状；下次进入页面自动重读。
               }
@@ -542,16 +793,64 @@ export function ModelsView() {
   );
 }
 
+function ReadinessBadge({
+  readiness,
+  testId,
+}: {
+  readiness: ProviderReadiness;
+  testId?: string;
+}) {
+  const { t } = useTranslation();
+  const label =
+    readiness.kind === "checking"
+      ? t("Detecting…")
+      : readiness.kind === "provider-auth"
+        ? `${t("Ready")} · pi-ai`
+        : readiness.kind === "missing-env"
+          ? `${readiness.envName}: ${t("Not set")}`
+          : readiness.kind === "anonymous"
+            ? `${t("Ready")} · ${t("Custom endpoint")}`
+            : t("Ready");
+  const title =
+    readiness.kind === "missing-env"
+      ? t("Environment variable is not set in the environment where dsh-pro-max was launched")
+      : readiness.kind === "provider-auth"
+        ? "pi-ai"
+        : readiness.kind === "anonymous"
+          ? t("Custom endpoint")
+          : readiness.kind === "checking"
+            ? t("Detecting…")
+            : readiness.envName ?? t("Ready");
+  const classes = readiness.ready
+    ? "bg-primary/10 text-primary"
+    : readiness.kind === "checking"
+      ? "bg-muted opacity-70"
+      : "bg-destructive/10 text-destructive";
+
+  return (
+    <span
+      className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${classes}`}
+      data-testid={testId}
+      data-readiness={readiness.kind}
+      title={title}
+    >
+      {label}
+    </span>
+  );
+}
+
 // ============ 默认模型锚定菜单 ============
 
 function DefaultModelMenu({
   providers,
+  readyRoutes,
   currentRoute,
   currentModel,
   disabled,
   onPick,
 }: {
   providers: ProviderConfig[];
+  readyRoutes: ReadonlySet<string>;
   currentRoute: string | null;
   currentModel: string | null;
   disabled: boolean;
@@ -565,14 +864,16 @@ function DefaultModelMenu({
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 候选 = 已配置路由的显式模型，按服务分组；搜索过滤（服务名 + 模型 id）。
+  // 候选 = Ready 路由的有效模型目录：显式 models 优先，空集合则读取同版本 pi-ai
+  // 内置目录；这里只做选择视图，不物化继承模型。
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
     return providers
+      .filter((provider) => readyRoutes.has(provider.route))
       .map((provider) => ({
         name: provider.displayName ?? provider.route,
         route: provider.route,
-        models: provider.models.filter(
+        models: providerModelChoices(provider).filter(
           (model) =>
             !q ||
             model.id.toLowerCase().includes(q) ||
@@ -580,7 +881,7 @@ function DefaultModelMenu({
         ),
       }))
       .filter((group) => group.models.length > 0);
-  }, [providers, query]);
+  }, [providers, readyRoutes, query]);
 
   const flat = useMemo(
     () => groups.flatMap((group) => group.models.map((model) => ({ route: group.route, model }))),

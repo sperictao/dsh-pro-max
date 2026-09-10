@@ -5,17 +5,20 @@
 
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import * as cmd from "@/shared/commands";
 import { BTN, BTN_PRIMARY, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 import { HeadersEditor } from "./HeadersEditor";
-import { ModelPanes, fetchProviderModels } from "./ModelPanes";
+import { ModelPanes } from "./ModelPanes";
+import { useProviderModels } from "./useProviderModels";
 import {
   API_OPTIONS,
   EFFORT_OPTIONS,
   emptyProvider,
   MODEL_PRESETS,
   normalizeBaseUrl,
+  providerConnectionTarget,
   validateBaseUrl,
   type ModelPreset,
 } from "./shared";
@@ -44,9 +47,8 @@ export function ProviderDialog({
   const [serviceChosen, setServiceChosen] = useState(isEdit);
   const [urlError, setUrlError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [remote, setRemote] = useState<string[] | null>(null);
-  const [fetching, setFetching] = useState(false);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -62,19 +64,25 @@ export function ProviderDialog({
   const knownService = effectivePreset != null;
   const showComposer = isEdit || serviceChosen;
 
-  // 连接三元组/凭据引用变化后，旧拉取结果不再可信。
-  const revokeRemote = () => {
-    setRemote(null);
-    setFetchError(null);
-  };
-
   const updateConnection = (value: Partial<ProviderConfig>) => {
     patch(value);
-    revokeRemote();
+    setTestResult(null);
     setSubmitError(null);
   };
 
   const currentUrlIssue = validateBaseUrl(draft.baseURL ?? "");
+  // 托管预设无显式 apiKeyEnv 时可能由 dsh/pi-ai 的 ambient/已存登录认证；
+  // Launcher 自身拿不到那条凭据 seam，因此不主动撞匿名请求。自定义端点仍允许匿名发现。
+  const discoveryActive =
+    showComposer &&
+    !currentUrlIssue &&
+    Boolean(draft.baseURL?.trim()) &&
+    (!knownService || Boolean(draft.apiKeyEnv?.trim()));
+  const discovery = useProviderModels(discoveryActive, draft);
+  const testTarget = providerConnectionTarget(draft);
+  const launcherCanTest = !knownService || Boolean(draft.apiKeyEnv?.trim());
+  const canTest =
+    showComposer && launcherCanTest && !currentUrlIssue && Boolean(testTarget) && !saving && !testing;
 
   const onBaseURLBlur = () => {
     if (draft.baseURL) {
@@ -86,16 +94,24 @@ export function ProviderDialog({
     }
   };
 
-  const fetchModels = async () => {
-    setFetching(true);
-    setFetchError(null);
+  const testConnection = async () => {
+    const target = providerConnectionTarget(draft);
+    if (!target || currentUrlIssue) return;
+    setTesting(true);
+    setTestResult(null);
     try {
-      setRemote(await fetchProviderModels(draft));
+      await cmd.modelTestConnection(
+        target.baseURL,
+        target.api,
+        draft.apiKeyEnv,
+        draft.headers,
+        target.model,
+      );
+      setTestResult({ kind: "success", text: t("Connection successful") });
     } catch (error) {
-      setRemote(null);
-      setFetchError(tErr(String(error)));
+      setTestResult({ kind: "error", text: tErr(String(error)) });
     } finally {
-      setFetching(false);
+      setTesting(false);
     }
   };
 
@@ -105,7 +121,7 @@ export function ProviderDialog({
     setAdvancedOpen(false);
     setUrlError(null);
     setSubmitError(null);
-    revokeRemote();
+    setTestResult(null);
 
     if (!preset) {
       // 自定义端点从干净连接配置开始；extra 等初始为空，不产生第二份事实。
@@ -124,7 +140,10 @@ export function ProviderDialog({
     }));
   };
 
-  const setModels = (models: ModelEntry[]) => patch({ models });
+  const setModels = (models: ModelEntry[]) => {
+    patch({ models });
+    setTestResult(null);
+  };
 
   const canSave =
     showComposer &&
@@ -197,6 +216,17 @@ export function ProviderDialog({
               <button
                 type="button"
                 className={BTN_SM}
+                disabled={!canTest}
+                onClick={() => void testConnection()}
+                title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+              >
+                {testing ? t("Testing…") : t("Test connection")}
+              </button>
+            )}
+            {showComposer && (
+              <button
+                type="button"
+                className={BTN_SM}
                 aria-expanded={advancedOpen}
                 onClick={() => setAdvancedOpen((value) => !value)}
                 disabled={saving}
@@ -214,6 +244,18 @@ export function ProviderDialog({
           {submitError && (
             <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
               {submitError}
+            </div>
+          )}
+          {testResult && (
+            <div
+              className={`rounded-md border px-3 py-2 text-xs ${
+                testResult.kind === "success"
+                  ? "border-primary/30 bg-primary/5 text-primary"
+                  : "border-destructive/40 bg-destructive/5 text-destructive"
+              }`}
+              role={testResult.kind === "error" ? "alert" : "status"}
+            >
+              {testResult.text}
             </div>
           )}
 
@@ -273,9 +315,7 @@ export function ProviderDialog({
                     </div>
                     {presetOfRoute && (
                       <p className="col-span-2 text-xs opacity-60" data-testid="catalog-route-hint">
-                        {t(
-                          "Route matches the built-in catalog: endpoint, protocol and models are inherited; only the credential reference is required.",
-                        )}
+                        {t("Inherits the built-in catalog")}
                       </p>
                     )}
                   </div>
@@ -356,11 +396,11 @@ export function ProviderDialog({
               <ModelPanes
                 provider={draft}
                 catalog={catalog}
-                remote={remote}
-                fetching={fetching}
-                fetchError={fetchError}
+                remote={discovery.models}
+                fetching={discovery.status === "loading"}
+                fetchError={discovery.error ? tErr(discovery.error) : null}
                 onModelsChange={setModels}
-                onFetch={() => void fetchModels()}
+                onFetch={discovery.reload}
               />
 
               {advancedOpen && (
@@ -458,7 +498,10 @@ export function ProviderDialog({
                     </div>
                     <div className="flex flex-col gap-1">
                       <span className="text-xs opacity-70">{t("Headers")}</span>
-                      <HeadersEditor headers={draft.headers} onChange={(headers) => patch({ headers })} />
+                      <HeadersEditor
+                        headers={draft.headers}
+                        onChange={(headers) => updateConnection({ headers })}
+                      />
                     </div>
                   </div>
                 </section>

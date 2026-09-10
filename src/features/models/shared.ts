@@ -8,14 +8,67 @@ import { MODEL_PRESETS } from "@/shared/lib/model-presets.generated";
 export const API_OPTIONS = ["openai-completions", "openai-responses", "anthropic-messages"] as const;
 // pi-ai ModelThinkingLevel 全集（escalation order）
 export const EFFORT_OPTIONS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-// 目录快照过期窗口与候选截断（浮层不渲染全量 4000+ 条）
+// 目录快照过期窗口
 export const CATALOG_STALE_SECS = 24 * 60 * 60;
-export const SUGGESTION_LIMIT = 50;
 // 两步删除的还原窗口（PI 同款交互：3 秒未确认自动还原）
 export const DELETE_CONFIRM_MS = 3000;
 
 export { MODEL_PRESETS };
 export type { ModelPreset } from "@/shared/lib/model-presets.generated";
+
+const PRESET_BY_ROUTE = new Map(MODEL_PRESETS.map((preset) => [preset.id, preset] as const));
+
+export type ProviderModelChoice = {
+  id: string;
+  contextWindow: number | null;
+  inherited: boolean;
+};
+
+/**
+ * Provider 的有效模型目录：显式 models 一旦存在即覆盖内置目录；只有 models=[]
+ * 且 route 命中同版本 pi-ai 预设时，才投影继承目录。这里只返回选择视图，绝不
+ * 把继承模型物化回 settings.yaml。
+ */
+export function providerModelChoices(provider: ProviderConfig): ProviderModelChoice[] {
+  if (provider.models.length > 0) {
+    return provider.models.map((model) => ({
+      id: model.id,
+      contextWindow: model.contextWindow ?? null,
+      inherited: false,
+    }));
+  }
+
+  const preset = PRESET_BY_ROUTE.get(provider.route.trim());
+  return (preset?.modelIds ?? []).map((id) => ({
+    id,
+    contextWindow: null,
+    inherited: true,
+  }));
+}
+
+export function firstProviderModelId(provider: ProviderConfig): string | null {
+  return providerModelChoices(provider)[0]?.id ?? null;
+}
+
+export type ProviderConnectionTarget = {
+  baseURL: string;
+  api: string;
+  model: string;
+};
+
+/**
+ * 连接测试所需的有效路由：显式连接字段优先，内置 route 缺字段时继承同版本预设。
+ * 只做运行时投影，不把继承值写回 settings.yaml。
+ */
+export function providerConnectionTarget(provider: ProviderConfig): ProviderConnectionTarget | null {
+  const preset = PRESET_BY_ROUTE.get(provider.route.trim());
+  const rawBaseURL = provider.baseURL?.trim() || preset?.baseUrl?.trim() || "";
+  const baseURL = rawBaseURL ? normalizeBaseUrl(rawBaseURL) : "";
+  const api = provider.api?.trim() || preset?.api?.trim() || "";
+  const model = firstProviderModelId(provider);
+  if (!baseURL || !api || !model) return null;
+  return { baseURL, api, model };
+}
 
 export const emptyProvider = (): ProviderConfig => ({
   route: "",
@@ -101,16 +154,69 @@ export function reasoningView(entry: ModelEntry): ReasoningView {
   return { kind: "levels", levels };
 }
 
-/** 输入模态三态投影：null=继承目录；["text"]=关；含 image=开；其余=手写自定义（保留） */
+/**
+ * DSH llm-pi-ai 当前原生请求模态只有 text/image。空数组与未声明在上游均表示继承；
+ * UI 只投影能无损往返的两种显式集合。任何额外模态（pdf/audio/...）都视为 custom，
+ * 保持原值，避免用户编辑图片能力时静默丢失手写配置。
+ */
 export type InputView = "inherit" | "text" | "text-image" | "custom";
 
 export function inputView(entry: ModelEntry): InputView {
   const input = entry.input;
-  if (input == null) return "inherit";
-  const set = new Set(input);
-  if (set.size === 1 && set.has("text")) return "text";
-  if (set.has("image")) return "text-image";
+  if (input == null || input.length === 0) return "inherit";
+  if (input.length === 1 && input[0] === "text") return "text";
+  if (input.length === 2) {
+    const set = new Set(input);
+    if (set.size === 2 && set.has("text") && set.has("image")) return "text-image";
+  }
   return "custom";
+}
+
+export type ModelReasoningCapability = {
+  kind: "supported" | "unsupported" | "unknown";
+  levels: string[];
+};
+
+const ALL_EFFORTS = new Set<string>(EFFORT_OPTIONS);
+
+/**
+ * 当前 provider/model 的有效推理能力。显式 reasoningEfforts 是最高优先级；
+ * 未声明时继承 models.dev。显式自定义模型又无目录记录时 fail-closed；继承
+ * dsh 内置目录但 models.dev 暂无记录时保持 unknown，避免错误禁用上游能力。
+ */
+export function modelReasoningCapability(
+  provider: ProviderConfig,
+  modelId: string,
+  catalog: ModelCatalogEntry[],
+): ModelReasoningCapability {
+  const configured = provider.models.find((model) => model.id === modelId);
+  if (configured?.reasoningEfforts != null) {
+    if (typeof configured.reasoningEfforts === "boolean") {
+      return { kind: "unsupported", levels: [] };
+    }
+    const levels = EFFORT_OPTIONS.filter((level) =>
+      Object.prototype.hasOwnProperty.call(configured.reasoningEfforts, level),
+    );
+    return levels.length > 0
+      ? { kind: "supported", levels: [...levels] }
+      : { kind: "unsupported", levels: [] };
+  }
+
+  const published = catalog.find((entry) => entry.id === modelId);
+  if (published?.reasoning === false) return { kind: "unsupported", levels: [] };
+  if (published?.reasoning === true) {
+    const levels = (published.reasoningLevels ?? []).filter((level) => ALL_EFFORTS.has(level));
+    const normalized = EFFORT_OPTIONS.filter((level) => levels.includes(level));
+    return {
+      kind: "supported",
+      levels: normalized.length > 0 ? [...normalized] : ["low", "medium", "high"],
+    };
+  }
+  if (published) return { kind: "unknown", levels: [...EFFORT_OPTIONS] };
+
+  return provider.models.length > 0
+    ? { kind: "unsupported", levels: [] }
+    : { kind: "unknown", levels: [...EFFORT_OPTIONS] };
 }
 
 /** 目录按 id 索引（候选元数据查询） */
