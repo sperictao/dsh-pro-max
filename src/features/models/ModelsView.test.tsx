@@ -10,10 +10,20 @@ import { ModelsView } from "./ModelsView";
 const catalog: ModelCatalogFile = {
   fetchedAt: Math.floor(Date.now() / 1000),
   entries: [
-    { id: "glm-5.2", name: "GLM-5.2", family: "openai" },
-    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", family: "openai" },
-    { id: "claude-opus-4", name: "Claude Opus 4", family: "anthropic" },
+    { id: "glm-5.2", name: "GLM-5.2", family: "openai", context: 262144 },
+    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", family: "openai", context: 131072 },
+    { id: "claude-opus-4", name: "Claude Opus 4", family: "anthropic", context: null },
   ],
+};
+
+const richModel = {
+  id: "kimi-for-coding",
+  name: "Kimi",
+  contextWindow: 262144,
+  maxTokens: 32768,
+  input: ["text", "image"],
+  reasoningEfforts: { off: null, high: "high" },
+  extra: { compat: { supportsStore: true } },
 };
 
 const config: ModelConfig = {
@@ -27,167 +37,324 @@ const config: ModelConfig = {
       baseURL: "https://proxy.example.com/v1",
       api: "openai-responses",
       apiKeyEnv: "SPERO_AI_API_KEY",
-      models: ["glm-5.2", "kimi-for-coding"],
-      extra: { timeoutMs: 60000 },
+      models: [{ id: "glm-5.2", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }, richModel],
+      headers: { "X-Title": "my-app" },
+      timeoutMs: null,
+      reasoning: null,
+      extra: { retryPolicy: { mode: "normal" } },
     },
   ],
 };
+
+function loadWith(cfg: ModelConfig | null = config) {
+  return vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(cfg as ModelConfig);
+}
 
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   useAppStore.setState({ toasts: [], modelConfigBusy: false });
+  vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
+  vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(catalog);
 });
 
 describe("ModelsView", () => {
-  it("loads and renders the current model configuration", async () => {
-    const load = vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(config);
+  it("loads and renders the service list with badges and default row", async () => {
+    loadWith();
     render(createElement(ModelsView));
-    await waitFor(() => expect(load).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByTestId("default-model-summary")).toBeInTheDocument());
 
-    // 默认模型 provider（placeholder 定位避免与 provider 卡片 route 同值冲突）
-    expect(screen.getByPlaceholderText("deepseek-official")).toHaveValue("spero-ai");
-    expect(screen.getByPlaceholderText("deepseek-v4-pro")).toHaveValue("glm-5.2");
-    expect(screen.getByLabelText("Route key")).toHaveValue("spero-ai");
-    expect(screen.getByDisplayValue("SPERO_AI_API_KEY")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("https://proxy.example.com/v1")).toBeInTheDocument();
+    expect(screen.getByTestId("default-model-summary")).toHaveTextContent("Spero AI · glm-5.2");
+    expect(screen.getByText("default")).toBeInTheDocument();
+    expect(screen.getByText(/2 models/)).toBeInTheDocument();
+    expect(screen.getByText(/proxy\.example\.com/)).toBeInTheDocument();
+    // 无凭据引用的徽标：本配置有 env 引用，不出现
+    expect(screen.queryByText("No API key reference yet")).not.toBeInTheDocument();
   });
 
-  it("saves edited providers with extra fields passed through", async () => {
-    vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(config);
+  it("saves with structured model fields and provider extra passed through", async () => {
+    loadWith();
     const save = vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
     const user = userEvent.setup();
     render(createElement(ModelsView));
-    await waitFor(() => expect(screen.getByLabelText("Route key")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("default-model-summary")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    const saved = save.mock.calls[0][0];
-    expect(saved.defaultProvider).toBe("spero-ai");
+    const saved = save.mock.calls[0][0] as ModelConfig;
     expect(saved.defaultReasoningEffort).toBe("max");
-    expect(saved.providers[0].extra).toEqual({ timeoutMs: 60000 });
-    // 结果 toast 经全局 store 送达 Toaster
+    expect(saved.providers[0].extra).toEqual({ retryPolicy: { mode: "normal" } });
+    expect(saved.providers[0].headers).toEqual({ "X-Title": "my-app" });
+    expect(saved.providers[0].models[1]).toMatchObject({ id: "kimi-for-coding", contextWindow: 262144 });
     await waitFor(() =>
-      expect(useAppStore.getState().toasts.map((t) => t.message)).toContain("Model configuration saved"),
+      expect(useAppStore.getState().toasts.map((x) => x.message)).toContain(
+        "Model configuration saved — changes take effect immediately",
+      ),
     );
   });
 
-  it("blocks saving when the default model selection is incomplete", async () => {
-    vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue({ ...config, defaultModel: null });
+  it("blocks saving when the default provider is set without a model", async () => {
+    loadWith({ ...config, defaultModel: null });
     const save = vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
     const user = userEvent.setup();
     render(createElement(ModelsView));
-    await waitFor(() => expect(screen.getByLabelText("Route key")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("default-model-summary")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(save).not.toHaveBeenCalled();
-    expect(useAppStore.getState().toasts.map((t) => t.message)).toContain(
+    expect(useAppStore.getState().toasts.map((x) => x.message)).toContain(
       "Default model provider and model are required",
     );
   });
 
-  it("offers fuzzy search suggestions for the default model input", async () => {
-    vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(config);
-    vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
+  it("switches the default model through the grouped change menu", async () => {
+    loadWith();
     const user = userEvent.setup();
     render(createElement(ModelsView));
-    await waitFor(() => expect(screen.getByLabelText("Route key")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("default-model-summary")).toBeInTheDocument());
 
-    // 默认模型输入框触发模糊搜索：大小写不敏感、id 与 name 都可命中
-    const modelInput = screen.getByPlaceholderText("deepseek-v4-pro");
-    await user.clear(modelInput);
-    await user.type(modelInput, "GLM");
+    await user.click(screen.getByRole("button", { name: "Change" }));
     const listbox = await screen.findByRole("listbox");
-    expect(listbox).toHaveTextContent("glm-5.2");
-    // 按 provider 协议过滤：openai-responses 不出现 anthropic 家族候选
-    expect(listbox).not.toHaveTextContent("claude-opus-4");
-    // 键盘选中
-    await user.keyboard("{ArrowDown}{Enter}");
-    expect(modelInput).toHaveValue("glm-5.2");
+    // 按服务分组：组头是显示名
+    expect(within(listbox).getByText("Spero AI")).toBeInTheDocument();
+    await user.click(within(listbox).getByRole("option", { name: /kimi-for-coding/ }));
+    expect(screen.getByTestId("default-model-summary")).toHaveTextContent("Spero AI · kimi-for-coding");
   });
 
-  it("appends a picked model to a provider via the add-model search", async () => {
-    vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(config);
-    vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
+  it("adds a provider from a preset and auto-sets it as default", async () => {
+    loadWith({ defaultProvider: null, defaultModel: null, defaultReasoningEffort: null, providers: [] });
+    const save = vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
     const user = userEvent.setup();
     render(createElement(ModelsView));
-    await waitFor(() => expect(screen.getByLabelText("Route key")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("empty-add-provider")).toBeInTheDocument());
 
-    const addInput = screen.getByPlaceholderText("Search models…");
-    await user.type(addInput, "deepseek");
+    await user.click(screen.getByTestId("empty-add-provider"));
+    // 选预设：搜索 deepseek 回车选中（预设表由 pi-ai 目录生成，deepseek 必在）
+    const presetInput = await screen.findByTestId("preset-input");
+    await user.type(presetInput, "deepseek");
     const listbox = await screen.findByRole("listbox");
-    await user.click(within(listbox).getByText("deepseek-v4-pro"));
-    // 追加进 models 且去重（glm-5.2 已在列表中，不重复出现）
-    expect(screen.getByLabelText("Models (one per line)")).toHaveValue("glm-5.2\nkimi-for-coding\ndeepseek-v4-pro");
+    await user.click(within(listbox).getByRole("option", { name: /deepseek/ }));
+    // 勾选一个目录模型（继承形态不选模型 = 不自动设默认）
+    const leftList = await within(screen.getByRole("dialog")).findByRole("list", { name: "Models from this service" });
+    await user.click(within(leftList).getByRole("checkbox", { name: "deepseek-v4-pro" }));
+    await user.click(screen.getByRole("button", { name: "Save provider" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByTestId("default-model-summary")).toHaveTextContent(/DeepSeek/);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const saved = save.mock.calls[0][0] as ModelConfig;
+    expect(saved.providers[0].baseURL).toContain("deepseek");
+    expect(saved.defaultProvider).toBe(saved.providers[0].route);
   });
 
-  it("degrades to configured models when the catalog is unavailable", async () => {
-    vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(config);
-    vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(null);
-    vi.spyOn(cmd, "modelCatalogRefresh").mockRejectedValue("network down");
-    const user = userEvent.setup();
-    render(createElement(ModelsView));
-    await waitFor(() => expect(screen.getByLabelText("Route key")).toBeInTheDocument());
-
-    // 刷新失败静默：不弹 toast，已配模型仍可联想
-    expect(useAppStore.getState().toasts).toHaveLength(0);
-    const modelInput = screen.getByPlaceholderText("deepseek-v4-pro");
-    await user.click(modelInput);
-    const listbox = await screen.findByRole("listbox");
-    expect(listbox).toHaveTextContent("glm-5.2");
-  });
-
-  it("refreshes a stale catalog in the background", async () => {
-    vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(config);
-    vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue({
-      fetchedAt: Math.floor(Date.now() / 1000) - 25 * 60 * 60,
-      entries: [{ id: "old-model", name: "Old", family: "openai" }],
-    });
-    const refresh = vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue({
-      fetchedAt: Math.floor(Date.now() / 1000),
-      entries: [{ id: "fresh-model", name: "Fresh", family: "openai" }],
-    });
-    const user = userEvent.setup();
-    render(createElement(ModelsView));
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-
-    const modelInput = screen.getByPlaceholderText("deepseek-v4-pro");
-    await user.click(modelInput);
-    await user.clear(modelInput);
-    const listbox = await screen.findByRole("listbox");
-    await waitFor(() => expect(listbox).toHaveTextContent("fresh-model"));
-  });
-
-  it("fetches remote models and appends a picked one", async () => {
-    vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(config);
-    vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
+  it("fetches remote models in the dialog and picks one via the left pane", async () => {
+    loadWith();
     const remote = vi.spyOn(cmd, "modelRemoteList").mockResolvedValue(["kimi-k2", "glm-5.2"]);
     const user = userEvent.setup();
     render(createElement(ModelsView));
-    await waitFor(() => expect(screen.getByLabelText("Route key")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Edit provider" })).toHaveLength(1));
 
-    await user.click(screen.getByRole("button", { name: "Fetch models" }));
+    await user.click(screen.getByRole("button", { name: "Edit provider" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Fetch list" }));
     await waitFor(() => expect(remote).toHaveBeenCalledOnce());
-    const list = await screen.findByRole("group", { name: "Available upstream models" });
-    await user.click(within(list).getByRole("button", { name: "kimi-k2" }));
-    expect(screen.getByLabelText("Models (one per line)")).toHaveValue(
-      "glm-5.2\nkimi-for-coding\nkimi-k2",
-    );
-    // 已存在的 glm-5.2 标记为已添加且禁用
-    expect(within(list).getByRole("button", { name: "glm-5.2 ✓" })).toBeDisabled();
+    const leftList = await within(dialog).findByRole("list", { name: "Models from this service" });
+    await user.click(within(leftList).getByRole("checkbox", { name: "kimi-k2" }));
+    // 右栏出现已选模型
+    expect(within(dialog).getByTestId("model-panes")).toHaveTextContent("kimi-k2");
   });
 
-  it("toasts a readable error when fetching remote models fails", async () => {
-    vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(config);
-    vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
-    vi.spyOn(cmd, "modelRemoteList").mockRejectedValue("Environment variable SPERO_AI_API_KEY is not set");
+  it("shows a classified inline error with retry when fetching fails", async () => {
+    loadWith();
+    vi.spyOn(cmd, "modelRemoteList").mockRejectedValue(
+      "Environment variable is not set in the environment where dsh-pro-max was launched",
+    );
     const user = userEvent.setup();
     render(createElement(ModelsView));
-    await waitFor(() => expect(screen.getByLabelText("Route key")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Edit provider" })).toBeInTheDocument());
 
-    await user.click(screen.getByRole("button", { name: "Fetch models" }));
+    await user.click(screen.getByRole("button", { name: "Edit provider" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Fetch list" }));
+    // 测试环境语言为 en：tErr 回落英文 key 原文（zh 下查表翻译）
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Environment variable is not set in the environment where dsh-pro-max was launched",
+    );
+  });
+
+  it("edits per-model advanced fields in the right pane", async () => {
+    loadWith();
+    const save = vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Edit provider" })).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Edit provider" }));
+    const dialog = await screen.findByRole("dialog");
+    const panes = within(dialog).getByTestId("model-panes");
+    const kimiRow = panes.querySelector('[data-model-id="kimi-for-coding"]') as HTMLElement;
+    const row = within(kimiRow);
+    await user.click(row.getByRole("button", { name: "Advanced" }));
+    // 别名与上下文窗口来自已保存字段
+    const alias = row.getByLabelText("Alias") as HTMLInputElement;
+    expect(alias).toHaveValue("Kimi");
+    const ctx = row.getByLabelText("Context window") as HTMLInputElement;
+    expect(ctx).toHaveValue(262144);
+    // 思考档 chips：off/high 已启用；补充 medium 档
+    const medium = row.getByRole("button", { name: "medium" });
+    await user.click(medium);
+    await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const saved = save.mock.calls[0][0] as ModelConfig;
+    const kimi = saved.providers[0].models.find((m) => m.id === "kimi-for-coding");
+    expect(kimi?.reasoningEfforts).toEqual({ off: null, high: "high", medium: "medium" });
+    // 条目级未管理字段保存后原样保留
+    expect(kimi?.extra).toEqual({ compat: { supportsStore: true } });
+  });
+
+  it("round-trips unmanaged fields when editing an unrelated field", async () => {
+    loadWith();
+    const save = vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Edit provider" })).toBeInTheDocument());
+
+    // 只改显示名：模型条目与 provider 的未管理字段必须原样保留
+    await user.click(screen.getByRole("button", { name: "Edit provider" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.clear(within(dialog).getByLabelText("Display Name"));
+    await user.type(within(dialog).getByLabelText("Display Name"), "Spero Gateway");
+    await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    const saved = save.mock.calls[0][0] as ModelConfig;
+    expect(saved.providers[0].displayName).toBe("Spero Gateway");
+    expect(saved.providers[0].extra).toEqual({ retryPolicy: { mode: "normal" } });
+    expect(saved.providers[0].models[1].extra).toEqual({ compat: { supportsStore: true } });
+    expect(saved.providers[0].models[1].input).toEqual(["text", "image"]);
+  });
+
+  it("removes a provider via two-step delete and falls back the default", async () => {
+    loadWith({
+      ...config,
+      providers: [
+        ...config.providers,
+        {
+          route: "second-ai",
+          displayName: "Second",
+          baseURL: "https://second.example.com",
+          api: "openai-completions",
+          apiKeyEnv: "SECOND_KEY",
+          models: [{ id: "m2", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
+          headers: null,
+          timeoutMs: null,
+          reasoning: null,
+          extra: null,
+        },
+      ],
+    });
+    const save = vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+    await waitFor(() => expect(screen.getByText("Second")).toBeInTheDocument());
+
+    // 两步删除：先武装（Delete?），确认后移除
+    await user.click(screen.getAllByRole("button", { name: "Remove provider" })[0]);
+    await user.click(screen.getByRole("button", { name: "Delete?" }));
+    expect(screen.queryByText("Second")).toBeInTheDocument();
+    // 默认回退到 second-ai
+    expect(screen.getByTestId("default-model-summary")).toHaveTextContent("Second · m2");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const saved = save.mock.calls[0][0] as ModelConfig;
+    expect(saved.providers.map((p) => p.route)).toEqual(["second-ai"]);
+    expect(saved.defaultProvider).toBe("second-ai");
+  });
+
+  it("shows the catalog status line and supports manual refresh", async () => {
+    loadWith();
+    const refresh = vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue({
+      fetchedAt: Math.floor(Date.now() / 1000),
+      entries: [{ id: "fresh-model", name: "Fresh", family: "openai", context: null }],
+    });
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+    await waitFor(() => expect(screen.getByText(/models · updated/)).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Refresh model catalog" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  });
+
+  it("degrades silently when the catalog is unavailable", async () => {
+    vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(null);
+    vi.spyOn(cmd, "modelCatalogRefresh").mockRejectedValue("Failed to reach the model catalog");
+    loadWith();
+    render(createElement(ModelsView));
+    await waitFor(() => expect(screen.getByText("Catalog: unavailable")).toBeInTheDocument());
+    // 静默降级：不弹 toast
+    expect(useAppStore.getState().toasts).toHaveLength(0);
+  });
+
+  it("scans, selects and imports provider configurations", async () => {
+    loadWith();
+    const scan = vi.spyOn(cmd, "modelConfigImportScan").mockResolvedValue([
+      {
+        source: "codex",
+        entries: [
+          {
+            key: "codex:my-gateway",
+            route: "my-gateway",
+            name: "My Gateway",
+            baseURL: "https://gw.example.com/v1",
+            api: "openai-completions",
+            apiKeyEnv: "GW_API_KEY",
+            credential: "env",
+            models: ["gpt-5"],
+          },
+        ],
+      },
+      { source: "claude-code", entries: [] },
+    ]);
+    const run = vi
+      .spyOn(cmd, "modelConfigImportRun")
+      .mockResolvedValue({ imported: 1, skipped: 0, failed: 0, literal: 0 });
+    const reload = vi.spyOn(cmd, "modelConfigLoad");
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import configuration" })).toBeInTheDocument());
+    const loadCallsBefore = reload.mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: "Import configuration" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(scan).toHaveBeenCalledOnce();
+    expect(within(dialog).getByText("Codex")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Providers found: 1/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Import selected (1)" }));
+
+    await waitFor(() => expect(run).toHaveBeenCalledWith(["codex:my-gateway"]));
+    // 导入成功后重读配置并 toast 计数
+    await waitFor(() => expect(reload.mock.calls.length).toBeGreaterThan(loadCallsBefore));
     await waitFor(() =>
-      expect(useAppStore.getState().toasts.some((t) => t.type === "error")).toBe(true),
+      expect(useAppStore.getState().toasts.some((x) => x.message.includes("导入完成") || x.message.includes("Import finished"))).toBe(true),
+    );
+  });
+
+  it("blocks the import entry while the draft has unsaved changes", async () => {
+    loadWith();
+    const scan = vi.spyOn(cmd, "modelConfigImportScan");
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Import configuration" })).toBeInTheDocument());
+
+    // 改推理档 → dirty
+    await user.selectOptions(screen.getByLabelText("Reasoning Effort"), "high");
+    await user.click(screen.getByRole("button", { name: "Import configuration" }));
+    expect(scan).not.toHaveBeenCalled();
+    expect(useAppStore.getState().toasts.map((x) => x.message)).toContain(
+      "Save or discard your changes before importing.",
     );
   });
 });

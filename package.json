@@ -14,7 +14,8 @@
     "build:updater": "node scripts/build-updater.mjs",
     "build:dsh-plugins": "node scripts/build-dsh-plugins.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
-    "check:release": "node scripts/check-release.mjs"
+    "check:release": "node scripts/check-release.mjs",
+    "gen:model-presets": "node scripts/generate-model-presets.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -46,6 +47,13 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^5.6.0",
     "vite": "^8.2.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "@earendil-works/pi-ai": "0.85.1"
+  },
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "@google/genai",
+      "protobufjs"
+    ]
   }
 }

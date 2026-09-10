@@ -1,53 +1,47 @@
 // 模型配置视图：编辑 ~/.dsh/settings.yaml 的模型域（agent-default-model +
-// llm-pi-ai.providers）。高级字段（extra）不在 UI 展示，保存时原样透传。
-// 模型联想 = market 同款模糊搜索（toLowerCase 子串匹配），候选源 = models.dev
-// 全量目录快照（缺失/超 24h 自动后台刷新，失败静默降级）+ 已配置模型。
+// llm-pi-ai.providers）。信息架构对齐 PI-Desktop：默认模型行 + 更改锚定菜单、
+// AI 服务列表（徽标/设为默认/编辑/两步删除）、目录状态行 + 手动刷新、
+// 添加/编辑对话框（含模型双栏与高级设置）、配置导入。settings.yaml 为热加载
+// （dsh-settings-file 监听 + llm-pi-ai 按请求解析），保存后即时生效。
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
-import { BTN, BTN_DANGER_SM, BTN_PRIMARY, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
+import { BTN, BTN_DANGER_SM, BTN_PRIMARY, BTN_SM, INPUT, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelConfig, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
-
-// dsh pi-ai 适配器支持的 wire 协议（PROTOCOLS 表，most-reached first）
-const API_OPTIONS = ["openai-completions", "openai-responses", "anthropic-messages"];
-// pi-ai ModelThinkingLevel 全集；空 = 不设置（读目录默认）
-const EFFORT_OPTIONS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-// 目录快照过期窗口与候选截断（浮层不渲染全量 4000+ 条）
-const CATALOG_STALE_SECS = 24 * 60 * 60;
-const SUGGESTION_LIMIT = 50;
-
-const emptyProvider = (): ProviderConfig => ({
-  route: "",
-  displayName: null,
-  baseURL: null,
-  api: "openai-completions",
-  apiKeyEnv: null,
-  models: [],
-  extra: null,
-});
-
-// wire 协议 → 目录家族；协议未设置时不过滤（null）
-const familyOf = (api: string | null): "anthropic" | "openai" | null =>
-  api === "anthropic-messages" ? "anthropic" : api ? "openai" : null;
+import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
+import { ImportDialog } from "./ImportDialog";
+import { CATALOG_STALE_SECS, DELETE_CONFIRM_MS, EFFORT_OPTIONS, fmtTokens } from "./shared";
 
 export function ModelsView() {
   const { t } = useTranslation();
   const toast = useAppStore((s) => s.toast);
   const loadModelConfig = useAppStore((s) => s.loadModelConfig);
   const [config, setConfig] = useState<ModelConfig | null>(null);
+  const [saved, setSaved] = useState<ModelConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
+  const [catalogFetchedAt, setCatalogFetchedAt] = useState<number | null>(null);
+  const [catalogState, setCatalogState] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [catalogRefreshing, setCatalogRefreshing] = useState(false);
+  const [dialog, setDialog] = useState<ProviderDialogState | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  // 两步删除：已武装的 route；3 秒未确认自动还原
+  const [armedDelete, setArmedDelete] = useState<string | null>(null);
+  const deleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let disposed = false;
     void (async () => {
       try {
         const cfg = await loadModelConfig();
-        if (!disposed) setConfig(cfg);
+        if (!disposed) {
+          setConfig(cfg);
+          setSaved(cfg);
+        }
       } catch (e) {
         if (!disposed) toast(tErr(String(e)), "error");
       } finally {
@@ -66,13 +60,19 @@ export function ModelsView() {
     void (async () => {
       try {
         const file = await cmd.modelCatalogLoad();
-        if (file && !disposed) setCatalog(file.entries);
+        if (disposed) return;
+        if (file) {
+          setCatalog(file.entries);
+          setCatalogFetchedAt(file.fetchedAt);
+          setCatalogState("ready");
+        } else {
+          setCatalogState("unavailable");
+        }
         if (!file || Date.now() / 1000 - file.fetchedAt >= CATALOG_STALE_SECS) {
-          const fresh = await cmd.modelCatalogRefresh();
-          if (!disposed) setCatalog(fresh.entries);
+          void refreshCatalog(true);
         }
       } catch {
-        // 刷新失败不打断配置编辑；下次进入重试
+        if (!disposed) setCatalogState("unavailable");
       }
     })();
     return () => {
@@ -81,15 +81,95 @@ export function ModelsView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const refreshCatalog = async (background: boolean) => {
+    setCatalogRefreshing(true);
+    try {
+      const fresh = await cmd.modelCatalogRefresh();
+      setCatalog(fresh.entries);
+      setCatalogFetchedAt(fresh.fetchedAt);
+      setCatalogState("ready");
+    } catch (e) {
+      // 自动刷新静默；手动刷新给出提示但不打断编辑
+      if (!background) toast(tErr(String(e)), "error");
+    } finally {
+      setCatalogRefreshing(false);
+    }
+  };
+
+  const dirty = useMemo(
+    () => config != null && saved != null && JSON.stringify(config) !== JSON.stringify(saved),
+    [config, saved],
+  );
+
   const patch = (p: Partial<ModelConfig>) => setConfig((c) => (c ? { ...c, ...p } : c));
-  const patchProvider = (index: number, p: Partial<ProviderConfig>) =>
-    setConfig((c) =>
-      c ? { ...c, providers: c.providers.map((pr, i) => (i === index ? { ...pr, ...p } : pr)) } : c,
-    );
+
+  const armDelete = (route: string) => {
+    setArmedDelete(route);
+    if (deleteTimer.current) clearTimeout(deleteTimer.current);
+    deleteTimer.current = setTimeout(() => setArmedDelete(null), DELETE_CONFIRM_MS);
+  };
+
+  const disarmDelete = () => {
+    if (deleteTimer.current) clearTimeout(deleteTimer.current);
+    setArmedDelete(null);
+  };
+
+  const removeProvider = (route: string) => {
+    disarmDelete();
+    setConfig((c) => {
+      if (!c) return c;
+      const providers = c.providers.filter((p) => p.route !== route);
+      // 删除默认服务：回退到下一个可用服务的首个模型；无可用则清空
+      if (c.defaultProvider === route) {
+        const next = providers[0];
+        return {
+          ...c,
+          providers,
+          defaultProvider: next?.route ?? null,
+          defaultModel: next?.models[0]?.id ?? null,
+        };
+      }
+      return { ...c, providers };
+    });
+  };
+
+  const submitProvider = (provider: ProviderConfig, originalRoute: string | null) => {
+    setConfig((c) => {
+      if (!c) return c;
+      // 编辑态以原路由键定位（路由键改名 = 原位替换而非新增）；新增按路由键查重
+      const locate = originalRoute ?? provider.route;
+      const existing = c.providers.findIndex((p) => p.route === locate);
+      const providers =
+        existing >= 0
+          ? c.providers.map((p, i) => (i === existing ? provider : p))
+          : [...c.providers, provider];
+      // 改名的是默认服务：默认引用同步到新路由键
+      if (originalRoute && c.defaultProvider === originalRoute && provider.route !== originalRoute) {
+        return { ...c, providers, defaultProvider: provider.route };
+      }
+      // 保存首个服务且当前无默认：自动设为默认（PI 同款）
+      if (!c.defaultProvider?.trim() && provider.models.length > 0) {
+        return {
+          ...c,
+          providers,
+          defaultProvider: provider.route,
+          defaultModel: provider.models[0]?.id ?? c.defaultModel,
+        };
+      }
+      // 默认服务仍在但默认模型已被删掉：回落到该服务首个模型
+      const defaultProvider = providers.find((p) => p.route === c.defaultProvider);
+      const defaultModel =
+        defaultProvider && !defaultProvider.models.some((m) => m.id === c.defaultModel)
+          ? defaultProvider.models[0]?.id ?? null
+          : c.defaultModel;
+      return { ...c, providers, defaultModel };
+    });
+    setDialog(null);
+  };
 
   const save = async () => {
     if (!config) return;
-    if (!config.defaultProvider?.trim() || !config.defaultModel?.trim()) {
+    if (config.defaultProvider?.trim() && !config.defaultModel?.trim()) {
       toast(t("Default model provider and model are required"), "error");
       return;
     }
@@ -97,15 +177,29 @@ export function ModelsView() {
       toast(t("Provider route key cannot be empty"), "error");
       return;
     }
+    const routes = config.providers.map((p) => p.route.trim());
+    if (new Set(routes).size !== routes.length) {
+      toast(t("Provider route keys must be unique"), "error");
+      return;
+    }
     setSaving(true);
     try {
       await cmd.modelConfigSave(config);
-      toast(t("Model configuration saved"), "success");
+      setSaved(config);
+      toast(t("Model configuration saved — changes take effect immediately"), "success");
     } catch (e) {
       toast(tErr(String(e)), "error");
     } finally {
       setSaving(false);
     }
+  };
+
+  const openImport = () => {
+    if (dirty) {
+      toast(t("Save or discard your changes before importing."), "error");
+      return;
+    }
+    setImportOpen(true);
   };
 
   if (loading) {
@@ -115,9 +209,16 @@ export function ModelsView() {
       </main>
     );
   }
-  const cfg = config ?? { defaultProvider: null, defaultModel: null, defaultReasoningEffort: null, providers: [] };
-  const providerIds = [cfg.defaultProvider ?? "", ...cfg.providers.map((p) => p.route)].filter(Boolean);
-  const defaultProvider = cfg.providers.find((p) => p.route === (cfg.defaultProvider ?? "").trim());
+  const cfg = config ?? {
+    defaultProvider: null,
+    defaultModel: null,
+    defaultReasoningEffort: null,
+    providers: [],
+  };
+
+  const defaultProvider = cfg.providers.find(
+    (p) => p.route === (cfg.defaultProvider ?? "").trim(),
+  );
 
   return (
     <main className="flex-1 overflow-y-auto p-6" id="models-view">
@@ -133,41 +234,27 @@ export function ModelsView() {
         <h3 className="mb-3 text-sm font-semibold">{t("Default Model")}</h3>
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-3">
-            <label className="w-32 shrink-0 text-sm opacity-70">{t("Provider")}</label>
-            <input
-              className={INPUT_MONO}
-              list="model-provider-ids"
-              value={cfg.defaultProvider ?? ""}
-              onChange={(e) => patch({ defaultProvider: e.target.value })}
-              placeholder="deepseek-official"
+            <label className="w-32 shrink-0 text-sm opacity-70">{t("Default model")}</label>
+            <span className="flex-1 text-sm" data-testid="default-model-summary">
+              {defaultProvider && cfg.defaultModel
+                ? `${defaultProvider.displayName ?? defaultProvider.route} · ${cfg.defaultModel}`
+                : t("No AI provider ready")}
+            </span>
+            <DefaultModelMenu
+              providers={cfg.providers}
+              currentRoute={cfg.defaultProvider}
+              currentModel={cfg.defaultModel}
+              disabled={cfg.providers.length === 0}
+              onPick={(route, model) => patch({ defaultProvider: route, defaultModel: model })}
             />
-            <datalist id="model-provider-ids">
-              {providerIds.map((id) => (
-                <option key={id} value={id} />
-              ))}
-            </datalist>
-          </div>
-          <div className="flex items-center gap-3">
-            <label className="w-32 shrink-0 text-sm opacity-70">{t("Model")}</label>
-            <div className="flex-1">
-              <ModelSearchInput
-                value={cfg.defaultModel ?? ""}
-                onValueChange={(v) => patch({ defaultModel: v })}
-                onPick={(id) => patch({ defaultModel: id })}
-                catalog={catalog}
-                family={familyOf(defaultProvider?.api ?? null)}
-                configured={defaultProvider?.models ?? []}
-                placeholder="deepseek-v4-pro"
-                ariaLabel={t("Default model")}
-              />
-            </div>
           </div>
           <div className="flex items-center gap-3">
             <label className="w-32 shrink-0 text-sm opacity-70">{t("Reasoning Effort")}</label>
             <select
-              className={SELECT}
+              className={`${SELECT} max-w-64`}
               value={cfg.defaultReasoningEffort ?? ""}
               onChange={(e) => patch({ defaultReasoningEffort: e.target.value || null })}
+              aria-label={t("Reasoning Effort")}
             >
               <option value="">{t("Not set")}</option>
               {EFFORT_OPTIONS.map((v) => (
@@ -180,84 +267,240 @@ export function ModelsView() {
         </div>
       </section>
 
-      {/* —— 提供商列表 —— */}
+      {/* —— AI 服务列表 —— */}
       <section className="mb-6" id="models-providers">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold">{t("Providers")}</h3>
-          <button className={BTN} id="btn-add-provider" onClick={() => setConfig((c) => ({ ...c!, providers: [...c!.providers, emptyProvider()] }))}>
-            {t("Add Provider")}
-          </button>
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
+            {t("AI providers")}
+            <span className="rounded bg-muted px-1.5 text-xs opacity-70">{cfg.providers.length}</span>
+          </h3>
+          <div className="flex items-center gap-2">
+            <button className={BTN} id="btn-import-models" onClick={openImport}>
+              {t("Import configuration")}
+            </button>
+            <button
+              className={BTN_PRIMARY}
+              id="btn-add-provider"
+              onClick={() => setDialog({ mode: "add" })}
+            >
+              {t("Add provider")}
+            </button>
+          </div>
         </div>
         {cfg.providers.length === 0 && (
-          <p className="text-sm opacity-60">{t("No custom providers. Add one to point dsh at your own LLM gateway.")}</p>
+          <div
+            className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border py-10"
+            id="models-empty"
+          >
+            <p className="text-sm font-medium">{t("No AI providers yet")}</p>
+            <p className="text-xs opacity-60">{t("Add an AI provider to start.")}</p>
+            <button
+              className={BTN_PRIMARY}
+              onClick={() => setDialog({ mode: "add" })}
+              data-testid="empty-add-provider"
+            >
+              {t("Add provider")}
+            </button>
+          </div>
         )}
-        <div className="flex flex-col gap-4">
-          {cfg.providers.map((p, i) => (
-            <ProviderCard
-              key={i}
-              index={i}
-              provider={p}
-              catalog={catalog}
-              onChange={(patchP) => patchProvider(i, patchP)}
-              onRemove={() => setConfig((c) => ({ ...c!, providers: c!.providers.filter((_, j) => j !== i) }))}
-            />
-          ))}
+        <div className="flex flex-col gap-2">
+          {cfg.providers.map((p, i) => {
+            const isDefault = p.route === (cfg.defaultProvider ?? "").trim();
+            const armed = armedDelete === p.route;
+            return (
+              <div
+                key={p.route}
+                className="flex items-center gap-3 rounded-lg border border-border px-4 py-3"
+                id={`provider-row-${i}`}
+                data-route={p.route}
+                onBlur={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) disarmDelete();
+                }}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-medium">
+                      {p.displayName ?? p.route}
+                    </span>
+                    {isDefault && (
+                      <span className="rounded bg-primary/10 px-1.5 text-xs text-primary" id={`badge-default-${i}`}>
+                        {t("default")}
+                      </span>
+                    )}
+                    {!p.apiKeyEnv && (
+                      <span className="rounded bg-muted px-1.5 text-xs opacity-70">
+                        {t("No API key reference yet")}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 truncate text-xs opacity-60">
+                    {hostOf(p.baseURL) ?? t("Inherits the built-in catalog")}
+                    {" · "}
+                    {p.models.length > 0
+                      ? t("{{count}} models", { count: p.models.length })
+                      : t("Inherits catalog models")}
+                  </div>
+                </div>
+                {!isDefault && p.models.length > 0 && (
+                  <button
+                    className={BTN_SM}
+                    onClick={() => {
+                      patch({
+                        defaultProvider: p.route,
+                        defaultModel: p.models[0]?.id ?? null,
+                      });
+                    }}
+                  >
+                    {t("Make default")}
+                  </button>
+                )}
+                <button
+                  className={BTN_SM}
+                  aria-label={t("Edit provider")}
+                  onClick={() => setDialog({ mode: "edit", index: i, provider: p })}
+                >
+                  {t("Edit")}
+                </button>
+                {armed ? (
+                  <button
+                    className={BTN_DANGER_SM}
+                    id={`btn-confirm-delete-${i}`}
+                    onClick={() => removeProvider(p.route)}
+                  >
+                    {t("Delete?")}
+                  </button>
+                ) : (
+                  <button
+                    className={BTN_DANGER_SM}
+                    aria-label={t("Remove provider")}
+                    onClick={() => armDelete(p.route)}
+                  >
+                    {t("Delete")}
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       </section>
 
+      {/* —— 目录状态行 —— */}
+      <div className="mb-4 flex items-center justify-between text-xs opacity-70" id="models-catalog">
+        <span>
+          {catalogState === "ready"
+            ? t("Catalog: {{source}} · {{models}} models · updated {{time}}", {
+                source: "models.dev",
+                models: catalog.length,
+                time: catalogFetchedAt ? new Date(catalogFetchedAt * 1000).toLocaleString() : "—",
+              })
+            : catalogState === "loading"
+              ? t("Loading catalog…")
+              : t("Catalog: unavailable")}
+        </span>
+        <button
+          className={BTN_SM}
+          id="btn-refresh-catalog"
+          disabled={catalogRefreshing}
+          onClick={() => void refreshCatalog(false)}
+        >
+          {catalogRefreshing ? t("Refreshing catalog…") : t("Refresh model catalog")}
+        </button>
+      </div>
+
       <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
-        <p className="text-xs opacity-60">{t("Restart the dsh web service after saving to apply changes.")}</p>
+        <p className="text-xs opacity-60">
+          {dirty
+            ? t("Unsaved changes — save to apply. Changes take effect immediately (hot reload).")
+            : t("Changes take effect immediately after saving (hot reload).")}
+        </p>
         <button className={BTN_PRIMARY} id="btn-save-models" disabled={saving} onClick={() => void save()}>
           {saving ? t("Working…") : t("Save")}
         </button>
       </div>
+
+      {dialog && (
+        <ProviderDialog
+          state={dialog}
+          catalog={catalog}
+          onClose={() => setDialog(null)}
+          onSubmit={submitProvider}
+        />
+      )}
+      {importOpen && (
+        <ImportDialog
+          onClose={() => setImportOpen(false)}
+          onImported={(result) => {
+            void (async () => {
+              try {
+                const fresh = await loadModelConfig();
+                setConfig(fresh);
+                setSaved(fresh);
+              } catch {
+                // 重载失败保持现状；下次进入页面自动重读
+              }
+            })();
+            toast(
+              t("Import finished: {{imported}} imported, {{skipped}} skipped, {{failed}} failed", {
+                imported: result.imported,
+                skipped: result.skipped,
+                failed: result.failed,
+              }) + (result.literal > 0 ? ` · ${t("{{count}} with literal keys left credential-free", { count: result.literal })}` : ""),
+              result.failed > 0 ? "error" : "success",
+            );
+          }}
+        />
+      )}
     </main>
   );
 }
 
-// market 同款模糊搜索：query.trim().toLowerCase() 子串匹配 id/name，无第三方库。
-// 候选 = 已配置模型（始终保留）∪ 目录按协议家族过滤，去重后截断前 50 条。
-function ModelSearchInput({
-  value,
-  onValueChange,
+// ============ 默认模型锚定菜单 ============
+
+function DefaultModelMenu({
+  providers,
+  currentRoute,
+  currentModel,
+  disabled,
   onPick,
-  catalog,
-  family,
-  configured,
-  placeholder,
-  ariaLabel,
 }: {
-  value: string;
-  onValueChange: (v: string) => void;
-  onPick: (id: string) => void;
-  catalog: ModelCatalogEntry[];
-  family: "anthropic" | "openai" | null;
-  configured: string[];
-  placeholder: string;
-  ariaLabel: string;
+  providers: ProviderConfig[];
+  currentRoute: string | null;
+  currentModel: string | null;
+  disabled: boolean;
+  onPick: (route: string, model: string) => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const [hi, setHi] = useState(-1);
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const candidates = useMemo(() => {
-    // textarea 手输/YAML 既有重复 id 不产生重复候选与重复 key
-    const configuredUnique = [...new Set(configured)];
-    const seen = new Set(configuredUnique);
-    const pool: { id: string; name: string }[] = [
-      ...configuredUnique.map((id) => ({ id, name: id })),
-      ...catalog.filter((e) => (!family || e.family === family) && !seen.has(e.id)),
-    ];
-    const q = value.trim().toLowerCase();
-    const matched = q
-      ? pool.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
-      : pool;
-    return matched.slice(0, SUGGESTION_LIMIT);
-  }, [configured, catalog, family, value]);
+  // 候选 = 已配置路由的模型，按服务分组；搜索过滤（服务名 + 模型 id）
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return providers
+      .map((p) => ({
+        name: p.displayName ?? p.route,
+        route: p.route,
+        models: p.models.filter(
+          (m) =>
+            !q ||
+            m.id.toLowerCase().includes(q) ||
+            (p.displayName ?? p.route).toLowerCase().includes(q),
+        ),
+      }))
+      .filter((g) => g.models.length > 0);
+  }, [providers, query]);
+
+  const flat = useMemo(
+    () => groups.flatMap((g) => g.models.map((m) => ({ route: g.route, id: m.id, name: g.name }))),
+    [groups],
+  );
 
   useEffect(() => {
     if (!open) return;
+    inputRef.current?.focus();
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
     };
@@ -265,212 +508,104 @@ function ModelSearchInput({
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  const pick = (id: string) => {
-    onPick(id);
+  const pick = (route: string, model: string) => {
+    onPick(route, model);
     setOpen(false);
+    setQuery("");
     setHi(-1);
   };
 
   return (
-    <div ref={rootRef} className="relative">
-      <input
-        className={INPUT_MONO}
-        role="combobox"
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        className={BTN}
+        id="btn-change-default-model"
+        disabled={disabled}
         aria-expanded={open}
-        aria-label={ariaLabel}
-        value={value}
-        placeholder={placeholder}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          onValueChange(e.target.value);
-          setOpen(true);
-          setHi(-1);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            setOpen(true);
-            setHi((h) => Math.min(h + 1, candidates.length - 1));
-          } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            setHi((h) => Math.max(h - 1, 0));
-          } else if (e.key === "Enter") {
-            if (open && hi >= 0 && candidates[hi]) {
-              e.preventDefault();
-              pick(candidates[hi].id);
-            }
-          } else if (e.key === "Escape") {
-            setOpen(false);
-          }
-        }}
-      />
-      {open && candidates.length > 0 && (
-        <ul
-          role="listbox"
-          aria-label={t("Model suggestions")}
-          className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-md border border-border bg-background py-1 shadow-lg"
-        >
-          {candidates.map((e, i) => (
-            <li key={e.id}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={i === hi}
-                className={`flex w-full items-baseline justify-between gap-3 px-3 py-1.5 text-left text-sm ${i === hi ? "bg-accent" : ""}`}
-                onMouseDown={(ev) => {
-                  ev.preventDefault();
-                  pick(e.id);
-                }}
-                onMouseEnter={() => setHi(i)}
-              >
-                <span className="font-mono">{e.id}</span>
-                {e.name !== e.id && <span className="shrink-0 text-xs opacity-60">{e.name}</span>}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      {open && candidates.length === 0 && value.trim() && (
-        <div className="absolute inset-x-0 top-full z-20 mt-1 rounded-md border border-border bg-background px-3 py-2 text-xs opacity-60 shadow-lg">
-          {t("No matching models")}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {t("Change")}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-20 mt-1 w-80 rounded-md border border-border bg-background shadow-lg">
+          <div className="border-b border-border p-2">
+            <input
+              ref={inputRef}
+              className={INPUT}
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setHi(-1);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setHi((h) => Math.min(h + 1, flat.length - 1));
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setHi((h) => Math.max(h - 1, 0));
+                } else if (e.key === "Enter" && flat[hi]) {
+                  e.preventDefault();
+                  pick(flat[hi].route, flat[hi].id);
+                } else if (e.key === "Escape") {
+                  setOpen(false);
+                }
+              }}
+              placeholder={t("Filter models")}
+              aria-label={t("Filter models")}
+            />
+          </div>
+          <ul role="listbox" aria-label={t("Default model")} className="max-h-64 overflow-y-auto py-1">
+            {groups.map((g) => (
+              <li key={g.route}>
+                <div className="px-3 py-1 text-xs font-medium opacity-60" data-provider-group={g.route}>
+                  {g.name}
+                </div>
+                <ul>
+                  {g.models.map((m) => {
+                    const idx = flat.findIndex((f) => f.route === g.route && f.id === m.id);
+                    const isCurrent = g.route === (currentRoute ?? "").trim() && m.id === currentModel;
+                    return (
+                      <li key={m.id}>
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={isCurrent}
+                          className={`flex w-full items-baseline justify-between gap-3 px-3 py-1.5 text-left text-sm ${idx === hi ? "bg-accent" : ""}`}
+                          onMouseDown={(ev) => {
+                            ev.preventDefault();
+                            pick(g.route, m.id);
+                          }}
+                          onMouseEnter={() => setHi(idx)}
+                        >
+                          <span className="truncate font-mono text-xs">
+                            {isCurrent ? "✓ " : ""}
+                            {m.id}
+                          </span>
+                          {fmtTokens(m.contextWindow)}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            ))}
+            {flat.length === 0 && (
+              <li className="px-3 py-2 text-xs opacity-60">{t("No matching models")}</li>
+            )}
+          </ul>
         </div>
       )}
     </div>
   );
 }
 
-function ProviderCard({
-  index,
-  provider,
-  catalog,
-  onChange,
-  onRemove,
-}: {
-  index: number;
-  provider: ProviderConfig;
-  catalog: ModelCatalogEntry[];
-  onChange: (p: Partial<ProviderConfig>) => void;
-  onRemove: () => void;
-}) {
-  const { t } = useTranslation();
-  const toast = useAppStore((s) => s.toast);
-  const modelsText = provider.models.join("\n");
-  const [draft, setDraft] = useState("");
-  const [fetching, setFetching] = useState(false);
-  const [remote, setRemote] = useState<string[] | null>(null);
-
-  // 端点三元组变化后旧端点的拉取结果不再可信，立即撤下
-  useEffect(() => {
-    setRemote(null);
-  }, [provider.baseURL, provider.api, provider.apiKeyEnv]);
-
-  const appendModel = (id: string) => {
-    if (!provider.models.includes(id)) onChange({ models: [...provider.models, id] });
-  };
-
-  const fetchModels = async () => {
-    setFetching(true);
-    try {
-      setRemote(await cmd.modelRemoteList(provider.baseURL ?? "", provider.api ?? null, provider.apiKeyEnv ?? null));
-    } catch (e) {
-      setRemote(null);
-      toast(tErr(String(e)), "error");
-    } finally {
-      setFetching(false);
-    }
-  };
-
-  return (
-    <div className="rounded-lg border border-border p-4" id={`provider-card-${index}`}>
-      <div className="mb-3 flex items-center justify-between">
-        <input
-          className={`${INPUT_MONO} max-w-64 font-semibold`}
-          value={provider.route}
-          onChange={(e) => onChange({ route: e.target.value })}
-          placeholder="my-gateway"
-          aria-label={t("Route key")}
-        />
-        <button className={BTN_DANGER_SM} onClick={onRemove} aria-label={t("Remove provider")}>
-          {t("Remove")}
-        </button>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <label className="flex flex-col gap-1 text-xs opacity-70">
-          {t("Display Name")}
-          <input className={INPUT} value={provider.displayName ?? ""} onChange={(e) => onChange({ displayName: e.target.value || null })} />
-        </label>
-        <label className="flex flex-col gap-1 text-xs opacity-70">
-          {t("Wire Protocol")}
-          <select className={SELECT} value={provider.api ?? ""} onChange={(e) => onChange({ api: e.target.value || null })}>
-            <option value="">{t("Not set")}</option>
-            {API_OPTIONS.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-xs opacity-70">
-          Base URL
-          <input className={`${INPUT_MONO} font-mono`} value={provider.baseURL ?? ""} onChange={(e) => onChange({ baseURL: e.target.value || null })} placeholder="https://gw.example.com/v1" />
-        </label>
-        <label className="flex flex-col gap-1 text-xs opacity-70">
-          {t("API Key Env Var")}
-          <input className={`${INPUT_MONO} font-mono`} value={provider.apiKeyEnv ?? ""} onChange={(e) => onChange({ apiKeyEnv: e.target.value || null })} placeholder="MY_GATEWAY_API_KEY" />
-        </label>
-      </div>
-      <div className="mt-3 flex flex-col gap-1 text-xs opacity-70">
-        <div className="flex items-center justify-between">
-          <span>{t("Models (one per line)")}</span>
-          <button className={BTN} id={`btn-fetch-models-${index}`} disabled={fetching} onClick={() => void fetchModels()}>
-            {fetching ? t("Fetching…") : t("Fetch models")}
-          </button>
-        </div>
-        <ModelSearchInput
-          value={draft}
-          onValueChange={setDraft}
-          onPick={(id) => {
-            appendModel(id);
-            setDraft("");
-          }}
-          catalog={catalog}
-          family={familyOf(provider.api)}
-          configured={provider.models}
-          placeholder={t("Search models…")}
-          ariaLabel={t("Add model")}
-        />
-        <textarea
-          className={`${INPUT} h-24 py-2 font-mono`}
-          value={modelsText}
-          onChange={(e) => onChange({ models: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })}
-          spellCheck={false}
-          aria-label={t("Models (one per line)")}
-        />
-      </div>
-      {remote && (
-        <div role="group" aria-label={t("Available upstream models")} className="mt-2 rounded-md border border-border p-2">
-          {remote.length === 0 ? (
-            <p className="text-xs opacity-60">{t("Upstream returned no models")}</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {remote.map((id) => {
-                const added = provider.models.includes(id);
-                return (
-                  <button
-                    key={id}
-                    className={BTN}
-                    disabled={added}
-                    onClick={() => appendModel(id)}
-                    aria-label={added ? `${id} ✓` : id}
-                  >
-                    {added ? `${id} ✓` : id}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+function hostOf(baseURL: string | null): string | null {
+  if (!baseURL?.trim()) return null;
+  try {
+    return new URL(baseURL.trim()).host;
+  } catch {
+    return baseURL.trim();
+  }
 }

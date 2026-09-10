@@ -125,7 +125,10 @@ const MOCK = {
         baseURL: "https://proxy.example.com/v1",
         api: "openai-responses",
         apiKeyEnv: "SPERO_AI_API_KEY",
-        models: ["glm-5.2"],
+        models: [{ id: "glm-5.2", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
+        headers: null,
+        timeoutMs: null,
+        reasoning: null,
         extra: null,
       },
     ],
@@ -172,6 +175,14 @@ async function main() {
         model_catalog_load: () => ({ fetchedAt: Math.floor(Date.now() / 1000), entries: [] }),
         model_catalog_refresh: () => ({ fetchedAt: Math.floor(Date.now() / 1000), entries: [] }),
         model_remote_list: () => [],
+        model_config_import_scan: () => [
+          { source: "claude-code", entries: [] },
+          { source: "codex", entries: [] },
+          { source: "opencode", entries: [] },
+          { source: "pi", entries: [] },
+          { source: "cc-switch", entries: [] },
+        ],
+        model_config_import_run: () => ({ imported: 0, skipped: 0, failed: 0, literal: 0 }),
         "plugin:app|version": () => "0.4.0",
         "plugin:notification|is_permission_granted": () => true,
       };
@@ -254,8 +265,16 @@ async function main() {
     await step("models: configuration renders from settings.yaml", async () => {
       await page.getByRole("button", { name: "Models" }).click();
       await expectVisible(page.locator("#models-view"));
-      await expectVisible(page.getByPlaceholder("deepseek-official"));
-      await expectVisible(page.locator("#provider-card-0"));
+      // 默认模型行 + 更改菜单 + 服务列表行
+      await expectVisible(page.getByTestId("default-model-summary"));
+      await expectVisible(page.locator("#btn-change-default-model"));
+      await expectVisible(page.locator("#provider-row-0"));
+      await expectVisible(page.locator("#models-catalog"));
+      // 打开添加对话框：预设选择器 + 双栏
+      await page.locator("#btn-add-provider").click();
+      await expectVisible(page.getByTestId("preset-input"));
+      await expectVisible(page.getByTestId("model-panes"));
+      await page.getByRole("button", { name: "Cancel" }).click();
       await expectVisible(page.getByRole("button", { name: "Save" }));
     });
 

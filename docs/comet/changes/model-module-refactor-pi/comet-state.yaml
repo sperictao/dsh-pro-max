@@ -1,0 +1,397 @@
+schema: comet.native.v4
+name: model-module-refactor-pi
+language: zh-CN
+phase: archive
+status: active
+state_version: 16
+brief: brief.md
+shape_confirmation_hash: fdd3431516153f0f1effb03afe1f3d890217f31d39ca7a8d9191df81847243b6
+spec_changes:
+  - capability: models-config
+    operation: create
+    source: specs/models-config/spec.md
+workspace:
+  isolation: worktree
+  change_branch: comet/model-module-refactor-pi
+  target_branch: main
+  finish: merge
+loop:
+  stage: archive-ready
+  goal_cycle: 2
+  iteration: 2
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: archive
+acceptance:
+  - id: A1
+    source: brief.md
+    text: 'A1: 模型页呈现服务列表：每行显示名称、默认徽标、未设凭据引用提示徽标、副行（host · N
+      个模型）、设为默认/编辑/删除行内操作；无服务时空状态含引导按钮；默认模型行显示"服务 · 模型 ·
+      推理档"，点"更改"弹按服务分组的锚定菜单（可搜索、当前项勾选、无匹配提示），菜单仅列已配置路由的模型。'
+    result: passed
+    reason:
+      text: ModelsView 服务行徽标/副行/行内操作/空状态与锚定菜单（分组/搜索/当前项勾选/键盘/无匹配提示）齐全，vitest
+        断言列表渲染与菜单切换。
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: "A2: 行内操作可用：两步删除（3
+      秒未确认自动还原、失焦取消）；删除默认服务后默认模型自动回退到下一个可用服务（无可用则清空）；保存首个服务且当前无默认时自动设为默认。"
+    result: passed
+    reason:
+      text: 3 秒两步删除+失焦取消、删默认回退下一可用、首服务自动设默认均有实现与测试断言（saved.defaultProvider）。
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: 'A3: 添加/编辑对话框：服务预设选择器可搜索、键盘可用，选预设自动回填路由键/名称/Base URL/协议，含"自定义端点"项（路由键命中
+      pi-ai 内置目录的预设仅凭据引用必填）；字段校验（Base URL 形校验与尾部路径剥离、路由键非空）；保存门控；编辑回显现有配置。'
+    result: passed
+    reason:
+      text: 预设选择器可搜索键盘导航+自定义端点+目录命中提示，32 预设生成物同仓，URL 剥尾/形校验与 canSave 门控在实现与测试确认。
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: 'A4: 模型双栏：左栏可手动"获取列表"（成功逐条点选、全选含 indeterminate、搜索过滤、已选禁用标记、token
+      缩写展示；失败按原因归类为静态文案，任何路径不含密钥值）；右栏列出已选模型可移除；端点三元组变更撤下旧结果。'
+    result: passed
+    reason:
+      text: 双栏含 Fetch list/indeterminate 全选/搜索/token 缩写/移除/端点三元组变更撤下，测试断言拉取点选与错误归类。
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: "A5: 每模型高级面板：右栏模型行可展开，编辑显示名、上下文窗口、最大输出（留空=继承，正整数校验）；推理档 chips（off..max
+      多选，每启用档可编辑 wire 拼写、默认等于档名；手写 `false` 声明原样保留）；图片输入三态开关（跟随目录=不写键 / 关 /
+      开，手写自定义模态原样保留）；保存后写入对应 `models[]` 条目字段。"
+    result: passed
+    reason:
+      text: 高级面板别名/上下文/最大输出/推理档 chips+wire 拼写/图片输入三态+false 与 custom 原样保留，测试逐键断言
+        reasoningEfforts。
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: "A6: 目录状态行显示 source/条数/更新时间，手动刷新按钮可用（刷新中禁用），失败静默保留旧快照并 toast 提示。"
+    result: passed
+    reason:
+      text: 目录状态行 source·数量·更新时间+刷新禁用+手动失败 toast/自动静默，CatalogEntry.context 投影与快照测试齐全。
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: "A7: 往返无损：含手写模型级字段（如 `contextWindow`、`reasoningEfforts`）与 provider
+      级未管理字段（如 `retryPolicy`）的 settings.yaml 经 UI 加载→保存后逐字段原样保留；空模型列表保存后不写
+      `models` 键。"
+    result: passed
+    reason:
+      text: 管理键剥离+extra 逐层透传+空 models 不写键+原子写，4 个 Rust roundtrip/边界测试逐字段断言通过。
+      truncated: false
+  - id: A8
+    source: brief.md
+    text: "A8: 服务高级设置区：headers 键值行增删改、常用头预设、JSON 粘贴导入（同名键合并）、凭据类保留头拒收；timeoutMs
+      正整数校验；reasoning 默认档下拉（未设置/off..max）；保存写入对应字段。"
+    result: passed
+    reason:
+      text: headers 键值行/预设/JSON 合并导入/保留头拒收+timeoutMs 正整数+reasoning 下拉实现齐全，保存测试断言
+        headers 保留。
+      truncated: false
+  - id: A9
+    source: brief.md
+    text: 'A9: 配置导入：模型页"导入配置"入口扫描本机 Claude Code/Codex/OpenCode/CC Switch/Pi
+      五类已知路径（缺失静默跳过不报错），按来源分组展示并分组勾选；导入把所选条目写入 settings.yaml（route
+      键已存在或端点+凭据引用均相同则跳过并计数）；来源为环境变量引用的映射为
+      `apiKeyEnv`，来源为明文密钥值的导入不含凭据声明并在结果中计数提示；页面有未保存修改时先要求保存或撤销；结果 toast 含
+      imported/skipped/failed 计数；全程不展示、不落盘任何密钥明文。'
+    result: passed
+    reason:
+      text: 五源扫描缺失静默、env→apiKeyEnv 映射、literal 只计数不落盘、去重 skipped、dirty 阻断与计数 toast，7 个
+        Rust import 测试+2 个前端测试断言。
+      truncated: false
+  - id: A10
+    source: brief.md
+    text: 'A10: 保存成功文案不宣称"需重启"（按热加载事实改为即时生效表述）；新增文案 en/zh-CN 双语齐全，`node
+      scripts/check-i18n.mjs` 通过。'
+    result: passed
+    reason:
+      text: 页脚与保存 toast 均为热加载即时生效表述（无需重启），新增键 en/zh-CN 双语齐备，check-i18n 通过。
+      truncated: false
+  - id: A11
+    source: brief.md
+    text: "A11: 前端 ModelsView 测试、Rust models 测试（含新增用例）、e2e smoke 全绿。"
+    result: passed
+    reason:
+      text: 前端 14 用例+Rust 模型域 16 用例+e2e smoke models 步骤断言深度达标，Runtime 六项检查本轮以真实 JS
+        入口执行全部通过并记录回执。
+      truncated: false
+builder_handoff:
+  candidate_id: 36b87076-abe2-4a4e-a2d6-fdcdcb55daa1
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:62317203-e405-4631-a0a2-d66f1706303b
+  iteration: 2
+  summary:
+    text: 完成模型模块 PI 式重构（iteration 2
+      修复轮：同一候选代码）：①信息架构重构——默认模型行+更改锚定菜单（按服务分组/搜索/当前项勾选）、AI
+      服务列表（默认/未设凭据徽标、设为默认、编辑、两步删除 3s
+      还原、默认回退与首服务自动设默认）、目录状态行+手动刷新、空状态；②添加/编辑对话框——预设选择器（pi-ai 内置目录生成物
+      model-presets.generated.ts，脚本 gen:model-presets）、URL
+      形校验+尾路径剥离、保存门控、路由键命中内置目录提示；③模型双栏——左栏上游拉取∪目录候选（搜索/全选
+      indeterminate/错误归类静态文案）、右栏已选模型高级面板（别名/上下文窗口/最大输出/推理档 chips+wire
+      拼写/图片输入三态、手写 false 与自定义模态原样保留）；④数据层对齐 dsh schema——ProviderConfig 管理键扩至
+      8（+headers/timeoutMs/reasoning）、新增 ModelEntry
+      结构化模型条目（id/name/contextWindow/maxTokens/input/reasoningEfforts untagged
+      枚举）、非管理键 provider 级与条目级逐层透传、空 models 不写键、WrongType 管理键丢弃、CatalogEntry 增
+      context 供 token 缩写；⑤配置导入——model_import.rs
+      五源扫描（claude-code/codex/opencode/pi/cc-switch）、env
+      引用→apiKeyEnv、明文只计数不读取不落盘、占位值视同无凭据、端点+凭据引用去重、model_config_import_scan/run
+      IPC；⑥热加载文案（不再宣称需重启）、i18n en/zh-CN 全量重整（124 模型键、死键清除）。本轮处理 A1–A11
+      全部验收项。处理了复核（独立只读复核）发现的 2 major（图片输入 custom 态被改写、保留头未真正拒收）与 7
+      minor（往返边界测试、菜单当前项勾选、导入 toast failed
+      计数与级别、空模型服务的设默认死角、编辑态路由改名原位替换、透传序列化失败日志、A5 默认档子项的 schema 事实修订并同步
+      brief/spec）。开发期检查：cargo test 192 通过、clippy -D warnings 干净、tsc 干净、vitest
+      132 通过（ModelsView 14 用例）、check-i18n 通过、e2e smoke 9 步全过。 本轮无代码改动；上轮 Verify
+      拒绝原因是检查执行方式配置错误（pnpm .bin 下的 tsc/vitest shim 脚本不能经 node 直跑），本轮仅修正检查计划 argv
+      为真实 JS 入口（node_modules/typescript/bin/tsc、node_modules/vitest/vitest.mjs）。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+    - A11
+  checks:
+    - name:
+        text: cargo test (src-tauri)
+        truncated: false
+      result: passed
+      note:
+        text: 192 passed, 1 ignored
+        truncated: false
+    - name:
+        text: cargo clippy --all-targets -- -D warnings
+        truncated: false
+      result: passed
+      note:
+        text: clean
+        truncated: false
+    - name:
+        text: tsc (frontend typecheck)
+        truncated: false
+      result: passed
+      note:
+        text: clean
+        truncated: false
+    - name:
+        text: vitest run
+        truncated: false
+      result: passed
+      note:
+        text: 132 passed across 9 files
+        truncated: false
+    - name:
+        text: node scripts/check-i18n.mjs
+        truncated: false
+      result: passed
+      note:
+        text: 570 frontend keys, no missing/dead
+        truncated: false
+    - name:
+        text: node e2e/smoke.mjs
+        truncated: false
+      result: passed
+      note:
+        text: 9 steps passed
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: 每模型默认档无 dsh schema 字段承载：A5 原文该子项经复核修订移除（brief/spec 已同步），默认档由 provider 级
+        reasoning 与 agent-default-model.reasoningEffort 两级表达
+      truncated: false
+    - text: 继承目录形态（空 models）的首个服务不自动设为默认：无模型可选，设默认会落入 defaultModel=null
+        的保存死角；行内设为默认仅对有模型的服务出现
+      truncated: false
+    - text: CC Switch 导入仅支持 legacy config.json 形态（sqlite 需 rusqlite 依赖，不在本轮）
+      truncated: false
+    - text: 模型发现为手动获取列表（A4 定稿语义），未做 PI 式 600ms 防抖自动拉取
+      truncated: false
+    - text: token 缩写来自 models.dev 快照 context 字段：旧快照（本轮前生成）缺该字段时不显示缩写，刷新后恢复
+      truncated: false
+  known_limits_truncated: false
+  review:
+    status: passed
+    summary:
+      text: 修复轮独立只读复核（新执行）：确认工作区改动即上轮已通过复核的完整候选、无新代码混入；上轮 tsc/vitest 失败确系 pnpm .bin
+        shell shim 不能经 node
+        直跑；修正后的检查入口（node_modules/typescript/bin/tsc、node_modules/vitest/vitest.mjs，均为
+        JS）静态确认有效。
+      truncated: false
+    reviewer_execution_ref: repair-review-20260910-073819
+  submitted_at: 2026-09-09T23:38:36.725Z
+blockers: []
+verification:
+  candidate_id: 36b87076-abe2-4a4e-a2d6-fdcdcb55daa1
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:c85b5d83-ac0c-4480-80ed-e0538a358741
+  iteration: 2
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: cargo-test
+      name:
+        text: cargo test
+        truncated: false
+      argv_display:
+        - text: test
+          truncated: false
+      argv_truncated: false
+      cwd_ref: src-tauri
+      status: passed
+      exit_code: 0
+      duration_ms: 2116
+    - id: cargo-clippy
+      name:
+        text: cargo clippy -D warnings
+        truncated: false
+      argv_display:
+        - text: clippy
+          truncated: false
+        - text: --all-targets
+          truncated: false
+        - text: --
+          truncated: false
+        - text: -D
+          truncated: false
+        - text: warnings
+          truncated: false
+      argv_truncated: false
+      cwd_ref: src-tauri
+      status: passed
+      exit_code: 0
+      duration_ms: 454
+    - id: tsc
+      name:
+        text: frontend typecheck
+        truncated: false
+      argv_display:
+        - text: node_modules/typescript/bin/tsc
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 1436
+    - id: vitest
+      name:
+        text: vitest run
+        truncated: false
+      argv_display:
+        - text: node_modules/vitest/vitest.mjs
+          truncated: false
+        - text: run
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 3880
+    - id: check-i18n
+      name:
+        text: check-i18n
+        truncated: false
+      argv_display:
+        - text: scripts/check-i18n.mjs
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 75
+    - id: e2e-smoke
+      name:
+        text: e2e smoke
+        truncated: false
+      argv_display:
+        - text: e2e/smoke.mjs
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 3051
+  summary:
+    text: 候选代码与上轮验收对象一致，A1–A11 抽验全部成立：每项均有实现证据与测试断言支撑，Runtime 六项检查本轮以真实 JS
+      入口执行全部通过，判定通过。
+    truncated: false
+  risks:
+    - text: URL 形校验与尾路径剥离无组件级测试断言（仅实现证据）
+      truncated: false
+    - text: HeadersEditor 保留头拒收与 JSON 合并无组件级测试（仅保存往返断言 headers 保留）
+      truncated: false
+    - text: 两步删除的 3 秒超时自动还原/失焦取消分支无显式测试断言
+      truncated: false
+    - text: CC Switch 导入仅支持 legacy config.json（sqlite 不扫）
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-09T23:45:24.756Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native confirmed acceptance criteria changed
+      truncated: false
+    completed_at: 2026-09-09T23:11:51.090Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 1
+    outcome: execution-error
+    unresolved_ids: []
+    summary:
+      text: "Native Verifier response was invalid: Native verification cannot pass
+        before every required check succeeds"
+      truncated: false
+    completed_at: 2026-09-09T23:33:26.100Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 1
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Verifier 最终结果被拒（tsc/vitest 两项检查在 Runtime 执行时因 pnpm .bin shim 不能经 node
+        直跑而失败，属检查执行方式配置错误，非代码问题）。按协议回 Build 重交候选：代码不变，修正检查计划
+        argv（typescript/bin/tsc 与 vitest/vitest.mjs 真实入口）后重新进入 Verify。
+      truncated: false
+    completed_at: 2026-09-09T23:37:16.546Z
+  - goal_cycle: 2
+    iteration: 2
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 候选代码与上轮验收对象一致，A1–A11 抽验全部成立：每项均有实现证据与测试断言支撑，Runtime 六项检查本轮以真实 JS
+        入口执行全部通过，判定通过。
+      truncated: false
+    completed_at: 2026-09-09T23:45:24.756Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: false
+created_at: 2026-09-09T21:33:29.386Z
