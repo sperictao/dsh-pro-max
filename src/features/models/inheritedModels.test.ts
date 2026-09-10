@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderConfig } from "@/shared/types";
-import { firstProviderModelId, MODEL_PRESETS, providerModelChoices } from "./shared";
+import {
+  firstProviderModelId,
+  MODEL_PRESETS,
+  providerConnectionTarget,
+  providerModelChoices,
+} from "./shared";
 
 function provider(overrides: Partial<ProviderConfig>): ProviderConfig {
   return {
@@ -54,5 +59,26 @@ describe("inherited provider model choices", () => {
   it("does not invent inherited models for an unknown custom route", () => {
     expect(providerModelChoices(provider({ route: "my-local-gateway" }))).toEqual([]);
     expect(firstProviderModelId(provider({ route: "my-local-gateway" }))).toBeNull();
+  });
+
+  it("resolves inherited endpoint, protocol and model without materializing them", () => {
+    const preset = MODEL_PRESETS.find((item) => item.id === "openai")!;
+    const inherited = provider({ baseURL: null, api: null });
+    expect(providerConnectionTarget(inherited)).toEqual({
+      baseURL: preset.baseUrl,
+      api: preset.api,
+      model: preset.modelIds[0],
+    });
+    expect(inherited.models).toEqual([]);
+    expect(inherited.baseURL).toBeNull();
+    expect(inherited.api).toBeNull();
+  });
+
+  it("requires a model for custom connection tests", () => {
+    expect(
+      providerConnectionTarget(
+        provider({ route: "my-local-gateway", baseURL: "http://127.0.0.1:1234/v1" }),
+      ),
+    ).toBeNull();
   });
 });
