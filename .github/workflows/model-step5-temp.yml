@@ -1,0 +1,32 @@
+name: Temp model step5 patch
+
+on:
+  push:
+    branches: [fix/models-step5-test-connection]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/models-step5-test-connection
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Apply Step 5 patch
+        run: node scripts/step5-apply-temp.mjs
+      - name: Commit Step 5 source changes
+        run: |
+          git add src-tauri/src/model_remote.rs src-tauri/src/main.rs src/shared/commands.ts src/shared/i18n/en.ts src/shared/i18n/zh-CN.ts src/features/models/shared.ts src/features/models/inheritedModels.test.ts src/features/models/ModelsView.tsx src/features/models/ProviderDialog.tsx src/features/models/ModelsView.connection.test.tsx src/features/models/ProviderDialog.connection.test.tsx
+          if git diff --cached --quiet; then
+            echo "Step 5 source already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat(models): add dedicated provider connection test [skip ci]"
+          git push origin HEAD:fix/models-step5-test-connection
