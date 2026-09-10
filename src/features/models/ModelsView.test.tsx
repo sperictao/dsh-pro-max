@@ -68,6 +68,9 @@ beforeEach(() => {
   vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
   vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(catalog);
   vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
+  vi.spyOn(cmd, "modelEnvStatus").mockImplementation(async (names) =>
+    Object.fromEntries(names.map((name) => [name, true])),
+  );
 });
 
 describe("ModelsView provider studio", () => {
@@ -77,6 +80,7 @@ describe("ModelsView provider studio", () => {
 
     await waitFor(() => expect(screen.getByTestId("default-model-summary")).toBeInTheDocument());
     expect(screen.getByTestId("default-model-summary")).toHaveTextContent("Spero AI · glm-5.2");
+    expect(screen.getByTestId("default-provider-readiness")).toHaveAttribute("data-readiness", "ready");
     expect(screen.getByText("default")).toBeInTheDocument();
     expect(screen.getByText(/proxy\.example\.com/)).toBeInTheDocument();
     expect(screen.getByText("glm-5.2")).toBeInTheDocument();
@@ -135,6 +139,7 @@ describe("ModelsView provider studio", () => {
 
     expect(within(dialog).getByLabelText("API Key Env Var")).toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Route key")).not.toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("API Key Env Var"), "DEEPSEEK_API_KEY");
 
     const leftList = within(dialog).getByRole("list", { name: "Models from this service" });
     await user.click(within(leftList).getByRole("checkbox", { name: "deepseek-v4-pro" }));
@@ -213,6 +218,54 @@ describe("ModelsView provider studio", () => {
       ),
     );
     expect(useAppStore.getState().toasts.at(-1)?.message).toContain("2 models");
+  });
+
+  it("excludes a provider with a missing env from defaults while allowing an anonymous custom provider", async () => {
+    loadWith({
+      defaultProvider: "openai",
+      defaultModel: "gpt-test",
+      defaultReasoningEffort: null,
+      providers: [
+        {
+          route: "openai",
+          displayName: "OpenAI",
+          baseURL: "https://api.openai.com/v1",
+          api: "openai-responses",
+          apiKeyEnv: "MISSING_OPENAI_KEY",
+          models: [{ id: "gpt-test", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
+          headers: null,
+          timeoutMs: null,
+          reasoning: null,
+          extra: null,
+        },
+        {
+          route: "local-ai",
+          displayName: "Local AI",
+          baseURL: "http://127.0.0.1:11434/v1",
+          api: "openai-completions",
+          apiKeyEnv: null,
+          models: [{ id: "local-model", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
+          headers: null,
+          timeoutMs: null,
+          reasoning: null,
+          extra: null,
+        },
+      ],
+    });
+    vi.mocked(cmd.modelEnvStatus).mockResolvedValue({ MISSING_OPENAI_KEY: false });
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+
+    await waitFor(() => expect(screen.getByTestId("provider-readiness-0")).toHaveAttribute("data-readiness", "missing-env"));
+    expect(screen.getByTestId("provider-readiness-0")).toHaveTextContent("MISSING_OPENAI_KEY: Not set");
+    expect(screen.getByTestId("provider-readiness-1")).toHaveAttribute("data-readiness", "anonymous");
+    expect(screen.getByTestId("default-provider-readiness")).toHaveAttribute("data-readiness", "missing-env");
+
+    await user.click(screen.getByRole("button", { name: "Change" }));
+    const listbox = await screen.findByRole("listbox", { name: "Default model" });
+    expect(within(listbox).queryByText("OpenAI")).not.toBeInTheDocument();
+    expect(within(listbox).getByText("Local AI")).toBeInTheDocument();
+    expect(within(listbox).getByRole("option", { name: /Local AI · local-model/ })).toBeInTheDocument();
   });
 
   it("edits a provider without losing unmanaged provider/model fields", async () => {
