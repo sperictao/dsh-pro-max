@@ -1,0 +1,36 @@
+name: Temp model preset sync
+
+on:
+  push:
+    branches: [fix/models-step4-inherited-defaults]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/models-step4-inherited-defaults
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - run: pnpm install
+      - run: pnpm gen:model-presets
+      - name: Commit generated preset data
+        run: |
+          if git diff --quiet -- src/shared/lib/model-presets.generated.ts; then
+            echo "Generated presets already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/shared/lib/model-presets.generated.ts
+          git commit -m "chore(models): regenerate provider presets"
+          git push origin HEAD:fix/models-step4-inherited-defaults
