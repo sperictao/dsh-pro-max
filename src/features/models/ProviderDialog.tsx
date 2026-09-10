@@ -62,7 +62,7 @@ export function ProviderDialog({
   const knownService = effectivePreset != null;
   const showComposer = isEdit || serviceChosen;
 
-  // 连接三元组/凭据引用变化后，旧拉取结果不再可信。
+  // 连接参数/凭据引用/请求头变化后，旧拉取结果不再可信。
   const revokeRemote = () => {
     setRemote(null);
     setFetchError(null);
@@ -458,7 +458,10 @@ export function ProviderDialog({
                     </div>
                     <div className="flex flex-col gap-1">
                       <span className="text-xs opacity-70">{t("Headers")}</span>
-                      <HeadersEditor headers={draft.headers} onChange={(headers) => patch({ headers })} />
+                      <HeadersEditor
+                        headers={draft.headers}
+                        onChange={(headers) => updateConnection({ headers })}
+                      />
                     </div>
                   </div>
                 </section>
