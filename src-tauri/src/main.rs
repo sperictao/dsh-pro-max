@@ -11,6 +11,7 @@ mod config;
 mod dsh;
 mod i18n;
 mod logging;
+mod model_remote;
 mod tray;
 mod updater;
 mod version;
@@ -248,6 +249,10 @@ pub fn run() {
             dsh::model_catalog_load,
             dsh::model_catalog_refresh,
             dsh::model_remote_list,
+            model_remote::model_env_status,
+            model_remote::model_remote_cache_get,
+            model_remote::model_test_connection,
+            model_remote::model_remote_list_with_headers,
             dsh::model_config_import_scan,
             dsh::model_config_import_run,
             updater::get_updater_config_health,

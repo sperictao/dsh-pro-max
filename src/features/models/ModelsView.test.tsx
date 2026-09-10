@@ -10,9 +10,37 @@ import { ModelsView } from "./ModelsView";
 const catalog: ModelCatalogFile = {
   fetchedAt: Math.floor(Date.now() / 1000),
   entries: [
-    { id: "glm-5.2", name: "GLM-5.2", family: "openai", context: 262144 },
-    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", family: "openai", context: 131072 },
-    { id: "claude-opus-4", name: "Claude Opus 4", family: "anthropic", context: null },
+    {
+      id: "glm-5.2",
+      name: "GLM-5.2",
+      family: "openai",
+      context: 262144,
+      maxTokens: 32768,
+      input: ["text", "image"],
+      reasoning: true,
+      reasoningLevels: ["low", "medium", "high", "max"],
+      capabilities: ["text", "vision", "reasoning"],
+    },
+    {
+      id: "deepseek-v4-pro",
+      name: "DeepSeek V4 Pro",
+      family: "openai",
+      context: 131072,
+      maxTokens: 16384,
+      input: ["text"],
+      reasoning: false,
+      reasoningLevels: [],
+      capabilities: ["text"],
+    },
+    {
+      id: "claude-opus-4",
+      name: "Claude Opus 4",
+      family: "anthropic",
+      context: null,
+      reasoning: true,
+      reasoningLevels: ["low", "medium", "high"],
+      capabilities: ["text", "reasoning"],
+    },
   ],
 };
 
@@ -67,7 +95,11 @@ beforeEach(() => {
   useAppStore.setState({ toasts: [], modelConfigBusy: false });
   vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
   vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(catalog);
+  vi.spyOn(cmd, "modelRemoteCacheGet").mockResolvedValue(null);
   vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
+  vi.spyOn(cmd, "modelEnvStatus").mockImplementation(async (names) =>
+    Object.fromEntries(names.map((name) => [name, true])),
+  );
 });
 
 describe("ModelsView provider studio", () => {
@@ -77,6 +109,7 @@ describe("ModelsView provider studio", () => {
 
     await waitFor(() => expect(screen.getByTestId("default-model-summary")).toBeInTheDocument());
     expect(screen.getByTestId("default-model-summary")).toHaveTextContent("Spero AI · glm-5.2");
+    expect(screen.getByTestId("default-provider-readiness")).toHaveAttribute("data-readiness", "ready");
     expect(screen.getByText("default")).toBeInTheDocument();
     expect(screen.getByText(/proxy\.example\.com/)).toBeInTheDocument();
     expect(screen.getByText("glm-5.2")).toBeInTheDocument();
@@ -98,7 +131,23 @@ describe("ModelsView provider studio", () => {
     const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
     expect(saved.defaultProvider).toBe("spero-ai");
     expect(saved.defaultModel).toBe("kimi-for-coding");
+    expect(saved.defaultReasoningEffort).toBeNull();
     expect(screen.getByTestId("default-model-summary")).toHaveTextContent("Spero AI · kimi-for-coding");
+  });
+
+  it("gates global reasoning options to the default model capability", async () => {
+    loadWith();
+    render(createElement(ModelsView));
+    const select = await screen.findByLabelText("Reasoning Effort");
+
+    expect(select).toHaveAttribute("data-reasoning-capability", "supported");
+    expect(Array.from((select as HTMLSelectElement).options).map((option) => option.value)).toEqual([
+      "",
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
   });
 
   it("persists the global reasoning level immediately", async () => {
@@ -125,7 +174,6 @@ describe("ModelsView provider studio", () => {
 
     await user.click(screen.getByTestId("empty-add-provider"));
     const dialog = await screen.findByRole("dialog");
-    // 未选服务前不暴露路由/Base URL 等底层连接字段。
     expect(within(dialog).queryByLabelText("Route key")).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Base URL")).not.toBeInTheDocument();
 
@@ -136,6 +184,7 @@ describe("ModelsView provider studio", () => {
 
     expect(within(dialog).getByLabelText("API Key Env Var")).toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Route key")).not.toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("API Key Env Var"), "DEEPSEEK_API_KEY");
 
     const leftList = within(dialog).getByRole("list", { name: "Models from this service" });
     await user.click(within(leftList).getByRole("checkbox", { name: "deepseek-v4-pro" }));
@@ -185,15 +234,16 @@ describe("ModelsView provider studio", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Fetch list" }));
     await waitFor(() => expect(remote).toHaveBeenCalledTimes(1));
+    expect(remote.mock.calls[0][3]).toEqual({ "X-Title": "my-app" });
     expect(within(dialog).getByRole("list", { name: "Models from this service" })).toHaveTextContent("kimi-k2");
 
     await user.clear(within(dialog).getByLabelText("API Key Env Var"));
     await user.type(within(dialog).getByLabelText("API Key Env Var"), "NEW_KEY");
-    // 远端结果被撤下，候选立即回到目录投影；再次 Fetch 才使用新凭据。
     expect(within(dialog).getByRole("list", { name: "Models from this service" })).not.toHaveTextContent("kimi-k2");
     await user.click(within(dialog).getByRole("button", { name: "Fetch list" }));
     await waitFor(() => expect(remote).toHaveBeenCalledTimes(2));
     expect(remote.mock.calls[1][2]).toBe("NEW_KEY");
+    expect(remote.mock.calls[1][3]).toEqual({ "X-Title": "my-app" });
   });
 
   it("probes a configured provider directly from its row", async () => {
@@ -209,9 +259,93 @@ describe("ModelsView provider studio", () => {
         "https://proxy.example.com/v1",
         "openai-responses",
         "SPERO_AI_API_KEY",
+        { "X-Title": "my-app" },
       ),
     );
     expect(useAppStore.getState().toasts.at(-1)?.message).toContain("2 models");
+  });
+
+  it("keeps configured-but-keyless built-in providers runtime-ready without launcher probes", async () => {
+    loadWith({
+      defaultProvider: null,
+      defaultModel: null,
+      defaultReasoningEffort: null,
+      providers: [
+        {
+          route: "openai",
+          displayName: "OpenAI",
+          baseURL: "https://api.openai.com/v1",
+          api: "openai-responses",
+          apiKeyEnv: null,
+          models: [{ id: "gpt-test", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
+          headers: null,
+          timeoutMs: null,
+          reasoning: null,
+          extra: null,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-readiness-0")).toHaveAttribute("data-readiness", "provider-auth"),
+    );
+    expect(screen.getByTestId("provider-readiness-0")).toHaveTextContent("Ready · pi-ai");
+    expect(screen.queryByRole("button", { name: "Test connection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fetch list" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Change" }));
+    const listbox = await screen.findByRole("listbox", { name: "Default model" });
+    expect(within(listbox).getByRole("option", { name: /OpenAI · gpt-test/ })).toBeInTheDocument();
+  });
+
+  it("excludes a provider with a missing env from defaults while allowing an anonymous custom provider", async () => {
+    loadWith({
+      defaultProvider: "openai",
+      defaultModel: "gpt-test",
+      defaultReasoningEffort: null,
+      providers: [
+        {
+          route: "openai",
+          displayName: "OpenAI",
+          baseURL: "https://api.openai.com/v1",
+          api: "openai-responses",
+          apiKeyEnv: "MISSING_OPENAI_KEY",
+          models: [{ id: "gpt-test", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
+          headers: null,
+          timeoutMs: null,
+          reasoning: null,
+          extra: null,
+        },
+        {
+          route: "local-ai",
+          displayName: "Local AI",
+          baseURL: "http://127.0.0.1:11434/v1",
+          api: "openai-completions",
+          apiKeyEnv: null,
+          models: [{ id: "local-model", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
+          headers: null,
+          timeoutMs: null,
+          reasoning: null,
+          extra: null,
+        },
+      ],
+    });
+    vi.mocked(cmd.modelEnvStatus).mockResolvedValue({ MISSING_OPENAI_KEY: false });
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+
+    await waitFor(() => expect(screen.getByTestId("provider-readiness-0")).toHaveAttribute("data-readiness", "missing-env"));
+    expect(screen.getByTestId("provider-readiness-0")).toHaveTextContent("MISSING_OPENAI_KEY: Not set");
+    expect(screen.getByTestId("provider-readiness-1")).toHaveAttribute("data-readiness", "anonymous");
+    expect(screen.getByTestId("default-provider-readiness")).toHaveAttribute("data-readiness", "missing-env");
+
+    await user.click(screen.getByRole("button", { name: "Change" }));
+    const listbox = await screen.findByRole("listbox", { name: "Default model" });
+    expect(within(listbox).queryByText("OpenAI")).not.toBeInTheDocument();
+    expect(within(listbox).getByText("Local AI")).toBeInTheDocument();
+    expect(within(listbox).getByRole("option", { name: /Local AI · local-model/ })).toBeInTheDocument();
   });
 
   it("edits a provider without losing unmanaged provider/model fields", async () => {

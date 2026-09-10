@@ -1,22 +1,27 @@
 // 模型双栏：左栏该服务的候选模型（上游拉取 ∪ models.dev 目录，搜索/全选/点选），
-// 右栏已选模型（每条可展开高级面板：显示名/上下文窗口/最大输出/推理档/图片输入）。
-// 端点三元组变更后旧拉取结果不可信，由父组件在变更时撤下（remote 置 null）。
+// 右栏已选模型（每条可展开高级面板：显示名/上下文窗口/最大输出/推理档/原生图片输入/目录 PDF 能力）。
+// 候选列表由 useProviderModels 以 cache-first SWR 提供；连接指纹变化时旧结果立即失效。
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import * as cmd from "@/shared/commands";
 import { BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import {
-  catalogIndex,
   EFFORT_OPTIONS,
   emptyModelEntry,
   fmtTokens,
   familyOf,
   inputView,
   reasoningView,
-  SUGGESTION_LIMIT,
 } from "./shared";
+
+const modelIdKey = (id: string) => id.toLowerCase();
+
+// 左侧候选行是单行 28px；大列表只渲染视口附近节点，完整 candidates 仍承担搜索/全选语义。
+const CANDIDATE_ROW_HEIGHT = 28;
+const CANDIDATE_VIEWPORT_HEIGHT = 256;
+const CANDIDATE_OVERSCAN = 4;
+const CANDIDATE_VIRTUALIZE_AT = 40;
 
 export function ModelPanes({
   provider,
@@ -40,16 +45,26 @@ export function ModelPanes({
   const [customId, setCustomId] = useState("");
   const [customError, setCustomError] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const index = useMemo(() => catalogIndex(catalog), [catalog]);
+  const [candidateScrollTop, setCandidateScrollTop] = useState(0);
+  const candidateListRef = useRef<HTMLUListElement>(null);
+  const index = useMemo(
+    () => new Map(catalog.map((entry) => [modelIdKey(entry.id), entry] as const)),
+    [catalog],
+  );
 
-  const selectedIds = new Set(provider.models.map((m) => m.id));
+  const selectedIds = new Set(provider.models.map((m) => modelIdKey(m.id)));
   const family = familyOf(provider.api);
 
   // 候选池：上游拉取优先；未拉取时回落目录按协议家族过滤
   const candidates = useMemo(() => {
-    const pool: { id: string; name: string; context: number | null }[] = [];
+    const pool = new Map<string, { id: string; name: string; context: number | null }>();
     const push = (id: string, name?: string, context?: number | null) => {
-      pool.push({ id, name: name ?? id, context: context ?? index.get(id)?.context ?? null });
+      const key = modelIdKey(id);
+      pool.set(key, {
+        id,
+        name: name ?? id,
+        context: context ?? index.get(key)?.context ?? null,
+      });
     };
     if (remote) {
       for (const id of remote) push(id);
@@ -58,26 +73,60 @@ export function ModelPanes({
         if (!family || e.family === family) push(e.id, e.name, e.context);
       }
     }
-    const q = query.trim().toLowerCase();
-    const matched = q
-      ? pool.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
-      : pool;
-    // 已选模型也出现在左栏（勾选态），便于对照
+    // Model ID identity follows PI-Desktop: case-insensitive for merging/selection, original spelling for display/save.
+    // 已选但上游/目录不再返回的模型仍保留在完整候选池，未搜索时可继续对照和取消。
     for (const m of provider.models) {
-      if (!matched.some((e) => e.id === m.id)) {
-        matched.push({ id: m.id, name: index.get(m.id)?.name ?? m.name ?? m.id, context: index.get(m.id)?.context ?? null });
+      const key = modelIdKey(m.id);
+      if (!pool.has(key)) {
+        pool.set(key, {
+          id: m.id,
+          name: index.get(key)?.name ?? m.name ?? m.id,
+          context: index.get(key)?.context ?? null,
+        });
       }
     }
-    return matched.slice(0, SUGGESTION_LIMIT);
+    const q = query.trim().toLowerCase();
+    const rows = [...pool.values()];
+    const visible = q
+      ? rows.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
+      : rows;
+    return visible;
   }, [remote, catalog, family, query, provider.models, index]);
 
-  const visibleSelected = candidates.filter((e) => selectedIds.has(e.id));
+  useEffect(() => {
+    // 上游/目录切换会改变候选顺序；回到顶部避免保留一个已经无意义的旧滚动位置。
+    setCandidateScrollTop(0);
+    if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
+  }, [remote, catalog, family]);
+
+  const candidateWindow = useMemo(() => {
+    if (candidates.length <= CANDIDATE_VIRTUALIZE_AT) {
+      return { start: 0, end: candidates.length, top: 0, bottom: 0 };
+    }
+    const visibleRows = Math.ceil(CANDIDATE_VIEWPORT_HEIGHT / CANDIDATE_ROW_HEIGHT);
+    const firstVisible = Math.floor(candidateScrollTop / CANDIDATE_ROW_HEIGHT);
+    const start = Math.max(0, firstVisible - CANDIDATE_OVERSCAN);
+    const end = Math.min(
+      candidates.length,
+      firstVisible + visibleRows + CANDIDATE_OVERSCAN,
+    );
+    return {
+      start,
+      end,
+      top: start * CANDIDATE_ROW_HEIGHT,
+      bottom: (candidates.length - end) * CANDIDATE_ROW_HEIGHT,
+    };
+  }, [candidates.length, candidateScrollTop]);
+  const renderedCandidates = candidates.slice(candidateWindow.start, candidateWindow.end);
+
+  const visibleSelected = candidates.filter((e) => selectedIds.has(modelIdKey(e.id)));
   const allChecked = visibleSelected.length > 0 && visibleSelected.length === candidates.length;
   const someChecked = visibleSelected.length > 0 && visibleSelected.length < candidates.length;
 
   const toggle = (id: string) => {
-    if (selectedIds.has(id)) {
-      onModelsChange(provider.models.filter((m) => m.id !== id));
+    const key = modelIdKey(id);
+    if (selectedIds.has(key)) {
+      onModelsChange(provider.models.filter((m) => modelIdKey(m.id) !== key));
     } else {
       onModelsChange([...provider.models, emptyModelEntry(id)]);
     }
@@ -85,11 +134,11 @@ export function ModelPanes({
 
   const toggleAll = () => {
     if (allChecked) {
-      const visible = new Set(candidates.map((e) => e.id));
-      onModelsChange(provider.models.filter((m) => !visible.has(m.id)));
+      const visible = new Set(candidates.map((e) => modelIdKey(e.id)));
+      onModelsChange(provider.models.filter((m) => !visible.has(modelIdKey(m.id))));
     } else {
       const additions = candidates
-        .filter((e) => !selectedIds.has(e.id))
+        .filter((e) => !selectedIds.has(modelIdKey(e.id)))
         .map((e) => emptyModelEntry(e.id));
       onModelsChange([...provider.models, ...additions]);
     }
@@ -101,7 +150,7 @@ export function ModelPanes({
       setCustomError(true);
       return;
     }
-    if (selectedIds.has(id)) {
+    if (selectedIds.has(modelIdKey(id))) {
       setCustomError(true);
       return;
     }
@@ -144,7 +193,11 @@ export function ModelPanes({
         <input
           className={INPUT}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setCandidateScrollTop(0);
+            if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
+          }}
           placeholder={t("Search model ID…")}
           aria-label={t("Search model ID…")}
         />
@@ -164,13 +217,31 @@ export function ModelPanes({
             {t("This service returned no models. Add a model ID below.")}
           </p>
         )}
-        <ul className="max-h-64 overflow-y-auto" aria-label={t("Models from this service")}>
-          {candidates.map((e) => {
-            const checked = selectedIds.has(e.id);
+        <ul
+          ref={candidateListRef}
+          className="max-h-64 overflow-y-auto"
+          aria-label={t("Models from this service")}
+          onScroll={(event) => setCandidateScrollTop(event.currentTarget.scrollTop)}
+          data-total-count={candidates.length}
+          data-rendered-count={renderedCandidates.length}
+        >
+          {candidateWindow.top > 0 && (
+            <li aria-hidden="true" role="presentation" style={{ height: candidateWindow.top }} />
+          )}
+          {renderedCandidates.map((e, offset) => {
+            const checked = selectedIds.has(modelIdKey(e.id));
             const tokens = fmtTokens(e.context);
+            const absoluteIndex = candidateWindow.start + offset;
             return (
-              <li key={e.id}>
-                <label className="flex cursor-pointer items-baseline gap-2 rounded px-1 py-1 text-sm hover:bg-accent">
+              <li
+                key={e.id}
+                aria-posinset={absoluteIndex + 1}
+                aria-setsize={candidates.length}
+              >
+                <label
+                  className="flex cursor-pointer items-baseline gap-2 rounded px-1 py-1 text-sm hover:bg-accent"
+                  style={{ height: CANDIDATE_ROW_HEIGHT }}
+                >
                   <input
                     type="checkbox"
                     checked={checked}
@@ -186,6 +257,9 @@ export function ModelPanes({
               </li>
             );
           })}
+          {candidateWindow.bottom > 0 && (
+            <li aria-hidden="true" role="presentation" style={{ height: candidateWindow.bottom }} />
+          )}
           {candidates.length === 0 && query.trim() && (
             <li className="px-1 py-2 text-xs opacity-60">{t("No matching models")}</li>
           )}
@@ -232,7 +306,7 @@ export function ModelPanes({
         )}
         <ul className="flex flex-col gap-1 overflow-y-auto" aria-label={t("Model settings")}>
           {provider.models.map((m) => {
-            const tokens = fmtTokens(index.get(m.id)?.context ?? null);
+            const tokens = fmtTokens(index.get(modelIdKey(m.id))?.context ?? null);
             const isExpanded = expanded === m.id;
             const view = reasoningView(m);
             return (
@@ -260,7 +334,11 @@ export function ModelPanes({
                   </button>
                 </div>
                 {isExpanded && (
-                  <ModelAdvancedPanel model={m} onChange={(patch) => patchModel(m.id, patch)} />
+                  <ModelAdvancedPanel
+                    model={m}
+                    catalogEntry={index.get(modelIdKey(m.id)) ?? null}
+                    onChange={(patch) => patchModel(m.id, patch)}
+                  />
                 )}
                 {view.kind === "disabled" && (
                   <p className="px-2 pb-1.5 text-xs opacity-60">
@@ -280,9 +358,11 @@ export function ModelPanes({
 
 function ModelAdvancedPanel({
   model,
+  catalogEntry,
   onChange,
 }: {
   model: ModelEntry;
+  catalogEntry: ModelCatalogEntry | null;
   onChange: (patch: Partial<ModelEntry>) => void;
 }) {
   const { t } = useTranslation();
@@ -290,6 +370,11 @@ function ModelAdvancedPanel({
   const levels = view.kind === "levels" ? view.levels : new Map<string, string | null>();
   const enabledLevels = EFFORT_OPTIONS.filter((l) => levels.has(l));
   const iview = inputView(model);
+  const publishedCapabilities = new Set(catalogEntry?.capabilities ?? []);
+  const publishedVision =
+    publishedCapabilities.has("vision") || Boolean(catalogEntry?.input?.includes("image"));
+  const publishedPdf =
+    publishedCapabilities.has("pdf") || Boolean(catalogEntry?.input?.includes("pdf"));
 
   const toggleLevel = (level: string) => {
     const base = view.kind === "levels" ? levels : new Map<string, string | null>();
@@ -309,7 +394,7 @@ function ModelAdvancedPanel({
   };
 
   const setInputView = (next: "inherit" | "text" | "text-image" | "custom") => {
-    // custom = 手写模态列表（如 ["audio"]）：无对应三态投影，保持原样不动
+    // custom = 非 llm-pi-ai 原生模态（如 pdf/audio）或无法无损投影的手写列表：保持原样。
     if (next === "custom") return;
     onChange({ input: next === "inherit" ? null : next === "text" ? ["text"] : ["text", "image"] });
   };
@@ -391,6 +476,24 @@ function ModelAdvancedPanel({
           </div>
         )}
       </div>
+      {(publishedVision || publishedPdf) && (
+        <div className="flex flex-col gap-1" data-testid="published-input-capabilities">
+          <span className="text-xs opacity-70">{t("Published capabilities")}</span>
+          <div className="flex flex-wrap gap-1">
+            {publishedVision && (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{t("Vision")}</span>
+            )}
+            {publishedPdf && <span className="rounded bg-muted px-1.5 py-0.5 text-xs">PDF</span>}
+          </div>
+          {publishedPdf && (
+            <p className="text-xs opacity-60">
+              {t(
+                "PDF is catalog metadata only. DSH uploads documents as file references; llm-pi-ai does not send PDF content blocks.",
+              )}
+            </p>
+          )}
+        </div>
+      )}
       <label className="flex flex-col gap-1 text-xs opacity-70">
         {t("Image input")}
         <select
@@ -406,13 +509,5 @@ function ModelAdvancedPanel({
         </select>
       </label>
     </div>
-  );
-}
-
-export async function fetchProviderModels(provider: ProviderConfig): Promise<string[]> {
-  return await cmd.modelRemoteList(
-    provider.baseURL ?? "",
-    provider.api ?? null,
-    provider.apiKeyEnv ?? null,
   );
 }

@@ -105,10 +105,42 @@ export const modelConfigSave = (config: ModelConfig) => invokeTyped<void>("model
 // models.dev 全量目录：load 读本地快照（缺失/损坏为 null），refresh 拉取并落快照
 export const modelCatalogLoad = () => invokeTyped<ModelCatalogFile | null>("model_catalog_load");
 export const modelCatalogRefresh = () => invokeTyped<ModelCatalogFile>("model_catalog_refresh");
-// 上游模型列表（兼连通性验证）；密钥经环境变量名解析，值不落盘
-export const modelRemoteList = (baseURL: string, api: string | null, apiKeyEnv: string | null) =>
+// launcher 进程环境中的密钥引用状态；只返回 env name -> available，不返回 secret。
+export const modelEnvStatus = (names: string[]) =>
+  invokeTyped<Record<string, boolean>>("model_env_status", { names });
+export type ProviderModelsCacheEntry = { models: string[]; fetchedAt: number };
+// Provider 模型发现缓存：按连接指纹读取，只返回模型 ID 与时间戳。
+export const modelRemoteCacheGet = (
+  baseURL: string,
+  api: string | null,
+  apiKeyEnv: string | null,
+  headers: Record<string, string | undefined> | null = null,
+) =>
+  invokeTyped<ProviderModelsCacheEntry | null>("model_remote_cache_get", {
+    baseUrl: baseURL,
+    api,
+    apiKeyEnv,
+    headers,
+  });
+// 独立连接测试：向真实推理端点发送最多 16 个输出 token 的最小请求；不依赖 /models。
+export const modelTestConnection = (
+  baseURL: string,
+  api: string,
+  apiKeyEnv: string | null,
+  headers: Record<string, string | undefined> | null,
+  model: string,
+) =>
+  invokeTyped<void>("model_test_connection", { baseUrl: baseURL, api, apiKeyEnv, headers, model });
+// 上游模型列表仅负责模型发现；密钥经环境变量名解析，普通 Provider headers 一并发送，
+// 凭据类保留头由 Rust 层再次过滤，不能覆盖 apiKeyEnv 认证。
+export const modelRemoteList = (
+  baseURL: string,
+  api: string | null,
+  apiKeyEnv: string | null,
+  headers: Record<string, string | undefined> | null = null,
+) =>
   // Tauri 按 camelCase 形参名取参：base_url → baseUrl（baseURL 永不命中）
-  invokeTyped<string[]>("model_remote_list", { baseUrl: baseURL, api, apiKeyEnv });
+  invokeTyped<string[]>("model_remote_list_with_headers", { baseUrl: baseURL, api, apiKeyEnv, headers });
 // 配置导入：扫描本机其他工具的 provider 声明（缺失来源静默为空组），按 key 导入
 export const modelConfigImportScan = () => invokeTyped<ImportGroup[]>("model_config_import_scan");
 export const modelConfigImportRun = (keys: string[]) =>
