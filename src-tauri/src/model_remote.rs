@@ -69,7 +69,7 @@ fn apply_provider_headers(
             if name.trim().is_empty() || is_reserved_header(name) {
                 continue;
             }
-            request = request.header(name, value);
+            request = request.header(name.as_str(), value.as_str());
         }
     }
     request
@@ -115,8 +115,8 @@ fn fetch_remote_models(
         request = request.bearer_auth(key);
     }
 
-    // 普通自定义头最后应用，允许覆盖 User-Agent / anthropic-version 等非凭据头；
-    // Authorization / x-api-key / Cookie / Proxy-Authorization 永远由认证层掌控。
+    // 普通自定义头最后应用；Authorization / x-api-key / Cookie /
+    // Proxy-Authorization 永远由认证层掌控。
     request = apply_provider_headers(request, headers);
 
     let response = request.send().map_err(|e| {
@@ -180,7 +180,13 @@ mod tests {
         let request = apply_provider_headers(client.get("http://127.0.0.1/"), Some(&headers))
             .build()
             .unwrap();
-        assert_eq!(request.headers().get("x-title").unwrap(), "my-app");
+        assert_eq!(
+            request
+                .headers()
+                .get("x-title")
+                .and_then(|value| value.to_str().ok()),
+            Some("my-app")
+        );
         assert!(request.headers().get("authorization").is_none());
         assert!(request.headers().get("x-api-key").is_none());
     }
