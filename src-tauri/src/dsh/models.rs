@@ -548,7 +548,8 @@ pub fn model_config_save(config: ModelConfig) -> Result<(), String> {
 
 // ============ 模型目录（models.dev 全量快照）============
 
-/// models.dev 投影条目：模型 id + 展示名 + 协议家族 + 上下文窗口
+/// models.dev 投影条目：模型身份 + 核心容量/能力元数据。
+/// 新增字段保持 optional，使旧快照仍可反序列化；新投影会完整填充这些字段。
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/shared/bindings/")]
@@ -561,6 +562,26 @@ pub struct CatalogEntry {
     #[serde(default)]
     #[ts(type = "number | null")]
     pub context: Option<i64>,
+    /// 最大输出 token；旧快照/目录未发布时省略。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub max_tokens: Option<i64>,
+    /// 已发布的输入模态（text/image/pdf/...）；未发布时省略。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input: Option<Vec<String>>,
+    /// models.dev 对 reasoning 的显式声明；未发布时省略而不是猜测。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reasoning: Option<bool>,
+    /// 规范化后的 reasoning 档位；none 归一为 off，按 dsh canonical order 排序。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reasoning_levels: Option<Vec<String>>,
+    /// 核心能力投影：text/vision/pdf/audio/video/tools/attachments/reasoning/json。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub capabilities: Option<Vec<String>>,
 }
 
 /// 目录快照：缓存不是事实来源，fetched_at 供过期判断
@@ -588,12 +609,42 @@ struct ModelsDevModel {
     name: Option<String>,
     #[serde(default)]
     limit: Option<ModelsDevLimit>,
+    #[serde(default)]
+    reasoning: Option<bool>,
+    #[serde(default)]
+    reasoning_options: Option<Vec<ModelsDevReasoningOption>>,
+    #[serde(default)]
+    modalities: Option<ModelsDevModalities>,
+    #[serde(default)]
+    attachment: Option<bool>,
+    #[serde(default)]
+    tool_call: Option<bool>,
+    #[serde(default)]
+    structured_output: Option<bool>,
 }
 
 #[derive(Deserialize)]
 struct ModelsDevLimit {
     #[serde(default)]
     context: Option<i64>,
+    #[serde(default)]
+    output: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct ModelsDevReasoningOption {
+    #[serde(default, rename = "type")]
+    kind: Option<String>,
+    #[serde(default)]
+    values: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Deserialize)]
+struct ModelsDevModalities {
+    #[serde(default)]
+    input: Vec<String>,
+    #[serde(default)]
+    output: Vec<String>,
 }
 
 /// family 归类：anthropic 官方键 → anthropic，其余（含 google）→ openai
@@ -605,8 +656,85 @@ fn catalog_family(provider_key: &str) -> &'static str {
     }
 }
 
-/// 解析 models.dev api.json 并投影：提取 {id,name,family}、按 id 去重（first-wins）、
-/// 按 id 排序保证快照稳定；无 id 的条目丢弃
+const REASONING_LEVEL_ORDER: [&str; 7] =
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+fn normalize_reasoning_level(value: &str) -> Option<&'static str> {
+    let normalized = if value == "none" { "off" } else { value };
+    REASONING_LEVEL_ORDER
+        .iter()
+        .copied()
+        .find(|level| *level == normalized)
+}
+
+/// 与 PI-Desktop 的 models.dev 规则对齐：显式 values 转 canonical level；
+/// toggle / budget_tokens 至少支持 off + medium；仅声明 reasoning=true 而没有
+/// option 时采用 low/medium/high 的保守默认档。
+fn catalog_reasoning_levels(model: &ModelsDevModel) -> Option<Vec<String>> {
+    match model.reasoning {
+        None => None,
+        Some(false) => Some(Vec::new()),
+        Some(true) => {
+            let mut found: Vec<&'static str> = Vec::new();
+            for option in model.reasoning_options.as_deref().unwrap_or_default() {
+                if matches!(option.kind.as_deref(), Some("toggle" | "budget_tokens")) {
+                    found.push("off");
+                    found.push("medium");
+                }
+                for value in option.values.as_deref().unwrap_or_default() {
+                    if let Some(value) = value.as_str().and_then(normalize_reasoning_level) {
+                        found.push(value);
+                    }
+                }
+            }
+            if found.is_empty() {
+                found.extend(["low", "medium", "high"]);
+            }
+            let levels = REASONING_LEVEL_ORDER
+                .iter()
+                .filter(|level| found.contains(level))
+                .map(|level| (*level).to_string())
+                .collect();
+            Some(levels)
+        }
+    }
+}
+
+fn catalog_capabilities(model: &ModelsDevModel) -> Vec<String> {
+    let mut values = vec!["text".to_string()];
+    let mut add = |capability: &str| {
+        if !values.iter().any(|item| item == capability) {
+            values.push(capability.to_string());
+        }
+    };
+    if model.attachment == Some(true) {
+        add("attachments");
+    }
+    if model.tool_call == Some(true) {
+        add("tools");
+    }
+    if model.reasoning == Some(true) {
+        add("reasoning");
+    }
+    if model.structured_output == Some(true) {
+        add("json");
+    }
+    if let Some(modalities) = &model.modalities {
+        for modality in modalities.input.iter().chain(modalities.output.iter()) {
+            match modality.as_str() {
+                "image" => add("vision"),
+                "pdf" => add("pdf"),
+                "audio" => add("audio"),
+                "video" => add("video"),
+                _ => {}
+            }
+        }
+    }
+    values
+}
+
+/// 解析 models.dev api.json 并投影核心模型元数据；按 id 去重（first-wins）、
+/// 按 id 排序保证快照稳定；无 id 的条目丢弃。
 pub(crate) fn project_catalog(raw: &str, fetched_at: i64) -> Result<CatalogFile, String> {
     // BTreeMap：跨 provider 重复 id 的 first-wins 胜者按 provider 键序确定，刷新间不漂移
     let root: BTreeMap<String, ModelsDevProvider> = serde_json::from_str(raw).map_err(|e| {
@@ -617,20 +745,35 @@ pub(crate) fn project_catalog(raw: &str, fetched_at: i64) -> Result<CatalogFile,
     for (provider_key, provider) in root {
         let family = catalog_family(&provider_key);
         for (key, model) in provider.models {
-            let Some(id) = model.id.or(if key.is_empty() { None } else { Some(key) }) else {
+            let Some(id) = model
+                .id
+                .clone()
+                .or(if key.is_empty() { None } else { Some(key) })
+            else {
                 continue;
             };
             if id.trim().is_empty() {
                 continue;
             }
-            by_id
-                .entry(id.clone())
-                .or_insert_with(|| CatalogEntry {
-                    name: model.name.unwrap_or_else(|| id.clone()),
-                    family: family.to_string(),
-                    context: model.limit.and_then(|l| l.context),
-                    id,
-                });
+            let context = model.limit.as_ref().and_then(|limit| limit.context);
+            let max_tokens = model.limit.as_ref().and_then(|limit| limit.output);
+            let input = model
+                .modalities
+                .as_ref()
+                .map(|modalities| modalities.input.clone());
+            let reasoning_levels = catalog_reasoning_levels(&model);
+            let capabilities = catalog_capabilities(&model);
+            by_id.entry(id.clone()).or_insert_with(|| CatalogEntry {
+                name: model.name.clone().unwrap_or_else(|| id.clone()),
+                family: family.to_string(),
+                context,
+                max_tokens,
+                input,
+                reasoning: model.reasoning,
+                reasoning_levels,
+                capabilities: Some(capabilities),
+                id,
+            });
         }
     }
     Ok(CatalogFile {

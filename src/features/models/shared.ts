@@ -167,6 +167,53 @@ export function inputView(entry: ModelEntry): InputView {
   return "custom";
 }
 
+export type ModelReasoningCapability = {
+  kind: "supported" | "unsupported" | "unknown";
+  levels: string[];
+};
+
+const ALL_EFFORTS = new Set<string>(EFFORT_OPTIONS);
+
+/**
+ * 当前 provider/model 的有效推理能力。显式 reasoningEfforts 是最高优先级；
+ * 未声明时继承 models.dev。显式自定义模型又无目录记录时 fail-closed；继承
+ * dsh 内置目录但 models.dev 暂无记录时保持 unknown，避免错误禁用上游能力。
+ */
+export function modelReasoningCapability(
+  provider: ProviderConfig,
+  modelId: string,
+  catalog: ModelCatalogEntry[],
+): ModelReasoningCapability {
+  const configured = provider.models.find((model) => model.id === modelId);
+  if (configured?.reasoningEfforts != null) {
+    if (typeof configured.reasoningEfforts === "boolean") {
+      return { kind: "unsupported", levels: [] };
+    }
+    const levels = EFFORT_OPTIONS.filter((level) =>
+      Object.prototype.hasOwnProperty.call(configured.reasoningEfforts, level),
+    );
+    return levels.length > 0
+      ? { kind: "supported", levels: [...levels] }
+      : { kind: "unsupported", levels: [] };
+  }
+
+  const published = catalog.find((entry) => entry.id === modelId);
+  if (published?.reasoning === false) return { kind: "unsupported", levels: [] };
+  if (published?.reasoning === true) {
+    const levels = (published.reasoningLevels ?? []).filter((level) => ALL_EFFORTS.has(level));
+    const normalized = EFFORT_OPTIONS.filter((level) => levels.includes(level));
+    return {
+      kind: "supported",
+      levels: normalized.length > 0 ? [...normalized] : ["low", "medium", "high"],
+    };
+  }
+  if (published) return { kind: "unknown", levels: [...EFFORT_OPTIONS] };
+
+  return provider.models.length > 0
+    ? { kind: "unsupported", levels: [] }
+    : { kind: "unknown", levels: [...EFFORT_OPTIONS] };
+}
+
 /** 目录按 id 索引（候选元数据查询） */
 export function catalogIndex(catalog: ModelCatalogEntry[]): Map<string, ModelCatalogEntry> {
   return new Map(catalog.map((e) => [e.id, e]));

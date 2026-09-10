@@ -10,9 +10,37 @@ import { ModelsView } from "./ModelsView";
 const catalog: ModelCatalogFile = {
   fetchedAt: Math.floor(Date.now() / 1000),
   entries: [
-    { id: "glm-5.2", name: "GLM-5.2", family: "openai", context: 262144 },
-    { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", family: "openai", context: 131072 },
-    { id: "claude-opus-4", name: "Claude Opus 4", family: "anthropic", context: null },
+    {
+      id: "glm-5.2",
+      name: "GLM-5.2",
+      family: "openai",
+      context: 262144,
+      maxTokens: 32768,
+      input: ["text", "image"],
+      reasoning: true,
+      reasoningLevels: ["low", "medium", "high", "max"],
+      capabilities: ["text", "vision", "reasoning"],
+    },
+    {
+      id: "deepseek-v4-pro",
+      name: "DeepSeek V4 Pro",
+      family: "openai",
+      context: 131072,
+      maxTokens: 16384,
+      input: ["text"],
+      reasoning: false,
+      reasoningLevels: [],
+      capabilities: ["text"],
+    },
+    {
+      id: "claude-opus-4",
+      name: "Claude Opus 4",
+      family: "anthropic",
+      context: null,
+      reasoning: true,
+      reasoningLevels: ["low", "medium", "high"],
+      capabilities: ["text", "reasoning"],
+    },
   ],
 };
 
@@ -103,7 +131,23 @@ describe("ModelsView provider studio", () => {
     const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
     expect(saved.defaultProvider).toBe("spero-ai");
     expect(saved.defaultModel).toBe("kimi-for-coding");
+    expect(saved.defaultReasoningEffort).toBeNull();
     expect(screen.getByTestId("default-model-summary")).toHaveTextContent("Spero AI · kimi-for-coding");
+  });
+
+  it("gates global reasoning options to the default model capability", async () => {
+    loadWith();
+    render(createElement(ModelsView));
+    const select = await screen.findByLabelText("Reasoning Effort");
+
+    expect(select).toHaveAttribute("data-reasoning-capability", "supported");
+    expect(Array.from((select as HTMLSelectElement).options).map((option) => option.value)).toEqual([
+      "",
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
   });
 
   it("persists the global reasoning level immediately", async () => {

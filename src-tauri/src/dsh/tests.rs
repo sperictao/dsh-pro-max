@@ -1275,27 +1275,47 @@ fn run_capture_lines_streams_lines_from_real_process() {
 }
 
 #[test]
+#[ignore] // 仅由 timeout/cancel 回归测试作为子进程夹具显式调用
+fn run_capture_lines_fixture_hangs_after_output() {
+    use std::io::Write;
+    print!("partial\n");
+    std::io::stdout().flush().expect("flush partial output");
+    std::thread::sleep(std::time::Duration::from_secs(30));
+}
+
+#[test]
 fn run_capture_lines_timeout_kills_hung_process() {
-    // 复现：pnpm/dsh 挂死曾让安装 busy 态无限挂起（且无取消）——超时必须
-    // 真正终止等待、保留已捕获的部分输出、以 timed_out 报告。击杀窗给
-    // 800ms：CI 高负载下 node 冷启动可到数百 ms，窗太短会在子进程尚未写入
-    // 时就击杀，"保留部分输出"无从谈起（v0.8.4 的 Linux CI 即此因）；快速
-    // 击杀由总耗时上断言，不靠窗长
-    let Some(node) = which("node") else { return };
+    // 使用当前已编译的测试二进制作为挂起子进程，避免把 Node 冷启动时延
+    // 混入 timeout 语义。夹具先 flush partial，再挂起；2s deadline 只验证
+    // run_capture_lines 能终止挂起进程并保留 deadline 前的 stdout。
+    let exe = std::env::current_exe().expect("current test executable");
+    let exe = exe.to_string_lossy().into_owned();
+    let saw_partial = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let saw_partial_cb = saw_partial.clone();
     let start = std::time::Instant::now();
     let (stdout, _, ok, timed_out) = run_capture_lines(
-        &node,
+        &exe,
         &[
-            "-e",
-            "process.stdout.write('partial\\n'); setTimeout(() => {}, 30000);",
+            "--ignored",
+            "--nocapture",
+            "--exact",
+            "dsh::tests::run_capture_lines_fixture_hangs_after_output",
         ],
-        |_| {},
-        Some(std::time::Duration::from_millis(800)),
+        move |line| {
+            if line.contains("partial") {
+                saw_partial_cb.store(true, std::sync::atomic::Ordering::Release);
+            }
+        },
+        Some(std::time::Duration::from_secs(2)),
         None,
     )
     .unwrap();
     assert!(timed_out, "超时必须以 timed_out 报告");
     assert!(!ok);
+    assert!(
+        saw_partial.load(std::sync::atomic::Ordering::Acquire),
+        "夹具必须在 deadline 前产出 partial"
+    );
     assert!(
         stdout.contains("partial"),
         "超时前已产出的输出要保留: {stdout:?}"
@@ -3453,39 +3473,63 @@ fn install_failure_message_prefers_classification_over_generic_text() {
 
 #[test]
 fn run_capture_lines_cancel_kills_early_and_reports() {
-    // 复现：安装 busy 态无取消曾让用户干等 15 分钟——令牌置位必须在
-    // 轮询粒度内杀进程返回，且保留部分输出。置位延时给 800ms：CI 高负载
-    // 下 node 冷启动可到数百 ms，窗太短会在子进程尚未写入时就击杀（
-    // v0.8.4 的 Linux CI 即此因）；快速击杀由总耗时上断言，不靠窗长
-    let Some(node) = which("node") else { return };
+    // 取消语义从“子进程已产生 partial”这一事实开始，而不是依赖固定 sleep。
+    // 这样验证的是取消响应速度，不受 Node/runner 冷启动与并行调度影响。
+    let exe = std::env::current_exe().expect("current test executable");
+    let exe = exe.to_string_lossy().into_owned();
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let flag = cancel.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(800));
-        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    let saw_partial = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancel_flag = cancel.clone();
+    let ready = saw_partial.clone();
+    let triggered_at = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let triggered_at_thread = triggered_at.clone();
+    let cancel_thread = std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !ready.load(std::sync::atomic::Ordering::Acquire)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        *triggered_at_thread.lock().unwrap() = Some(std::time::Instant::now());
+        cancel_flag.store(true, std::sync::atomic::Ordering::Release);
     });
-    let start = std::time::Instant::now();
+    let saw_partial_cb = saw_partial.clone();
     let (stdout, _, ok, killed) = run_capture_lines(
-        &node,
+        &exe,
         &[
-            "-e",
-            "process.stdout.write('partial\\n'); setTimeout(() => {}, 30000);",
+            "--ignored",
+            "--nocapture",
+            "--exact",
+            "dsh::tests::run_capture_lines_fixture_hangs_after_output",
         ],
-        |_| {},
+        move |line| {
+            if line.contains("partial") {
+                saw_partial_cb.store(true, std::sync::atomic::Ordering::Release);
+            }
+        },
         None,
         Some(&cancel),
     )
     .unwrap();
+    cancel_thread.join().expect("cancel thread");
+    assert!(
+        saw_partial.load(std::sync::atomic::Ordering::Acquire),
+        "取消只应在观察到 partial 后触发"
+    );
     assert!(killed, "取消必须以 killed 报告");
     assert!(!ok);
     assert!(
         stdout.contains("partial"),
         "取消前已产出的输出要保留: {stdout:?}"
     );
+    let cancel_elapsed = triggered_at
+        .lock()
+        .unwrap()
+        .expect("cancel trigger timestamp")
+        .elapsed();
     assert!(
-        start.elapsed() < std::time::Duration::from_secs(5),
-        "取消必须提前终止等待，实际耗时 {:?}",
-        start.elapsed()
+        cancel_elapsed < std::time::Duration::from_secs(2),
+        "取消置位后必须快速终止等待，实际耗时 {cancel_elapsed:?}"
     );
 }
 
@@ -3949,6 +3993,11 @@ fn catalog_snapshot_roundtrip_and_corruption() {
             name: "GLM-5.2".into(),
             family: "openai".into(),
             context: Some(262144),
+            max_tokens: None,
+            input: None,
+            reasoning: None,
+            reasoning_levels: None,
+            capabilities: None,
         }],
     };
     std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
@@ -4163,4 +4212,56 @@ fn import_scan_and_run_merge_into_settings_then_dedupe() {
     assert_eq!(result.skipped, 1);
 
     std::fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn project_catalog_projects_capability_metadata() {
+    let raw = r#"{
+      "openai": {
+        "models": {
+          "gpt-test": {
+            "id": "gpt-test",
+            "name": "GPT Test",
+            "reasoning": true,
+            "reasoning_options": [
+              {"type": "effort", "values": ["none", "low", "high"]}
+            ],
+            "modalities": {"input": ["text", "image", "pdf"], "output": ["text"]},
+            "tool_call": true,
+            "structured_output": true,
+            "attachment": true,
+            "limit": {"context": 200000, "output": 64000}
+          }
+        }
+      }
+    }"#;
+    let file = super::models::project_catalog(raw, 42).unwrap();
+    let model = &file.entries[0];
+    assert_eq!(model.id, "gpt-test");
+    assert_eq!(model.context, Some(200000));
+    assert_eq!(model.max_tokens, Some(64000));
+    assert_eq!(
+        model.input.as_deref(),
+        Some(["text".to_string(), "image".to_string(), "pdf".to_string()].as_slice())
+    );
+    assert_eq!(model.reasoning, Some(true));
+    assert_eq!(
+        model.reasoning_levels.as_deref(),
+        Some(["off".to_string(), "low".to_string(), "high".to_string()].as_slice())
+    );
+    let capabilities = model.capabilities.as_ref().unwrap();
+    for expected in [
+        "text",
+        "vision",
+        "pdf",
+        "tools",
+        "attachments",
+        "reasoning",
+        "json",
+    ] {
+        assert!(
+            capabilities.iter().any(|value| value == expected),
+            "missing {expected}"
+        );
+    }
 }

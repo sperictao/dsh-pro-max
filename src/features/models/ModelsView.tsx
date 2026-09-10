@@ -24,6 +24,7 @@ import {
   EFFORT_OPTIONS,
   firstProviderModelId,
   fmtTokens,
+  modelReasoningCapability,
   providerConnectionTarget,
   providerModelChoices,
 } from "./shared";
@@ -52,6 +53,21 @@ function configValidationError(config: ModelConfig): string | null {
 async function resolveProviderEnvStatus(providers: ProviderConfig[]): Promise<Record<string, boolean>> {
   const names = providerEnvNames(providers);
   return names.length > 0 ? cmd.modelEnvStatus(names) : {};
+}
+
+/** 默认模型变化时同步清理已经不被新模型支持的全局 reasoning level。 */
+function withValidDefaultReasoning(
+  config: ModelConfig,
+  catalog: ModelCatalogEntry[],
+): ModelConfig {
+  const effort = config.defaultReasoningEffort?.trim();
+  if (!effort) return config;
+  const provider = config.providers.find((item) => item.route === config.defaultProvider);
+  const model = config.defaultModel?.trim();
+  if (!provider || !model) return { ...config, defaultReasoningEffort: null };
+  const capability = modelReasoningCapability(provider, model, catalog);
+  if (capability.kind === "unknown" || capability.levels.includes(effort)) return config;
+  return { ...config, defaultReasoningEffort: null };
 }
 
 /** 新增/编辑服务后同步默认引用；纯函数便于保持配置只有一个事实来源。 */
@@ -180,7 +196,13 @@ export function ModelsView() {
         } else {
           setCatalogState("unavailable");
         }
-        if (!file || Date.now() / 1000 - file.fetchedAt >= CATALOG_STALE_SECS) {
+        const missingCapabilityMetadata =
+          file?.entries.some((entry) => entry.capabilities == null) ?? false;
+        if (
+          !file ||
+          missingCapabilityMetadata ||
+          Date.now() / 1000 - file.fetchedAt >= CATALOG_STALE_SECS
+        ) {
           void refreshCatalog(true);
         }
       } catch {
@@ -261,12 +283,28 @@ export function ModelsView() {
   const persistDefault = async (route: string, model: string) => {
     if (!readyRoutes.has(route)) return;
     const current = config ?? EMPTY_CONFIG;
-    await persist({ ...current, defaultProvider: route, defaultModel: model });
+    const next = withValidDefaultReasoning(
+      { ...current, defaultProvider: route, defaultModel: model },
+      catalog,
+    );
+    await persist(next);
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
 
   const persistReasoning = async (value: string) => {
     const current = config ?? EMPTY_CONFIG;
+    if (value) {
+      const provider = current.providers.find((item) => item.route === current.defaultProvider);
+      const model = current.defaultModel?.trim();
+      if (!provider || !model) return;
+      const capability = modelReasoningCapability(provider, model, catalog);
+      if (
+        capability.kind === "unsupported" ||
+        (capability.kind === "supported" && !capability.levels.includes(value))
+      ) {
+        return;
+      }
+    }
     await persist({ ...current, defaultReasoningEffort: value || null });
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
@@ -282,11 +320,14 @@ export function ModelsView() {
         status = status ?? {};
       }
     }
-    const next = upsertProvider(
-      current,
-      provider,
-      originalRoute,
-      providerReadiness(provider, status).ready,
+    const next = withValidDefaultReasoning(
+      upsertProvider(
+        current,
+        provider,
+        originalRoute,
+        providerReadiness(provider, status).ready,
+      ),
+      catalog,
     );
     await persist(next, provider.route);
     setDialog(null);
@@ -313,7 +354,10 @@ export function ModelsView() {
   const removeProvider = async (route: string) => {
     disarmDelete();
     const current = config ?? EMPTY_CONFIG;
-    const next = removeProviderFromConfig(current, route, readyRoutes);
+    const next = withValidDefaultReasoning(
+      removeProviderFromConfig(current, route, readyRoutes),
+      catalog,
+    );
     await persist(next, route);
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
@@ -374,6 +418,24 @@ export function ModelsView() {
   const defaultReadiness = defaultProvider
     ? readinessByRoute.get(defaultProvider.route) ?? null
     : null;
+  const defaultReasoningCapability =
+    defaultProvider && cfg.defaultModel
+      ? modelReasoningCapability(defaultProvider, cfg.defaultModel, catalog)
+      : { kind: "unsupported" as const, levels: [] as string[] };
+  const reasoningOptions =
+    defaultReasoningCapability.kind === "supported"
+      ? defaultReasoningCapability.levels
+      : defaultReasoningCapability.kind === "unknown"
+        ? [...EFFORT_OPTIONS]
+        : [];
+  const currentReasoning = cfg.defaultReasoningEffort ?? "";
+  const invalidCurrentReasoning =
+    Boolean(currentReasoning) && !reasoningOptions.includes(currentReasoning);
+  const reasoningDisabled =
+    busyGlobal ||
+    !defaultProvider ||
+    !cfg.defaultModel ||
+    (defaultReasoningCapability.kind === "unsupported" && !currentReasoning);
 
   return (
     <main className="flex-1 overflow-y-auto p-6" id="models-view">
@@ -431,13 +493,19 @@ export function ModelsView() {
               </div>
               <select
                 className={`${SELECT} w-44`}
-                value={cfg.defaultReasoningEffort ?? ""}
-                disabled={busyGlobal}
+                value={currentReasoning}
+                disabled={reasoningDisabled}
                 onChange={(event) => void persistReasoning(event.target.value).catch(() => undefined)}
                 aria-label={t("Reasoning Effort")}
+                data-reasoning-capability={defaultReasoningCapability.kind}
               >
                 <option value="">{t("Not set")}</option>
-                {EFFORT_OPTIONS.map((value) => (
+                {invalidCurrentReasoning && (
+                  <option value={currentReasoning} disabled>
+                    {currentReasoning}
+                  </option>
+                )}
+                {reasoningOptions.map((value) => (
                   <option key={value} value={value}>
                     {value}
                   </option>
