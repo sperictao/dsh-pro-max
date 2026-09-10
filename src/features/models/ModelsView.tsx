@@ -489,8 +489,9 @@ export function ModelsView() {
               {cfg.providers.map((provider, index) => {
                 const isDefault = provider.route === (cfg.defaultProvider ?? "").trim();
                 const armed = armedDelete === provider.route;
+                const probing = busyRoute === provider.route;
                 const testing = testingRoute === provider.route;
-                const rowBusy = busyRoute === provider.route || testing;
+                const rowBusy = probing || testing;
                 const firstModel = firstProviderModelId(provider);
                 const displayModel = provider.models[0]?.id ?? null;
                 const readiness =
@@ -576,7 +577,7 @@ export function ModelsView() {
                           onClick={() => void probeProvider(provider)}
                           title={t("Fetch models")}
                         >
-                          {rowBusy ? t("Loading models…") : t("Fetch list")}
+                          {probing ? t("Loading models…") : t("Fetch list")}
                         </button>
                       )}
                       <button
