@@ -108,7 +108,16 @@ export const modelCatalogRefresh = () => invokeTyped<ModelCatalogFile>("model_ca
 // launcher 进程环境中的密钥引用状态；只返回 env name -> available，不返回 secret。
 export const modelEnvStatus = (names: string[]) =>
   invokeTyped<Record<string, boolean>>("model_env_status", { names });
-// 上游模型列表（兼连通性验证）；密钥经环境变量名解析，普通 Provider headers 一并发送，
+// 独立连接测试：向真实推理端点发送最多 16 个输出 token 的最小请求；不依赖 /models。
+export const modelTestConnection = (
+  baseURL: string,
+  api: string,
+  apiKeyEnv: string | null,
+  headers: Record<string, string | undefined> | null,
+  model: string,
+) =>
+  invokeTyped<void>("model_test_connection", { baseUrl: baseURL, api, apiKeyEnv, headers, model });
+// 上游模型列表仅负责模型发现；密钥经环境变量名解析，普通 Provider headers 一并发送，
 // 凭据类保留头由 Rust 层再次过滤，不能覆盖 apiKeyEnv 认证。
 export const modelRemoteList = (
   baseURL: string,

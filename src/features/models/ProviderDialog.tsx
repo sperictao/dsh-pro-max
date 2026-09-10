@@ -5,6 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import * as cmd from "@/shared/commands";
 import { BTN, BTN_PRIMARY, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
@@ -16,6 +17,7 @@ import {
   emptyProvider,
   MODEL_PRESETS,
   normalizeBaseUrl,
+  providerConnectionTarget,
   validateBaseUrl,
   type ModelPreset,
 } from "./shared";
@@ -47,6 +49,8 @@ export function ProviderDialog({
   const [remote, setRemote] = useState<string[] | null>(null);
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -71,10 +75,13 @@ export function ProviderDialog({
   const updateConnection = (value: Partial<ProviderConfig>) => {
     patch(value);
     revokeRemote();
+    setTestResult(null);
     setSubmitError(null);
   };
 
   const currentUrlIssue = validateBaseUrl(draft.baseURL ?? "");
+  const testTarget = providerConnectionTarget(draft);
+  const canTest = showComposer && !currentUrlIssue && Boolean(testTarget) && !saving && !fetching && !testing;
 
   const onBaseURLBlur = () => {
     if (draft.baseURL) {
@@ -83,6 +90,27 @@ export function ProviderDialog({
       setUrlError(validateBaseUrl(normalized));
     } else {
       setUrlError(null);
+    }
+  };
+
+  const testConnection = async () => {
+    const target = providerConnectionTarget(draft);
+    if (!target || currentUrlIssue) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      await cmd.modelTestConnection(
+        target.baseURL,
+        target.api,
+        draft.apiKeyEnv,
+        draft.headers,
+        target.model,
+      );
+      setTestResult({ kind: "success", text: t("Connection successful") });
+    } catch (error) {
+      setTestResult({ kind: "error", text: tErr(String(error)) });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -105,6 +133,7 @@ export function ProviderDialog({
     setAdvancedOpen(false);
     setUrlError(null);
     setSubmitError(null);
+    setTestResult(null);
     revokeRemote();
 
     if (!preset) {
@@ -124,7 +153,10 @@ export function ProviderDialog({
     }));
   };
 
-  const setModels = (models: ModelEntry[]) => patch({ models });
+  const setModels = (models: ModelEntry[]) => {
+    patch({ models });
+    setTestResult(null);
+  };
 
   const canSave =
     showComposer &&
@@ -197,6 +229,17 @@ export function ProviderDialog({
               <button
                 type="button"
                 className={BTN_SM}
+                disabled={!canTest}
+                onClick={() => void testConnection()}
+                title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+              >
+                {testing ? t("Testing…") : t("Test connection")}
+              </button>
+            )}
+            {showComposer && (
+              <button
+                type="button"
+                className={BTN_SM}
                 aria-expanded={advancedOpen}
                 onClick={() => setAdvancedOpen((value) => !value)}
                 disabled={saving}
@@ -214,6 +257,18 @@ export function ProviderDialog({
           {submitError && (
             <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
               {submitError}
+            </div>
+          )}
+          {testResult && (
+            <div
+              className={`rounded-md border px-3 py-2 text-xs ${
+                testResult.kind === "success"
+                  ? "border-primary/30 bg-primary/5 text-primary"
+                  : "border-destructive/40 bg-destructive/5 text-destructive"
+              }`}
+              role={testResult.kind === "error" ? "alert" : "status"}
+            >
+              {testResult.text}
             </div>
           )}
 

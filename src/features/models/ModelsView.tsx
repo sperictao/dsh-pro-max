@@ -24,6 +24,7 @@ import {
   EFFORT_OPTIONS,
   firstProviderModelId,
   fmtTokens,
+  providerConnectionTarget,
   providerModelChoices,
 } from "./shared";
 
@@ -126,6 +127,7 @@ export function ModelsView() {
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyRoute, setBusyRoute] = useState<string | null>(null);
+  const [testingRoute, setTestingRoute] = useState<string | null>(null);
   const [busyGlobal, setBusyGlobal] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
   const [catalogFetchedAt, setCatalogFetchedAt] = useState<number | null>(null);
@@ -316,7 +318,28 @@ export function ModelsView() {
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
 
-  /** 服务行快捷探测：仅 Ready Provider 可请求；自定义无 apiKeyEnv 仍可匿名探测。 */
+  /** 连接测试与模型发现分离：真实推理请求验证 endpoint/auth/model，绝不调用 /models。 */
+  const testProvider = async (provider: ProviderConfig) => {
+    const target = providerConnectionTarget(provider);
+    if (!target || !readyRoutes.has(provider.route)) return;
+    setTestingRoute(provider.route);
+    try {
+      await cmd.modelTestConnection(
+        target.baseURL,
+        target.api,
+        provider.apiKeyEnv,
+        provider.headers,
+        target.model,
+      );
+      toast(t("Connection successful"), "success");
+    } catch (error) {
+      toast(tErr(String(error)), "error");
+    } finally {
+      setTestingRoute(null);
+    }
+  };
+
+  /** 服务行模型发现：仅 Ready Provider 可请求；自定义无 apiKeyEnv 仍可匿名探测。 */
   const probeProvider = async (provider: ProviderConfig) => {
     if (!provider.baseURL?.trim() || !readyRoutes.has(provider.route)) return;
     setBusyRoute(provider.route);
@@ -466,11 +489,13 @@ export function ModelsView() {
               {cfg.providers.map((provider, index) => {
                 const isDefault = provider.route === (cfg.defaultProvider ?? "").trim();
                 const armed = armedDelete === provider.route;
-                const rowBusy = busyRoute === provider.route;
+                const testing = testingRoute === provider.route;
+                const rowBusy = busyRoute === provider.route || testing;
                 const firstModel = firstProviderModelId(provider);
                 const displayModel = provider.models[0]?.id ?? null;
                 const readiness =
                   readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
+                const canTest = Boolean(providerConnectionTarget(provider)) && readiness.ready;
                 const canProbe = Boolean(provider.baseURL?.trim()) && readiness.ready;
                 return (
                   <div
@@ -532,6 +557,16 @@ export function ModelsView() {
                           onClick={() => void makeDefault(provider).catch(() => undefined)}
                         >
                           {t("Make default")}
+                        </button>
+                      )}
+                      {canTest && (
+                        <button
+                          className={BTN_SM}
+                          disabled={rowBusy || busyGlobal}
+                          onClick={() => void testProvider(provider)}
+                          title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+                        >
+                          {testing ? t("Testing…") : t("Test connection")}
                         </button>
                       )}
                       {canProbe && (

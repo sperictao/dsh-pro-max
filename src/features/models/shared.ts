@@ -51,6 +51,26 @@ export function firstProviderModelId(provider: ProviderConfig): string | null {
   return providerModelChoices(provider)[0]?.id ?? null;
 }
 
+export type ProviderConnectionTarget = {
+  baseURL: string;
+  api: string;
+  model: string;
+};
+
+/**
+ * 连接测试所需的有效路由：显式连接字段优先，内置 route 缺字段时继承同版本预设。
+ * 只做运行时投影，不把继承值写回 settings.yaml。
+ */
+export function providerConnectionTarget(provider: ProviderConfig): ProviderConnectionTarget | null {
+  const preset = PRESET_BY_ROUTE.get(provider.route.trim());
+  const rawBaseURL = provider.baseURL?.trim() || preset?.baseUrl?.trim() || "";
+  const baseURL = rawBaseURL ? normalizeBaseUrl(rawBaseURL) : "";
+  const api = provider.api?.trim() || preset?.api?.trim() || "";
+  const model = firstProviderModelId(provider);
+  if (!baseURL || !api || !model) return null;
+  return { baseURL, api, model };
+}
+
 export const emptyProvider = (): ProviderConfig => ({
   route: "",
   displayName: null,

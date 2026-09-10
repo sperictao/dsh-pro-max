@@ -30,7 +30,7 @@ fn required_env_value(name: &str) -> Result<String, String> {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => Ok(value),
         _ => {
-            crate::logging::warn("模型列表拉取缺密钥环境变量", name);
+            crate::logging::warn("模型服务缺密钥环境变量", name);
             Err(keyf(
                 "Environment variable is not set in the environment where dsh-pro-max was launched",
                 &[],
@@ -152,6 +152,109 @@ fn fetch_remote_models(
     Ok(parse_remote_models(&text))
 }
 
+/// 按 wire 协议拼真实推理端点。连接测试刻意不依赖 /models：一些兼容服务
+/// 可以正常推理但没有模型列表接口。
+fn provider_inference_url(base_url: &str, api: &str) -> Result<String, String> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err(keyf("Provider base URL is required to test the connection", &[]));
+    }
+    match api {
+        "openai-completions" => Ok(format!("{base}/chat/completions")),
+        "openai-responses" => Ok(format!("{base}/responses")),
+        "anthropic-messages" => {
+            if base.ends_with("/v1") {
+                Ok(format!("{base}/messages"))
+            } else {
+                Ok(format!("{base}/v1/messages"))
+            }
+        }
+        _ => Err(keyf("Provider wire protocol is required to test the connection", &[])),
+    }
+}
+
+/// 最小真实请求：只要求模型返回最多 16 个 token，既验证模型路由/认证，又避免
+/// 把 Test Connection 变成一次正常对话。
+fn provider_test_body(api: &str, model: &str) -> Result<serde_json::Value, String> {
+    let model = model.trim();
+    if model.is_empty() {
+        return Err(keyf("Provider model is required to test the connection", &[]));
+    }
+    match api {
+        "openai-completions" => Ok(serde_json::json!({
+            "model": model,
+            "messages": [{ "role": "user", "content": "Reply OK." }],
+            "max_tokens": 16
+        })),
+        "openai-responses" => Ok(serde_json::json!({
+            "model": model,
+            "input": "Reply OK.",
+            "max_output_tokens": 16
+        })),
+        "anthropic-messages" => Ok(serde_json::json!({
+            "model": model,
+            "max_tokens": 16,
+            "messages": [{ "role": "user", "content": "Reply OK." }]
+        })),
+        _ => Err(keyf("Provider wire protocol is required to test the connection", &[])),
+    }
+}
+
+fn test_provider_connection(
+    base_url: &str,
+    api: &str,
+    api_key_env: Option<&str>,
+    headers: Option<&BTreeMap<String, String>>,
+    model: &str,
+) -> Result<(), String> {
+    let key = if let Some(env_name) = non_empty(api_key_env) {
+        Some(required_env_value(env_name)?)
+    } else {
+        None
+    };
+    let url = provider_inference_url(base_url, api)?;
+    let body = provider_test_body(api, model)?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(REMOTE_LIST_TIMEOUT_SECS))
+        .user_agent(concat!("dsh-pro-max/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| {
+            crate::logging::error("HTTP client 初始化失败", &e.to_string());
+            keyf("Cannot initialize the HTTP client", &[])
+        })?;
+
+    let mut request = client.post(&url);
+    if api == "anthropic-messages" {
+        request = request.header("anthropic-version", "2023-06-01");
+        if let Some(key) = key.as_deref() {
+            request = request.header("x-api-key", key);
+        }
+    } else if let Some(key) = key.as_deref() {
+        request = request.bearer_auth(key);
+    }
+    request = apply_provider_headers(request, headers).json(&body);
+
+    let response = request.send().map_err(|e| {
+        crate::logging::error("模型服务连接测试失败", &format!("{url}: {e}"));
+        keyf("Failed to reach the provider inference endpoint", &[])
+    })?;
+    if response.status().is_success() {
+        return Ok(());
+    }
+
+    let status = response.status().as_u16();
+    crate::logging::warn("模型服务连接测试返回错误", &format!("HTTP {status}: {url}"));
+    Err(keyf(
+        match status {
+            401 | 403 => "Provider authentication failed",
+            404 | 405 => "Provider endpoint or wire protocol is invalid",
+            429 => "Provider connection test was rate limited",
+            _ => "Provider connection test failed",
+        },
+        &[],
+    ))
+}
+
 /// 批量检查密钥环境变量是否在 launcher 当前进程环境中存在且非空。
 /// 返回值仅包含调用方传入的变量名与布尔状态，不读取/返回 secret 内容。
 #[tauri::command]
@@ -168,6 +271,26 @@ pub fn model_env_status(names: Vec<String>) -> BTreeMap<String, bool> {
             }
         })
         .collect()
+}
+
+#[tauri::command]
+pub async fn model_test_connection(
+    base_url: String,
+    api: String,
+    api_key_env: Option<String>,
+    headers: Option<BTreeMap<String, String>>,
+    model: String,
+) -> Result<(), String> {
+    crate::dsh::ipc_blocking(move || {
+        test_provider_connection(
+            &base_url,
+            &api,
+            api_key_env.as_deref(),
+            headers.as_ref(),
+            &model,
+        )
+    })
+    .await
 }
 
 #[tauri::command]
@@ -221,6 +344,39 @@ mod tests {
         );
         assert!(request.headers().get("authorization").is_none());
         assert!(request.headers().get("x-api-key").is_none());
+    }
+
+    #[test]
+    fn connection_test_urls_target_inference_not_models() {
+        assert_eq!(
+            provider_inference_url("https://api.example.com/v1/", "openai-completions").unwrap(),
+            "https://api.example.com/v1/chat/completions"
+        );
+        assert_eq!(
+            provider_inference_url("https://api.example.com/v1", "openai-responses").unwrap(),
+            "https://api.example.com/v1/responses"
+        );
+        assert_eq!(
+            provider_inference_url("https://api.anthropic.com", "anthropic-messages").unwrap(),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            provider_inference_url("https://api.anthropic.com/v1", "anthropic-messages").unwrap(),
+            "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn connection_test_bodies_cap_output_at_sixteen_tokens() {
+        let chat = provider_test_body("openai-completions", "m").unwrap();
+        assert_eq!(chat["model"], "m");
+        assert_eq!(chat["max_tokens"], 16);
+
+        let responses = provider_test_body("openai-responses", "m").unwrap();
+        assert_eq!(responses["max_output_tokens"], 16);
+
+        let anthropic = provider_test_body("anthropic-messages", "m").unwrap();
+        assert_eq!(anthropic["max_tokens"], 16);
     }
 
     #[test]
