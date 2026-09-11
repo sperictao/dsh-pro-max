@@ -97,7 +97,7 @@ async function main() {
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
         model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
         model_remote_cache_get: () => null,
-        model_remote_list: ({ baseUrl }) => baseUrl?.includes("deepseek") ? ["deepseek-chat", "deepseek-reasoner"] : ["glm-5.2"],
+        model_remote_list_with_headers: ({ baseUrl }) => baseUrl?.includes("deepseek") ? ["deepseek-chat", "deepseek-reasoner"] : ["glm-5.2"],
         model_test_connection: () => null,
         "plugin:app|version": () => "0.4.0",
         "plugin:notification|is_permission_granted": () => true,
