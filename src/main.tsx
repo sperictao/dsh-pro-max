@@ -1,5 +1,6 @@
 import "./style.css";
 import "./features/models/default-model-menu.css";
+import "./features/models/reasoning-effort.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
