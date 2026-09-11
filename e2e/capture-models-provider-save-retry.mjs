@@ -252,17 +252,32 @@ async function main() {
       document.querySelector('[data-testid="default-model-summary"]')?.textContent?.includes("DeepSeek · deepseek-chat"),
     );
 
-    const row = page.locator('[data-route="deepseek"]');
-    await row.getByRole("button", { name: "Edit provider" }).click();
+    const providerRow = page.locator('[data-route="deepseek"]');
+    await providerRow.getByRole("button", { name: "Edit provider" }).click();
     const dialog = page.getByRole("dialog", { name: "Edit provider" });
     await dialog.waitFor({ state: "visible" });
 
     const displayName = dialog.getByRole("textbox", { name: "Display Name" });
     const saveButton = dialog.getByRole("button", { name: "Save provider" });
     await displayName.fill("DeepSeek Recovery");
+
+    // Make this a genuinely long ProviderDialog using an existing real interaction state,
+    // rather than depending on a synthetic tiny viewport. This is the state in which an
+    // error rendered at the top of the body could otherwise be outside the user's view.
+    const modelRow = dialog.locator('[data-model-id="deepseek-reasoner"]');
+    await modelRow.getByRole("button", { name: "Advanced" }).click();
+    await modelRow.getByTestId("model-advanced").waitFor({ state: "visible" });
     await dialog.getByRole("button", { name: "Advanced settings" }).click();
 
     const body = dialog.locator("div.overflow-y-auto.p-5").first();
+    const scrollMetrics = await body.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    assert.ok(
+      scrollMetrics.scrollHeight > scrollMetrics.clientHeight,
+      `expected long dialog overflow, got ${JSON.stringify(scrollMetrics)}`,
+    );
     await body.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
