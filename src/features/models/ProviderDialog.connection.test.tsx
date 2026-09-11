@@ -83,7 +83,7 @@ describe("ProviderDialog connection test", () => {
 
     expect(screen.getByRole("button", { name: "Test connection" })).toBeDisabled();
     expect(cmd.modelTestConnection).not.toHaveBeenCalled();
-    expect(screen.getByTestId("catalog-route-hint")).toHaveTextContent("Inherits the built-in catalog");
+    expect(screen.getByRole("dialog", { name: "Edit provider" })).toHaveTextContent("OpenAI · api.openai.com");
+    expect(screen.queryByTestId("catalog-route-hint")).not.toBeInTheDocument();
   });
-
 });
