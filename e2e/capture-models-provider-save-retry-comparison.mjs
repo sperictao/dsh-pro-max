@@ -1,4 +1,4 @@
-// A/B capture for #48. The same script runs against #47 and #48.
+// A/B capture for #48. The same user flow runs against #47 and #48.
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,6 +70,7 @@ async function main() {
       let currentModelConfig = structuredClone(modelConfig);
       window.__auditSaveAttempts = 0;
       window.__auditSavePending = false;
+      window.__auditSavedConfigs = [];
       const handlers = {
         get_resolved_language: () => "en",
         load_config: () => appConfig,
@@ -87,6 +88,7 @@ async function main() {
             window.__auditSavePending = false;
             if (attempt === 1) { rejectSave("Failed to write settings.yaml"); return; }
             currentModelConfig = structuredClone(config);
+            window.__auditSavedConfigs.push(structuredClone(config));
             resolveSave(null);
           }, 1100);
         }),
@@ -133,65 +135,32 @@ async function main() {
     await displayName.fill("DeepSeek Recovery");
     await page.waitForTimeout(600);
 
+    // First save is performed on the main dialog, before opening the modal Advanced surface.
     await saveButton.click();
     await page.waitForFunction(() => window.__auditSavePending === true);
     await page.waitForFunction(() => window.__auditSaveAttempts === 1 && window.__auditSavePending === false);
     await page.getByText("Failed to write settings.yaml", { exact: true }).first().waitFor({ state: "visible" });
-    await page.waitForTimeout(1800);
+    await page.waitForTimeout(1600);
     console.log(`${LABEL}: failure-surfaces=${await page.getByText("Failed to write settings.yaml", { exact: true }).count()}`);
 
-    await dialog.getByRole("button", { name: "Advanced settings" }).click();
+    // Repair through provider Advanced. It is modal by design, so close it before Retry.
+    const advancedButton = dialog.getByRole("button", { name: "Advanced settings" });
+    await advancedButton.click();
     const timeout = dialog.getByRole("spinbutton", { name: "Request timeout (ms)" });
     await timeout.fill("45000");
-    await page.waitForTimeout(1800);
+    await page.waitForTimeout(1600);
     console.log(`${LABEL}: stale-failure-surfaces-after-edit=${await page.getByText("Failed to write settings.yaml", { exact: true }).count()}`);
+    await advancedButton.click();
+    await timeout.waitFor({ state: "detached" });
+    await page.waitForTimeout(500);
 
-    const geometry = await page.evaluate(() => {
-      const overlay = document.querySelector("#provider-dialog");
-      const card = overlay?.firstElementChild;
-      const body = card?.children?.[1];
-      const footer = card?.children?.[2];
-      const button = document.querySelector("#btn-save-provider");
-      const toRect = (element) => {
-        if (!(element instanceof Element)) return null;
-        const rect = element.getBoundingClientRect();
-        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
-      };
-      const buttonRect = button instanceof Element ? button.getBoundingClientRect() : null;
-      const cx = buttonRect ? buttonRect.left + buttonRect.width / 2 : 0;
-      const cy = buttonRect ? buttonRect.top + buttonRect.height / 2 : 0;
-      const hit = buttonRect ? document.elementFromPoint(cx, cy) : null;
-      const cardStyle = card instanceof Element ? getComputedStyle(card) : null;
-      const bodyStyle = body instanceof Element ? getComputedStyle(body) : null;
-      return {
-        viewport: { width: innerWidth, height: innerHeight },
-        overlay: toRect(overlay),
-        card: toRect(card),
-        body: toRect(body),
-        footer: toRect(footer),
-        button: toRect(button),
-        cardStyle: cardStyle ? { height: cardStyle.height, maxHeight: cardStyle.maxHeight, overflow: cardStyle.overflow, display: cardStyle.display } : null,
-        bodyStyle: bodyStyle ? { height: bodyStyle.height, minHeight: bodyStyle.minHeight, overflowY: bodyStyle.overflowY, flex: bodyStyle.flex } : null,
-        bodyScroll: body instanceof HTMLElement ? { clientHeight: body.clientHeight, scrollHeight: body.scrollHeight, scrollTop: body.scrollTop } : null,
-        hit: hit ? { tag: hit.tagName, id: hit.id, className: typeof hit.className === "string" ? hit.className : "" } : null,
-      };
-    });
-    console.log(`${LABEL}: geometry=${JSON.stringify(geometry)}`);
-
-    let retryBlocked = false;
-    try {
-      await saveButton.click({ timeout: 1500 });
-    } catch {
-      retryBlocked = true;
-    }
-    console.log(`${LABEL}: retry-click-blocked=${retryBlocked}`);
-
-    if (!retryBlocked) {
-      await page.waitForFunction(() => window.__auditSaveAttempts === 2 && window.__auditSavePending === false);
-      await dialog.waitFor({ state: "detached" });
-      await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).waitFor({ state: "visible" });
-    }
+    await saveButton.click();
+    await page.waitForFunction(() => window.__auditSavePending === true);
+    await page.waitForFunction(() => window.__auditSaveAttempts === 2 && window.__auditSavePending === false && window.__auditSavedConfigs.length === 1);
+    await dialog.waitFor({ state: "detached" });
+    await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).waitFor({ state: "visible" });
     await page.waitForTimeout(1800);
+    console.log(`${LABEL}: retry-success=true`);
 
     await context.close();
     const recorded = await video.path();
