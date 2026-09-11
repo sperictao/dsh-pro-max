@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,27 +43,47 @@ describe("ModelsView catalog observability", () => {
     expect(cmd.modelCatalogRefresh).not.toHaveBeenCalled();
   });
 
-  it("switches the source to models.dev after a successful refresh", async () => {
-    vi.mocked(cmd.modelCatalogRefresh).mockResolvedValue({
+  it("announces manual refresh progress, switches to models.dev, and confirms success", async () => {
+    let resolveRefresh: ((value: ModelCatalogFile) => void) | undefined;
+    vi.mocked(cmd.modelCatalogRefresh).mockImplementation(
+      () =>
+        new Promise<ModelCatalogFile>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+    const fresh: ModelCatalogFile = {
       fetchedAt: now(),
       providerCount: 9,
       entries: [{ id: "gpt-test", name: "GPT Test", family: "openai", context: null }],
-    });
+    };
     const user = userEvent.setup();
     render(createElement(ModelsView));
-    await screen.findByTestId("catalog-status-line");
+    const status = await screen.findByTestId("catalog-status-line");
+    const region = document.getElementById("models-catalog");
 
+    expect(region).toHaveAttribute("aria-busy", "false");
     await user.click(screen.getByRole("button", { name: "Refresh model catalog" }));
 
-    await waitFor(() =>
-      expect(screen.getByTestId("catalog-status-line")).toHaveAttribute("data-catalog-source", "remote"),
-    );
-    const status = screen.getByTestId("catalog-status-line");
+    expect(region).toHaveAttribute("aria-busy", "true");
+    expect(status).toHaveTextContent("Refreshing catalog…");
+    expect(screen.getByRole("button", { name: "Refreshing catalog…" })).toBeDisabled();
+    expect(useAppStore.getState().toasts).toHaveLength(0);
+
+    await act(async () => {
+      resolveRefresh?.(fresh);
+    });
+
+    await waitFor(() => expect(status).toHaveAttribute("data-catalog-source", "remote"));
+    expect(region).toHaveAttribute("aria-busy", "false");
     expect(status).toHaveAttribute("data-provider-count", "9");
     expect(status).toHaveTextContent("models.dev");
     expect(status).toHaveTextContent("9 providers");
     expect(status).toHaveTextContent("1 models");
     expect(screen.queryByTestId("catalog-error")).not.toBeInTheDocument();
+    expect(useAppStore.getState().toasts.at(-1)?.message).toBe(
+      "Refresh model catalog · models.dev · 1 models",
+    );
+    expect(useAppStore.getState().toasts.at(-1)?.type).toBe("success");
   });
 
   it("keeps the snapshot visible and surfaces the latest refresh error", async () => {
@@ -90,5 +110,6 @@ describe("ModelsView catalog observability", () => {
       expect(screen.getByTestId("catalog-status-line")).toHaveAttribute("data-catalog-source", "remote"),
     );
     expect(screen.getByTestId("catalog-status-line")).toHaveAttribute("data-provider-count", "8");
+    expect(useAppStore.getState().toasts).toHaveLength(0);
   });
 });
