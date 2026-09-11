@@ -42,6 +42,19 @@
   background: var(--background);
 }
 
+/* Shared input primitives are width-full. In a header row, make the key deliberately
+   fixed-width so the value keeps the primary editing space instead of collapsing. */
+#provider-dialog [data-testid="provider-advanced"] [data-testid="headers-editor"] input[aria-label="Header name"] {
+  width: 12rem;
+  flex: 0 0 12rem;
+}
+
+#provider-dialog [data-testid="provider-advanced"] [data-testid="headers-editor"] input[aria-label="Header value"] {
+  min-width: 0;
+  width: auto;
+  flex: 1 1 0%;
+}
+
 /* Canonical reasoning tokens stay lowercase in config; only their presentation is user-facing. */
 #provider-dialog [data-testid="provider-advanced"] select[aria-label="Default reasoning level"] {
   font-weight: 500;
