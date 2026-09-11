@@ -1,5 +1,6 @@
 // 添加/编辑 AI 服务：参考 PI-Desktop Provider Setup 的渐进披露。
 // 添加已知服务时只保留主路径需要的服务、凭据和模型；连接细节退到高级设置。
+// Custom endpoint 也保持“身份 → 连接 → 模型”的顺序，并避免把本地目录误当远端结果。
 // 编辑态继续保留现有字段与测试入口，避免 Add provider 优化扩散到其他功能点。
 
 import { useMemo, useRef, useState } from "react";
@@ -39,6 +40,7 @@ export function ProviderDialog({
 }) {
   const { t } = useTranslation();
   const isEdit = state.mode === "edit";
+  const displayNameInputRef = useRef<HTMLInputElement>(null);
   const apiKeyInputRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<ProviderConfig>(
     isEdit ? structuredClone(state.provider) : emptyProvider(),
@@ -68,6 +70,23 @@ export function ProviderDialog({
   const updateConnection = (value: Partial<ProviderConfig>) => {
     patch(value);
     setTestResult(null);
+    setSubmitError(null);
+  };
+
+  const updateCustomDisplayName = (name: string) => {
+    if (isEdit) {
+      patch({ displayName: name || null });
+      setSubmitError(null);
+      return;
+    }
+    // route 是配置身份而不是用户主任务。只要用户没有显式改写它，就跟随显示名生成，
+    // 既减少一次重复输入，也保留专家直接覆盖 route 的能力。
+    const previousAutoRoute = routeKeyFromDisplayName(draft.displayName ?? "");
+    const routeIsAuto = !draft.route.trim() || draft.route === previousAutoRoute;
+    patch({
+      displayName: name || null,
+      ...(routeIsAuto ? { route: routeKeyFromDisplayName(name) } : {}),
+    });
     setSubmitError(null);
   };
 
@@ -127,6 +146,8 @@ export function ProviderDialog({
     if (!preset) {
       // 自定义端点从干净连接配置开始；extra 等初始为空，不产生第二份事实。
       setDraft(emptyProvider());
+      // Custom 的下一步是命名服务；与 PI-Desktop 一致，选择后直接把焦点交给名称。
+      window.setTimeout(() => displayNameInputRef.current?.focus(), 0);
       return;
     }
 
@@ -354,9 +375,10 @@ export function ProviderDialog({
                     <label className="flex flex-col gap-1 text-xs opacity-70">
                       {t("Display Name")}
                       <input
+                        ref={displayNameInputRef}
                         className={INPUT}
                         value={draft.displayName ?? ""}
-                        onChange={(event) => patch({ displayName: event.target.value || null })}
+                        onChange={(event) => updateCustomDisplayName(event.target.value)}
                         aria-label={t("Display Name")}
                       />
                     </label>
@@ -426,7 +448,9 @@ export function ProviderDialog({
 
               <ModelPanes
                 provider={draft}
-                catalog={catalog}
+                // Custom endpoint 只有拿到远端结果后才可声称“Models from this service”。
+                // catalog 仍用于远端结果的名称/上下文元数据，但不再充当未连接时的候选池。
+                catalog={knownService || discovery.models !== null ? catalog : []}
                 remote={discovery.models}
                 fetching={discovery.status === "loading"}
                 fetchError={discovery.error ? tErr(discovery.error) : null}
@@ -691,6 +715,14 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
       )}
     </div>
   );
+}
+
+function routeKeyFromDisplayName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function hostOf(baseURL: string | null): string | null {
