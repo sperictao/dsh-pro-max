@@ -239,6 +239,7 @@ export function ModelPanes({
           onKeyDown={(e) => {
             if (e.key === "Escape" && query) {
               e.preventDefault();
+              e.stopPropagation();
               setQuery("");
               setCandidateScrollTop(0);
               if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
