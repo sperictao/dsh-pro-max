@@ -1,6 +1,6 @@
 // Import configuration UI audit capture.
-// Scope: open Models, scan local provider declarations, review default selection and
-// literal-key warning, import selected entries, and verify the main view refreshes.
+// Scope: open Models, scan local provider declarations, review safe defaults and
+// literal-key handling, import selected entries, and verify the main view refreshes.
 import assert from "node:assert/strict";
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -16,155 +16,59 @@ const OUT_DIR = resolve(ROOT, ".artifacts", "e2e", "models-import-configuration"
 const importGroups = [
   {
     source: "claude-code",
-    entries: [
-      {
-        key: "claude-code:anthropic",
-        route: "anthropic",
-        name: "Anthropic",
-        baseURL: "https://api.anthropic.com",
-        api: "anthropic-messages",
-        apiKeyEnv: "ANTHROPIC_API_KEY",
-        credential: "env",
-        models: ["claude-sonnet-4-5"],
-      },
-    ],
+    entries: [{ key: "claude-code:anthropic", route: "anthropic", name: "Anthropic", baseURL: "https://api.anthropic.com", api: "anthropic-messages", apiKeyEnv: "ANTHROPIC_API_KEY", credential: "env", models: ["claude-sonnet-4-5"] }],
   },
   {
     source: "codex",
-    entries: [
-      {
-        key: "codex:openai",
-        route: "openai",
-        name: "OpenAI",
-        baseURL: "https://api.openai.com/v1",
-        api: "openai-responses",
-        apiKeyEnv: null,
-        credential: "literal",
-        models: ["gpt-5.6"],
-      },
-    ],
+    entries: [{ key: "codex:openai", route: "openai", name: "OpenAI", baseURL: "https://api.openai.com/v1", api: "openai-responses", apiKeyEnv: null, credential: "literal", models: ["gpt-5.6"] }],
   },
   {
     source: "opencode",
-    entries: [
-      {
-        key: "opencode:deepseek",
-        route: "deepseek",
-        name: "DeepSeek",
-        baseURL: "https://api.deepseek.com/v1",
-        api: "openai-completions",
-        apiKeyEnv: "DEEPSEEK_API_KEY",
-        credential: "env",
-        models: ["deepseek-chat"],
-      },
-    ],
+    entries: [{ key: "opencode:deepseek", route: "deepseek", name: "DeepSeek", baseURL: "https://api.deepseek.com/v1", api: "openai-completions", apiKeyEnv: "DEEPSEEK_API_KEY", credential: "env", models: ["deepseek-chat"] }],
   },
   { source: "pi", entries: [] },
   {
     source: "cc-switch",
-    entries: [
-      {
-        key: "cc-switch:local",
-        route: "local-proxy",
-        name: "Local Proxy",
-        baseURL: "http://127.0.0.1:8317/v1",
-        api: "openai-completions",
-        apiKeyEnv: null,
-        credential: "none",
-        models: ["local-model"],
-      },
-    ],
+    entries: [{ key: "cc-switch:local", route: "local-proxy", name: "Local Proxy", baseURL: "http://127.0.0.1:8317/v1", api: "openai-completions", apiKeyEnv: null, credential: "none", models: ["local-model"] }],
   },
 ];
 
 const initialProviders = [
   {
-    route: "spero-ai",
-    displayName: "Spero AI",
-    baseURL: "https://proxy.example.com/v1",
-    api: "openai-responses",
-    apiKeyEnv: "SPERO_AI_API_KEY",
-    models: [
-      {
-        id: "glm-5.2",
-        name: "GLM 5.2",
-        contextWindow: 131072,
-        maxTokens: 32768,
-        input: ["text"],
-        reasoningEfforts: { low: "low", medium: "medium", high: "high", max: "max" },
-        extra: null,
-      },
-    ],
-    headers: null,
-    timeoutMs: null,
-    reasoning: null,
-    extra: null,
+    route: "spero-ai", displayName: "Spero AI", baseURL: "https://proxy.example.com/v1", api: "openai-responses", apiKeyEnv: "SPERO_AI_API_KEY",
+    models: [{ id: "glm-5.2", name: "GLM 5.2", contextWindow: 131072, maxTokens: 32768, input: ["text"], reasoningEfforts: { low: "low", medium: "medium", high: "high", max: "max" }, extra: null }],
+    headers: null, timeoutMs: null, reasoning: null, extra: null,
   },
 ];
 
 const importedProviders = [
   ...initialProviders,
   {
-    route: "anthropic",
-    displayName: "Anthropic",
-    baseURL: "https://api.anthropic.com",
-    api: "anthropic-messages",
-    apiKeyEnv: "ANTHROPIC_API_KEY",
+    route: "anthropic", displayName: "Anthropic", baseURL: "https://api.anthropic.com", api: "anthropic-messages", apiKeyEnv: "ANTHROPIC_API_KEY",
     models: [{ id: "claude-sonnet-4-5", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
     headers: null, timeoutMs: null, reasoning: null, extra: null,
   },
   {
-    route: "openai",
-    displayName: "OpenAI",
-    baseURL: "https://api.openai.com/v1",
-    api: "openai-responses",
-    apiKeyEnv: null,
-    models: [{ id: "gpt-5.6", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
-    headers: null, timeoutMs: null, reasoning: null, extra: null,
-  },
-  {
-    route: "deepseek",
-    displayName: "DeepSeek",
-    baseURL: "https://api.deepseek.com/v1",
-    api: "openai-completions",
-    apiKeyEnv: "DEEPSEEK_API_KEY",
+    route: "deepseek", displayName: "DeepSeek", baseURL: "https://api.deepseek.com/v1", api: "openai-completions", apiKeyEnv: "DEEPSEEK_API_KEY",
     models: [{ id: "deepseek-chat", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
     headers: null, timeoutMs: null, reasoning: null, extra: null,
   },
   {
-    route: "local-proxy",
-    displayName: "Local Proxy",
-    baseURL: "http://127.0.0.1:8317/v1",
-    api: "openai-completions",
-    apiKeyEnv: null,
+    route: "local-proxy", displayName: "Local Proxy", baseURL: "http://127.0.0.1:8317/v1", api: "openai-completions", apiKeyEnv: null,
     models: [{ id: "local-model", name: null, contextWindow: null, maxTokens: null, input: null, reasoningEfforts: null, extra: null }],
     headers: null, timeoutMs: null, reasoning: null, extra: null,
   },
 ];
 
 const mock = {
-  config: {
-    minimize_to_tray_on_close: false,
-    language: "en",
-    dsh_admin_cap_domain: "",
-    dsh_use_cap_domain: "",
-    dsh_extra_allowed_logins: "",
-    market_catalog_url: "",
-  },
+  config: { minimize_to_tray_on_close: false, language: "en", dsh_admin_cap_domain: "", dsh_use_cap_domain: "", dsh_extra_allowed_logins: "", market_catalog_url: "" },
   dshStatus: {
-    nodeAvailable: false, dshInstalled: false, dshVersion: null, supportedVersion: "0.1.1-rc.2",
-    dshCompatible: false, dshVersionAboveSupported: false, pluginsInstalled: false, dshRunning: false,
-    tailscaleInstalled: false, tailscaleOnline: false, hostname: null, localUrl: null, url: null,
-    remoteUrlAccess: null, magicDnsEnabled: false, serveConfigured: false, autostartEnabled: false,
-    error: null,
+    nodeAvailable: false, dshInstalled: false, dshVersion: null, supportedVersion: "0.1.1-rc.2", dshCompatible: false, dshVersionAboveSupported: false,
+    pluginsInstalled: false, dshRunning: false, tailscaleInstalled: false, tailscaleOnline: false, hostname: null, localUrl: null, url: null,
+    remoteUrlAccess: null, magicDnsEnabled: false, serveConfigured: false, autostartEnabled: false, error: null,
     readyTimeline: ["node", "install", "start", "ready"].map((id, index) => ({ index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
   },
-  modelConfig: {
-    defaultProvider: "spero-ai",
-    defaultModel: "glm-5.2",
-    defaultReasoningEffort: "high",
-    providers: initialProviders,
-  },
+  modelConfig: { defaultProvider: "spero-ai", defaultModel: "glm-5.2", defaultReasoningEffort: "high", providers: initialProviders },
   modelCatalog: {
     fetchedAt: Math.floor(Date.now() / 1000), providerCount: 1,
     entries: [{ id: "glm-5.2", name: "GLM 5.2", family: "openai", context: 131072, maxTokens: 32768, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high", "max"], capabilities: ["text", "reasoning", "tools"] }],
@@ -255,20 +159,23 @@ async function main() {
     await page.waitForTimeout(1500);
 
     assert.equal(await dialog.getByRole("checkbox", { name: "claude-code:anthropic" }).isChecked(), true);
-    assert.equal(await dialog.getByRole("checkbox", { name: "codex:openai" }).isChecked(), true);
+    assert.equal(await dialog.getByRole("checkbox", { name: "opencode:deepseek" }).isChecked(), true);
+    assert.equal(await dialog.getByRole("checkbox", { name: "cc-switch:local" }).isChecked(), true);
+    assert.equal(await dialog.getByRole("checkbox", { name: "codex:openai" }).isChecked(), false);
+    assert.equal(await dialog.getByText("Pi").count(), 0);
     await dialog.getByText("Literal key — not imported").waitFor({ state: "visible" });
-    await dialog.getByText("1 selected entries carry literal keys; they import without credentials.").waitFor({ state: "visible" });
+    assert.equal(await dialog.getByText(/selected entries carry literal keys/).count(), 0);
 
-    const importButton = dialog.getByRole("button", { name: "Import selected (4)" });
+    const importButton = dialog.getByRole("button", { name: "Import selected (3)" });
     await importButton.click();
     await page.getByRole("button", { name: "Importing…" }).waitFor({ state: "visible" });
     await dialog.waitFor({ state: "hidden" });
     await page.getByText("Anthropic").first().waitFor({ state: "visible" });
-    await page.waitForFunction(() => window.__auditImportKeys.length === 4);
+    await page.waitForFunction(() => window.__auditImportKeys.length === 3);
     await page.waitForTimeout(1500);
 
     const keys = await page.evaluate(() => window.__auditImportKeys);
-    assert.deepEqual(new Set(keys), new Set(["claude-code:anthropic", "codex:openai", "opencode:deepseek", "cc-switch:local"]));
+    assert.deepEqual(new Set(keys), new Set(["claude-code:anthropic", "opencode:deepseek", "cc-switch:local"]));
     assert.equal(failures.length, 0, failures.join("\n"));
 
     await page.screenshot({ path: resolve(OUT_DIR, "models-import-configuration.png"), fullPage: true });
