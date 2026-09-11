@@ -450,7 +450,13 @@ export function ProviderDialog({
                 catalog={knownService || discovery.models !== null ? catalog : []}
                 remote={discovery.models}
                 fetching={discovery.status === "loading"}
-                fetchError={discovery.error ? tErr(discovery.error) : null}
+                fetchError={
+                  discovery.error
+                    ? discovery.source === "cache"
+                      ? `${tErr(discovery.error)} · ${t("Local snapshot")}`
+                      : tErr(discovery.error)
+                    : null
+                }
                 onModelsChange={setModels}
                 onFetch={discovery.reload}
               />
