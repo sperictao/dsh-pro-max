@@ -143,27 +143,27 @@ async function main() {
 
     const service = dialog.getByTestId("preset-input");
     await service.fill("deepseek");
-    const picker = dialog.getByRole("listbox", { name: "Choose a service or custom endpoint" });
     await dialog.getByRole("option", { name: /DeepSeek deepseek/i }).click();
     await page.waitForTimeout(800);
 
     const fetchButton = dialog.getByRole("button", { name: "Fetch list" });
-    assert.equal(await fetchButton.isEnabled(), true, "baseline: Fetch list is currently enabled before credentials are present");
-    const misleadingHint = dialog.getByText("Enter a base URL to load models.", { exact: true });
-    await misleadingHint.waitFor({ state: "visible" });
+    const modelList = dialog.getByRole("list", { name: "Models from this service" });
+    assert.equal(await fetchButton.isEnabled(), false, "Fetch list should remain disabled until a known provider has explicit credentials");
+    assert.equal(await dialog.getByText("Enter a base URL to load models.", { exact: true }).count(), 0, "A preset base URL must not produce a missing-URL hint");
+    assert.equal(await modelList.getByRole("checkbox", { name: "glm-5.2", exact: true }).count(), 0, "Known-provider fallback must not mix unrelated same-protocol catalog models");
+    assert.equal(await modelList.getByRole("checkbox", { name: "deepseek-v4-pro", exact: true }).count(), 1, "DeepSeek preset models should remain available before live discovery");
     await page.screenshot({ path: resolve(OUT_DIR, "models-fetch-list-prerequisite.png"), fullPage: true });
 
-    await fetchButton.click();
     await page.waitForTimeout(900);
-    assert.equal(await page.evaluate(() => window.__auditRemoteListCount), 0, "baseline: pre-credential Fetch list click is a no-op");
-    assert.equal(await fetchButton.isEnabled(), true);
-    console.log("baseline: preCredentialEnabled=true; clickRemoteCalls=0; hint=base-url");
+    assert.equal(await page.evaluate(() => window.__auditRemoteListCount), 0, "No remote discovery should start before credentials are supplied");
+    console.log("after: preCredentialEnabled=false; remoteCalls=0; misleadingHint=false; unrelatedCatalogModel=false");
 
     await dialog.getByLabel("API Key Env Var").fill("DEEPSEEK_API_KEY");
     await page.waitForFunction(() => window.__auditRemoteListCount === 1);
-    const modelList = dialog.getByRole("list", { name: "Models from this service" });
     await modelList.getByRole("checkbox", { name: "deepseek-v4-flash", exact: true }).waitFor({ state: "visible" });
     await modelList.getByRole("checkbox", { name: "deepseek-v4-pro", exact: true }).waitFor({ state: "visible" });
+    await dialog.getByRole("button", { name: "Fetch list" }).waitFor({ state: "visible" });
+    assert.equal(await fetchButton.isEnabled(), true, "Fetch list should enable after credentialed discovery is ready");
     await page.waitForTimeout(650);
 
     await fetchButton.click();
