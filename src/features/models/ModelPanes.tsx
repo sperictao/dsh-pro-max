@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
+import { BTN_DANGER_SM, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import {
   EFFORT_OPTIONS,
@@ -147,6 +147,12 @@ export function ModelPanes({
     } else {
       onModelsChange([...provider.models, emptyModelEntry(id)]);
     }
+  };
+
+  const removeModel = (id: string) => {
+    const key = modelIdKey(id);
+    if (expanded != null && modelIdKey(expanded) === key) setExpanded(null);
+    onModelsChange(provider.models.filter((m) => modelIdKey(m.id) !== key));
   };
 
   const toggleAll = () => {
@@ -358,9 +364,10 @@ export function ModelPanes({
                   </button>
                   <button
                     type="button"
-                    className={BTN_SM}
-                    onClick={() => toggle(m.id)}
+                    className={BTN_DANGER_SM}
+                    onClick={() => removeModel(m.id)}
                     aria-label={t("Remove model")}
+                    title={t("Remove model")}
                   >
                     ✕
                   </button>
