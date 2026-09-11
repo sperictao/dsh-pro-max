@@ -259,6 +259,10 @@ export function ModelsView() {
   );
 
   const refreshCatalog = async (background: boolean) => {
+    // A user-initiated retry starts a fresh attempt: retire the previous inline error
+    // immediately so the UI never says both “refreshing” and “failed”. Background
+    // refreshes stay silent and keep their existing observability semantics.
+    if (!background) setCatalogError(null);
     setCatalogRefreshing(true);
     try {
       const fresh = await cmd.modelCatalogRefresh();
@@ -275,8 +279,9 @@ export function ModelsView() {
         );
       }
     } catch (error) {
+      // The Catalog owns a persistent, actionable inline error surface next to Retry.
+      // Avoid duplicating the same failure as a transient global toast.
       setCatalogError(String(error));
-      if (!background) toast(tErr(String(error)), "error");
     } finally {
       setCatalogRefreshing(false);
     }
@@ -835,7 +840,12 @@ export function ModelsView() {
                     : t("Catalog: unavailable")}
             </div>
             {catalogError && (
-              <div className="mt-0.5 text-destructive" role="status" data-testid="catalog-error">
+              <div
+                className="mt-0.5 text-destructive"
+                id="models-catalog-error"
+                role="alert"
+                data-testid="catalog-error"
+              >
                 {t("Catalog error: {{error}}", { error: tErr(catalogError) })}
               </div>
             )}
@@ -844,9 +854,14 @@ export function ModelsView() {
             className={BTN_SM}
             id="btn-refresh-catalog"
             disabled={catalogRefreshing}
+            aria-describedby={catalogError ? "models-catalog-error" : undefined}
             onClick={() => void refreshCatalog(false)}
           >
-            {catalogRefreshing ? t("Refreshing catalog…") : t("Refresh model catalog")}
+            {catalogRefreshing
+              ? t("Refreshing catalog…")
+              : catalogError
+                ? t("Retry")
+                : t("Refresh model catalog")}
           </button>
         </div>
         <div className="space-y-1 text-xs opacity-60">
