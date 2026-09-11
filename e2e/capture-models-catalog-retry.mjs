@@ -135,16 +135,21 @@ async function main() {
     await page.waitForTimeout(650);
 
     assert.equal(await status.getAttribute("data-catalog-source"), "snapshot");
+    assert.equal(await error.getAttribute("role"), "alert");
     assert.match((await error.textContent()) ?? "", /Failed to reach the model catalog/);
-    const recoveryButton = page.locator("#btn-refresh-catalog");
-    console.log(`baseline: recoveryButton=${JSON.stringify((await recoveryButton.textContent())?.trim())}`);
+    const recoveryButton = page.getByRole("button", { name: "Retry" });
+    assert.equal(await recoveryButton.getAttribute("aria-describedby"), "models-catalog-error");
+    assert.equal(await page.getByText("Failed to reach the model catalog", { exact: true }).count(), 0);
+    console.log("after: failed refresh stays contextual and exposes an explicit Retry action without a duplicate error toast");
     await page.screenshot({ path: resolve(OUT_DIR, "models-catalog-retry-error.png"), fullPage: true });
 
     await recoveryButton.click();
     await page.waitForFunction(() => window.__auditCatalogRetryPending === true && window.__auditCatalogRefreshCount === 2);
     await page.waitForTimeout(350);
-    const staleErrorVisibleDuringRetry = await error.isVisible().catch(() => false);
-    console.log(`baseline: staleErrorVisibleDuringRetry=${staleErrorVisibleDuringRetry}`);
+    assert.equal(await error.count(), 0);
+    assert.equal((await status.textContent())?.trim(), "Refreshing catalog…");
+    assert.equal(await page.getByText("Failed to reach the model catalog", { exact: true }).count(), 0);
+    console.log("after: retry starts from a clean busy state with no stale failure left on screen");
     await page.screenshot({ path: resolve(OUT_DIR, "models-catalog-retry-pending.png"), fullPage: true });
 
     await page.waitForFunction(() => window.__auditCatalogRetryPending === false);
@@ -152,6 +157,7 @@ async function main() {
     await page.waitForTimeout(700);
     assert.match((await status.textContent()) ?? "", /models\.dev.*3 providers.*3 models/);
     assert.equal(await error.count(), 0);
+    await page.getByText("Refresh model catalog · models.dev · 3 models", { exact: true }).waitFor({ state: "visible" });
     assert.equal(failures.length, 0, failures.join("\n"));
     await page.screenshot({ path: resolve(OUT_DIR, "models-catalog-retry.png"), fullPage: true });
 
