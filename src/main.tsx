@@ -2,7 +2,6 @@ import "./style.css";
 import "./features/models/default-model-menu.css";
 import "./features/models/reasoning-effort.css";
 import "./features/models/advanced-settings.css";
-import "./features/models/provider-dialog.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
