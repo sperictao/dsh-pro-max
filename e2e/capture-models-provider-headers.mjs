@@ -144,7 +144,7 @@ async function main() {
     await editor.getByRole("button", { name: "Apply" }).click();
     await editor.getByRole("alert").filter({ hasText: "Use a JSON object with header names and string values." }).waitFor({ state: "visible" });
     assert.equal(await importButton.getAttribute("aria-expanded"), "true");
-    assert.equal(await editor.getByDisplayValue("partial-must-not-apply").count(), 0);
+    assert.equal((await values.allInputValues()).includes("partial-must-not-apply"), false);
     assert.equal(await names.count(), 2);
     await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-invalid-json.png"), fullPage: true });
 
