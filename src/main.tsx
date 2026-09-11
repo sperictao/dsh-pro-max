@@ -1,4 +1,5 @@
 import "./style.css";
+import "./features/models/default-model-menu.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
