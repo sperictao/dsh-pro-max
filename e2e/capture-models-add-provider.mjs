@@ -134,24 +134,36 @@ async function main() {
     await page.waitForTimeout(1200);
 
     const service = dialog.getByTestId("preset-input");
+    const saveButton = dialog.getByRole("button", { name: "Save provider" });
+    assert.equal(await saveButton.isDisabled(), true);
+    assert.equal(await dialog.getByRole("button", { name: "Test connection" }).count(), 0);
+    assert.equal(await dialog.getByRole("button", { name: "Close" }).count(), 0);
+
     await service.fill("deepseek");
     await page.waitForTimeout(700);
     const picker = dialog.getByRole("listbox", { name: "Choose a service or custom endpoint" });
     const deepseek = picker.getByRole("option", { name: /DeepSeek deepseek/i });
     await deepseek.click();
+
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "API Key Env Var");
+    assert.equal(await service.inputValue(), "DeepSeek");
+    assert.equal(await dialog.getByLabel("Display Name").count(), 0);
+    assert.equal(await saveButton.isDisabled(), true);
     await page.waitForTimeout(900);
 
     const envInput = dialog.getByLabel("API Key Env Var");
     await envInput.fill("DEEPSEEK_API_KEY");
+    assert.equal(await saveButton.isDisabled(), true);
     await page.waitForTimeout(1100);
 
     const modelList = dialog.getByRole("list", { name: "Models from this service" });
     const modelCheckbox = modelList.getByRole("checkbox", { name: "deepseek-v4-pro" });
     await modelCheckbox.waitFor({ state: "visible" });
     await modelCheckbox.check();
+    assert.equal(await saveButton.isEnabled(), true);
     await page.waitForTimeout(900);
 
-    await dialog.getByRole("button", { name: "Save provider" }).click();
+    await saveButton.click();
     await page.getByRole("button", { name: "Saving…" }).waitFor({ state: "visible" });
     await dialog.waitFor({ state: "hidden" });
     await page.waitForFunction(() => window.__auditSavedConfigs.length === 1);
