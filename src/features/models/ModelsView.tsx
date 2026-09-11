@@ -397,7 +397,6 @@ export function ModelsView() {
     deleteTimer.current = null;
     setArmedDelete(null);
   };
-
   const removeProvider = async (route: string) => {
     if (deleteTimer.current) clearTimeout(deleteTimer.current);
     deleteTimer.current = null;
@@ -435,6 +434,7 @@ export function ModelsView() {
     const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
     if (!target || !launcherRemoteProbeAllowed(readiness)) return;
     setTestingRoute(provider.route);
+    const providerName = provider.displayName ?? provider.route;
     try {
       await cmd.modelTestConnection(
         target.baseURL,
@@ -443,9 +443,9 @@ export function ModelsView() {
         provider.headers,
         target.model,
       );
-      toast(t("Connection successful"), "success");
+      toast(`${providerName} · ${t("Connection successful")}`, "success");
     } catch (error) {
-      toast(tErr(String(error)), "error");
+      toast(`${providerName} · ${tErr(String(error))}`, "error");
     } finally {
       setTestingRoute(null);
     }
@@ -769,7 +769,7 @@ export function ModelsView() {
                               <button
                                 className={ROW_ICON_BUTTON}
                                 aria-label={testing ? t("Testing…") : t("Test connection")}
-                                disabled={rowBusy || busyGlobal}
+                                disabled={rowBusy || busyGlobal || testingRoute !== null}
                                 onClick={() => void testProvider(provider)}
                                 title={t("Sends a minimal model request to verify the endpoint and credentials.")}
                               >
