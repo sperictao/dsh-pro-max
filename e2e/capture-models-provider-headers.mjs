@@ -50,6 +50,10 @@ async function launchBrowser() {
   throw new Error("no browser available for UI capture");
 }
 
+async function inputValues(locator) {
+  return locator.evaluateAll((elements) => elements.map((element) => element.value));
+}
+
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   const server = await createServer({ root: ROOT, logLevel: "error", server: { host: "127.0.0.1", port: PORT, strictPort: true } });
@@ -144,7 +148,7 @@ async function main() {
     await editor.getByRole("button", { name: "Apply" }).click();
     await editor.getByRole("alert").filter({ hasText: "Use a JSON object with header names and string values." }).waitFor({ state: "visible" });
     assert.equal(await importButton.getAttribute("aria-expanded"), "true");
-    assert.equal((await values.allInputValues()).includes("partial-must-not-apply"), false);
+    assert.equal((await inputValues(values)).includes("partial-must-not-apply"), false);
     assert.equal(await names.count(), 2);
     await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-invalid-json.png"), fullPage: true });
 
@@ -191,8 +195,8 @@ async function main() {
     names = editor.getByLabel("Header name");
     values = editor.getByLabel("Header value");
     assert.equal(await names.count(), 2);
-    assert.deepEqual(await names.allInputValues(), ["x-title", "X-Client-Name"]);
-    assert.deepEqual(await values.allInputValues(), ["duplicate", "audit"]);
+    assert.deepEqual(await inputValues(names), ["x-title", "X-Client-Name"]);
+    assert.deepEqual(await inputValues(values), ["duplicate", "audit"]);
     assert.equal(await editor.getByRole("alert").count(), 0);
     await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-reopened.png"), fullPage: true });
 
