@@ -99,4 +99,45 @@ describe("ModelPanes per-model Advanced", () => {
     expect(within(thinking).getByRole("button", { name: "high" })).toHaveTextContent("High");
     expect(within(thinking).getByRole("button", { name: "xhigh" })).toHaveTextContent("XHigh");
   });
+
+  it("distinguishes inherited catalog levels from explicit thinking overrides", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    const row = screen.getByRole("list", { name: "Model settings" }).querySelector(
+      '[data-model-id="deepseek-reasoner"]',
+    );
+    expect(row).not.toBeNull();
+    const scoped = within(row as HTMLElement);
+    await user.click(scoped.getByRole("button", { name: "Advanced" }));
+
+    const panel = scoped.getByTestId("model-advanced");
+    const thinking = within(panel).getByRole("group", { name: "Thinking levels" });
+    const inherit = within(panel).getByTestId("thinking-levels-inherit");
+    expect(inherit).toHaveTextContent("Follow catalog · Low, Medium, High");
+    expect(thinking).toHaveAttribute("aria-describedby", inherit.id);
+    for (const level of ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+      expect(within(thinking).getByRole("button", { name: level })).toHaveAttribute(
+        "aria-pressed",
+        "false",
+      );
+    }
+
+    const high = within(thinking).getByRole("button", { name: "high" });
+    await user.click(high);
+    expect(high).toHaveAttribute("aria-pressed", "true");
+    expect(within(panel).queryByTestId("thinking-levels-inherit")).not.toBeInTheDocument();
+    const spelling = within(panel).getByRole("textbox", { name: "Wire spelling for high" });
+    expect(spelling).toHaveValue("high");
+    await user.clear(spelling);
+    await user.type(spelling, "reasoner-high");
+    expect(spelling).toHaveValue("reasoner-high");
+
+    await user.click(high);
+    expect(high).toHaveAttribute("aria-pressed", "false");
+    expect(within(panel).queryByRole("textbox", { name: "Wire spelling for high" })).not.toBeInTheDocument();
+    expect(within(panel).getByTestId("thinking-levels-inherit")).toHaveTextContent(
+      "Follow catalog · Low, Medium, High",
+    );
+  });
 });
