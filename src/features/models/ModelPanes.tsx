@@ -438,6 +438,10 @@ function ModelAdvancedPanel({
     publishedCapabilities.has("vision") || Boolean(catalogEntry?.input?.includes("image"));
   const publishedPdf =
     publishedCapabilities.has("pdf") || Boolean(catalogEntry?.input?.includes("pdf"));
+  const publishedImageInputKnown = catalogEntry?.input != null || catalogEntry?.capabilities != null;
+  const inheritedInputLabel = publishedImageInputKnown
+    ? `${t("Follow catalog")} · ${publishedVision ? t("Text and images") : t("Text only")}`
+    : t("Follow catalog");
 
   const toggleLevel = (level: string) => {
     const base = view.kind === "levels" ? levels : new Map<string, string | null>();
@@ -568,7 +572,7 @@ function ModelAdvancedPanel({
           onChange={(e) => setInputView(e.target.value as "inherit" | "text" | "text-image")}
           aria-label={t("Image input")}
         >
-          <option value="inherit">{t("Follow catalog")}</option>
+          <option value="inherit">{inheritedInputLabel}</option>
           <option value="text">{t("Text only")}</option>
           <option value="text-image">{t("Text and images")}</option>
           {iview === "custom" && <option value="custom">{t("Custom (kept as-is)")}</option>}
