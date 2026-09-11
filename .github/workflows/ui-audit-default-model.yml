@@ -3,6 +3,7 @@ name: UI Audit Default Model
 on:
   pull_request:
     paths:
+      - "src/main.tsx"
       - "src/features/models/**"
       - "src/shared/i18n/**"
       - "e2e/capture-models-default-model.mjs"
