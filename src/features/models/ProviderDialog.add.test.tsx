@@ -39,7 +39,7 @@ beforeEach(() => {
 });
 
 describe("ProviderDialog Add provider", () => {
-  it("keeps the chosen service visible, hands off focus, and requires a model before save", async () => {
+  it("keeps the chosen service visible, gates Fetch list until credentials, and requires a model before save", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn<(provider: ProviderConfig, originalRoute: string | null) => Promise<void>>()
       .mockResolvedValue(undefined);
@@ -72,11 +72,23 @@ describe("ProviderDialog Add provider", () => {
     expect(within(dialog).queryByLabelText("Display Name")).not.toBeInTheDocument();
     expect(save).toBeDisabled();
 
-    await user.type(apiKey, "DEEPSEEK_API_KEY");
-    expect(save).toBeDisabled();
+    const fetchList = within(dialog).getByRole("button", { name: "Fetch list" });
+    expect(fetchList).toBeDisabled();
+    expect(within(dialog).queryByText("Enter a base URL to load models.")).not.toBeInTheDocument();
 
     const models = within(dialog).getByRole("list", { name: "Models from this service" });
-    await user.click(within(models).getByRole("checkbox", { name: "deepseek-v4-pro" }));
+    expect(within(models).getByRole("checkbox", { name: "deepseek-v4-pro", exact: true })).toBeInTheDocument();
+    expect(within(models).queryByRole("checkbox", { name: "deepseek-chat", exact: true })).not.toBeInTheDocument();
+
+    await user.type(apiKey, "DEEPSEEK_API_KEY");
+    expect(save).toBeDisabled();
+    await waitFor(() => expect(cmd.modelRemoteList).toHaveBeenCalledOnce(), { timeout: 2000 });
+    await waitFor(() => expect(fetchList).toBeEnabled());
+    await waitFor(() =>
+      expect(within(models).getByRole("checkbox", { name: "deepseek-chat", exact: true })).toBeInTheDocument(),
+    );
+
+    await user.click(within(models).getByRole("checkbox", { name: "deepseek-v4-pro", exact: true }));
     expect(save).toBeEnabled();
 
     await user.click(save);
