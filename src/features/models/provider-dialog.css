@@ -1,7 +1,9 @@
-/* ProviderDialog is a flex item inside the full-screen backdrop. Without an explicit
- * zero minimum, long model/advanced content can keep the card at its min-content
- * height despite max-height, pushing the fixed footer outside the interactive card.
- * The body already owns scrolling; allow the card itself to shrink to that limit. */
+/* ProviderDialog has a scrollable flex body between fixed header/footer regions.
+ * A max-height alone leaves the flex main size indefinite, so sufficiently long
+ * advanced content can be laid out at min-content height and then merely clipped;
+ * the footer still exists in the DOM but lands behind the backdrop hit-test area.
+ * Give the flex container a definite viewport height so the body owns overflow. */
 #provider-dialog > div {
+  height: 90vh;
   min-height: 0;
 }
