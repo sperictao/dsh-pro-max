@@ -187,19 +187,21 @@ async function main() {
     await page.waitForFunction(() => window.__auditSavePending === true);
     await page.waitForTimeout(350);
 
-    const pendingButton = deepseekRow.getByRole("button", { name: "Make default" });
+    const pendingButton = deepseekRow.getByRole("button", { name: "Saving…" });
     const pendingLabel = await pendingButton.textContent();
     const pendingDisabled = await pendingButton.isDisabled();
     const rowAriaBusy = await deepseekRow.getAttribute("aria-busy");
     const pendingSummary = (await summary.textContent())?.trim();
-    const genericToast = await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).count();
-    console.log(`baseline: pendingLabel=${JSON.stringify(pendingLabel?.trim())}; disabled=${pendingDisabled}; rowAriaBusy=${rowAriaBusy}; summary=${JSON.stringify(pendingSummary)}; successToastDuringSave=${genericToast}`);
+    const genericToastDuringSave = await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).count();
+    const targetToastDuringSave = await page.getByText("Default model: DeepSeek · deepseek-chat", { exact: true }).count();
+    console.log(`after: pendingLabel=${JSON.stringify(pendingLabel?.trim())}; disabled=${pendingDisabled}; rowAriaBusy=${rowAriaBusy}; summary=${JSON.stringify(pendingSummary)}; genericToastDuringSave=${genericToastDuringSave}; targetToastDuringSave=${targetToastDuringSave}`);
 
-    assert.equal(pendingLabel?.trim(), "Make default");
+    assert.equal(pendingLabel?.trim(), "Saving…");
     assert.equal(pendingDisabled, true);
-    assert.equal(rowAriaBusy, "false");
+    assert.equal(rowAriaBusy, "true");
     assert.equal(pendingSummary, "Spero AI · glm-5.2");
-    assert.equal(genericToast, 0);
+    assert.equal(genericToastDuringSave, 0);
+    assert.equal(targetToastDuringSave, 0);
     await page.screenshot({ path: resolve(OUT_DIR, "models-make-default-pending.png"), fullPage: true });
 
     await page.waitForFunction(() => window.__auditSavedConfigs.length === 1);
@@ -212,9 +214,10 @@ async function main() {
     assert.equal(saved.defaultReasoningEffort, null);
     assert.equal(await deepseekRow.getByText("default", { exact: true }).count(), 1);
     assert.equal(await deepseekRow.getByRole("button", { name: "Make default" }).count(), 0);
-    const successToast = page.getByText("Model configuration saved — changes take effect immediately", { exact: true });
+    const successToast = page.getByText("Default model: DeepSeek · deepseek-chat", { exact: true });
     await successToast.waitFor({ state: "visible" });
-    console.log("baseline: savedDefault=deepseek/deepseek-chat; reasoningReset=true; toast=generic");
+    assert.equal(await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).count(), 0);
+    console.log("after: savedDefault=deepseek/deepseek-chat; reasoningReset=true; toast=target-specific; genericToast=false");
     assert.equal(failures.length, 0, failures.join("\n"));
 
     await page.screenshot({ path: resolve(OUT_DIR, "models-make-default.png"), fullPage: true });
