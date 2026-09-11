@@ -18,6 +18,8 @@ import {
 } from "./shared";
 
 const modelIdKey = (id: string) => id.toLowerCase();
+const effortLabel = (level: string) =>
+  level === "xhigh" ? "XHigh" : level.charAt(0).toUpperCase() + level.slice(1);
 
 // 左侧候选行是单行 28px；大列表只渲染视口附近节点，完整 candidates 仍承担搜索/全选语义。
 const CANDIDATE_ROW_HEIGHT = 28;
@@ -322,16 +324,30 @@ export function ModelPanes({
         )}
         <ul className="flex flex-col gap-1 overflow-y-auto" aria-label={t("Model settings")}>
           {provider.models.map((m) => {
-            const tokens = fmtTokens(index.get(modelIdKey(m.id))?.context ?? null);
+            const catalogEntry = index.get(modelIdKey(m.id));
+            const contextTokens = fmtTokens(m.contextWindow ?? catalogEntry?.context ?? null);
+            const outputTokens = fmtTokens(m.maxTokens ?? catalogEntry?.maxTokens ?? null);
             const isExpanded = expanded === m.id;
             const view = reasoningView(m);
+            const alias = m.name?.trim();
             return (
               <li key={m.id} className="rounded border border-border" data-model-id={m.id}>
                 <div className="flex items-center gap-2 px-2 py-1.5">
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs" title={m.id}>
-                    {m.name ?? m.id}
-                  </span>
-                  {tokens && <span className="shrink-0 text-xs opacity-60">{tokens}</span>}
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate font-mono text-xs" title={m.id}>
+                      {m.id}
+                    </span>
+                    {alias && alias !== m.id && (
+                      <span className="block truncate text-xs opacity-60" title={alias}>
+                        {alias}
+                      </span>
+                    )}
+                  </div>
+                  {(contextTokens || outputTokens) && (
+                    <span className="shrink-0 text-xs opacity-60">
+                      {contextTokens ?? "—"} · {outputTokens ?? "—"}
+                    </span>
+                  )}
                   <button
                     type="button"
                     className={BTN_SM}
@@ -352,7 +368,7 @@ export function ModelPanes({
                 {isExpanded && (
                   <ModelAdvancedPanel
                     model={m}
-                    catalogEntry={index.get(modelIdKey(m.id)) ?? null}
+                    catalogEntry={catalogEntry ?? null}
                     onChange={(patch) => patchModel(m.id, patch)}
                   />
                 )}
@@ -441,7 +457,7 @@ function ModelAdvancedPanel({
 
   return (
     <div className="flex flex-col gap-3 border-t border-border px-2 py-2" data-testid="model-advanced">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="flex flex-col gap-2">
         <label className="flex flex-col gap-1 text-xs opacity-70">
           {t("Alias")}
           <input
@@ -452,8 +468,10 @@ function ModelAdvancedPanel({
             aria-label={t("Alias")}
           />
         </label>
-        {numberField(t("Context window"), model.contextWindow, (v) => onChange({ contextWindow: v }), t("Context window"))}
-        {numberField(t("Max output"), model.maxTokens, (v) => onChange({ maxTokens: v }), t("Max output"))}
+        <div className="grid grid-cols-2 gap-2">
+          {numberField(t("Context window"), model.contextWindow, (v) => onChange({ contextWindow: v }), t("Context window"))}
+          {numberField(t("Max output"), model.maxTokens, (v) => onChange({ maxTokens: v }), t("Max output"))}
+        </div>
       </div>
       <div className="flex flex-col gap-1">
         <span className="text-xs opacity-70">{t("Thinking levels")}</span>
@@ -465,10 +483,11 @@ function ModelAdvancedPanel({
                 key={level}
                 type="button"
                 className={`${BTN_SM} ${on ? "bg-primary text-primary-foreground" : ""}`}
+                aria-label={level}
                 aria-pressed={on}
                 onClick={() => toggleLevel(level)}
               >
-                {level}
+                {effortLabel(level)}
               </button>
             );
           })}
@@ -479,7 +498,7 @@ function ModelAdvancedPanel({
               .filter((l) => l !== "off")
               .map((level) => (
                 <label key={level} className="flex items-center gap-1 text-xs opacity-70">
-                  {level}
+                  {effortLabel(level)}
                   <input
                     className={`${INPUT_MONO} h-6 w-24 px-1 text-xs`}
                     value={levels.get(level) ?? ""}
