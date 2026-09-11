@@ -157,9 +157,13 @@ async function main() {
     await page.waitForTimeout(500);
 
     const rowText = (await row.locator(":scope > div").first().textContent())?.replace(/\s+/g, " ").trim() ?? "";
-    const thinkingLabels = await thinking.getByRole("button").allTextContents();
+    const thinkingLabels = (await thinking.getByRole("button").allTextContents()).map((label) => label.trim());
     console.log(`advanced: row=${JSON.stringify(rowText)}; thinking=${JSON.stringify(thinkingLabels)}; expanded=${await advanced.getAttribute("aria-expanded")}`);
     assert.equal(await advanced.getAttribute("aria-expanded"), "true");
+    assert.ok(rowText.includes(MODEL_ID), rowText);
+    assert.ok(rowText.includes("Reasoner Preview"), rowText);
+    assert.ok(rowText.includes("131.1K · 32.8K"), rowText);
+    assert.deepEqual(thinkingLabels, ["Off", "Minimal", "Low", "Medium", "High", "XHigh", "Max"]);
     assert.equal(await save.isEnabled(), true);
     await page.screenshot({ path: resolve(OUT_DIR, "models-model-advanced-edited.png"), fullPage: true });
 
