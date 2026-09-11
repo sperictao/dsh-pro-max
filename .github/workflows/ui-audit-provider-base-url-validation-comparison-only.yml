@@ -1,0 +1,87 @@
+name: UI Audit Provider Base URL Validation Comparison
+
+on:
+  pull_request:
+    paths:
+      - "e2e/capture-models-base-url-validation-comparison.mjs"
+      - ".github/workflows/ui-audit-provider-base-url-validation-comparison-only.yml"
+  workflow_dispatch:
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout comparison harness
+        uses: actions/checkout@v5
+        with:
+          ref: audit/provider-base-url-validation-gif-comparison
+          path: harness
+      - name: Checkout Before (#50)
+        uses: actions/checkout@v5
+        with:
+          ref: ff0f2018fcfa248ec34dc4a9c2c74059b7a98e94
+          path: before
+      - name: Checkout After (#52)
+        uses: actions/checkout@v5
+        with:
+          ref: ui/custom-base-url-validation-audit
+          path: after
+      - name: Overlay neutral A/B capture
+        shell: bash
+        run: |
+          cp harness/e2e/capture-models-base-url-validation-comparison.mjs before/e2e/
+          cp harness/e2e/capture-models-base-url-validation-comparison.mjs after/e2e/
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: before/pnpm-lock.yaml
+      - name: Install baseline dependencies
+        working-directory: before
+        run: pnpm install --frozen-lockfile
+      - name: Install fixed dependencies
+        working-directory: after
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright video encoder
+        working-directory: before
+        run: pnpm dlx playwright@1.62.1 install ffmpeg
+      - name: Capture Before (#50)
+        working-directory: before
+        env:
+          AUDIT_LABEL: before
+          AUDIT_PORT: "5250"
+        run: node e2e/capture-models-base-url-validation-comparison.mjs
+      - name: Capture After (#52)
+        working-directory: after
+        env:
+          AUDIT_LABEL: after
+          AUDIT_PORT: "5251"
+        run: node e2e/capture-models-base-url-validation-comparison.mjs
+      - name: Convert recordings to GIF
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -y \
+            -i before/.artifacts/e2e/models-base-url-validation-comparison/before/models-base-url-validation-before.webm \
+            -vf "fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" \
+            before/.artifacts/e2e/models-base-url-validation-comparison/before/models-base-url-validation-before.gif
+          ffmpeg -y \
+            -i after/.artifacts/e2e/models-base-url-validation-comparison/after/models-base-url-validation-after.webm \
+            -vf "fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" \
+            after/.artifacts/e2e/models-base-url-validation-comparison/after/models-base-url-validation-after.gif
+      - name: Upload GIF comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-base-url-validation-before-after
+          path: |
+            before/.artifacts/e2e/models-base-url-validation-comparison/before/
+            after/.artifacts/e2e/models-base-url-validation-comparison/after/
+          if-no-files-found: error
+          retention-days: 14
