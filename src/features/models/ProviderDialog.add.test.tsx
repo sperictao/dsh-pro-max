@@ -77,18 +77,18 @@ describe("ProviderDialog Add provider", () => {
     expect(within(dialog).queryByText("Enter a base URL to load models.")).not.toBeInTheDocument();
 
     const models = within(dialog).getByRole("list", { name: "Models from this service" });
-    expect(within(models).getByRole("checkbox", { name: "deepseek-v4-pro", exact: true })).toBeInTheDocument();
-    expect(within(models).queryByRole("checkbox", { name: "deepseek-chat", exact: true })).not.toBeInTheDocument();
+    expect(within(models).getByRole("checkbox", { name: /^deepseek-v4-pro$/ })).toBeInTheDocument();
+    expect(within(models).queryByRole("checkbox", { name: /^deepseek-chat$/ })).not.toBeInTheDocument();
 
     await user.type(apiKey, "DEEPSEEK_API_KEY");
     expect(save).toBeDisabled();
     await waitFor(() => expect(cmd.modelRemoteList).toHaveBeenCalledOnce(), { timeout: 2000 });
     await waitFor(() => expect(fetchList).toBeEnabled());
     await waitFor(() =>
-      expect(within(models).getByRole("checkbox", { name: "deepseek-chat", exact: true })).toBeInTheDocument(),
+      expect(within(models).getByRole("checkbox", { name: /^deepseek-chat$/ })).toBeInTheDocument(),
     );
 
-    await user.click(within(models).getByRole("checkbox", { name: "deepseek-v4-pro", exact: true }));
+    await user.click(within(models).getByRole("checkbox", { name: /^deepseek-v4-pro$/ }));
     expect(save).toBeEnabled();
 
     await user.click(save);
