@@ -1,0 +1,72 @@
+name: UI Audit Provider Dialog Close
+
+on:
+  pull_request:
+    paths:
+      - "src/features/models/**"
+      - "e2e/capture-models-provider-dialog-close.mjs"
+      - ".github/workflows/ui-audit-provider-dialog-close.yml"
+  workflow_dispatch:
+
+jobs:
+  provider-dialog-close:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - run: pnpm install
+      - name: Run provider dialog close tests
+        run: pnpm vitest run src/features/models/ProviderDialog.close.test.tsx src/features/models/ProviderDialog.picker.test.tsx src/features/models/ProviderDialog.edit.test.tsx
+      - name: Install Playwright video encoder
+        run: pnpm dlx playwright@1.62.1 install ffmpeg
+      - name: Capture provider dialog close flow
+        run: node e2e/capture-models-provider-dialog-close.mjs
+      - name: Convert recording to GIF
+        shell: bash
+        run: |
+          FFMPEG="$(find "$HOME/.cache/ms-playwright" -path '*/ffmpeg-*/ffmpeg-linux' -type f | head -n 1)"
+          test -n "$FFMPEG"
+          FRAMES=.artifacts/e2e/models-provider-dialog-close/gif-frames
+          mkdir -p "$FRAMES"
+          "$FFMPEG" -y \
+            -i .artifacts/e2e/models-provider-dialog-close/models-provider-dialog-close.webm \
+            -vf "scale=960:-1" \
+            "$FRAMES/frame-%04d.png"
+          python3 -m pip install --quiet --user --break-system-packages pillow
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          root = Path('.artifacts/e2e/models-provider-dialog-close')
+          paths = sorted((root / 'gif-frames').glob('frame-*.png'))
+          if not paths:
+              raise SystemExit('No GIF frames generated')
+
+          frame_count = max(1, round(len(paths) * 10 / 25))
+          selected = [paths[min(int(index * 25 / 10), len(paths) - 1)] for index in range(frame_count)]
+          frames = [Image.open(path).convert('RGB') for path in selected]
+          frames[0].save(
+              root / 'models-provider-dialog-close.gif',
+              save_all=True,
+              append_images=frames[1:],
+              duration=100,
+              loop=0,
+              optimize=True,
+          )
+          for frame in frames:
+              frame.close()
+          PY
+          rm -rf "$FRAMES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-models-provider-dialog-close
+          path: .artifacts/e2e/models-provider-dialog-close/
+          if-no-files-found: error
+          retention-days: 14
