@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
@@ -81,20 +81,18 @@ describe("ProviderDialog Base URL validation recovery", () => {
     await user.tab();
     expect(within(dialog).getByRole("alert")).toHaveTextContent("Enter a valid http:// or https:// URL.");
 
-    await user.click(baseURL);
-    await user.keyboard("{Control>}a{/Control}");
-    await user.type(baseURL, "ftp://gateway.example.com/v1/chat/completions");
+    // Model replacing the whole selected value as one browser change, matching Playwright locator.fill().
+    fireEvent.change(baseURL, { target: { value: "ftp://gateway.example.com/v2/chat/completions" } });
     expect(within(dialog).getByRole("alert")).toHaveTextContent("Enter a valid http:// or https:// URL.");
     expect(baseURL).toHaveAttribute("aria-invalid", "true");
 
-    await user.keyboard("{Control>}a{/Control}");
-    await user.type(baseURL, "https://gateway.example.com/v2/chat/completions");
+    fireEvent.change(baseURL, { target: { value: "https://gateway.example.com/v2/chat/completions" } });
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     expect(baseURL).toHaveAttribute("aria-invalid", "false");
     expect(within(dialog).getByRole("button", { name: "Test connection" })).toBeEnabled();
     expect(within(dialog).getByRole("button", { name: "Save provider" })).toBeEnabled();
 
-    await user.tab();
+    fireEvent.blur(baseURL);
     expect(baseURL).toHaveValue("https://gateway.example.com/v2");
 
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
