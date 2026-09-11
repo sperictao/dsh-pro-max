@@ -261,13 +261,11 @@ async function main() {
     const saveButton = dialog.getByRole("button", { name: "Save provider" });
     await displayName.fill("DeepSeek Recovery");
 
-    // Make this a genuinely long ProviderDialog using an existing real interaction state,
-    // rather than depending on a synthetic tiny viewport. This is the state in which an
-    // error rendered at the top of the body could otherwise be outside the user's view.
+    // Make the main composer genuinely long without opening the provider-level Advanced overlay.
+    // Provider Advanced is modal by design and disables pointer events on the underlying card.
     const modelRow = dialog.locator('[data-model-id="deepseek-reasoner"]');
     await modelRow.getByRole("button", { name: "Advanced" }).click();
     await modelRow.getByTestId("model-advanced").waitFor({ state: "visible" });
-    await dialog.getByRole("button", { name: "Advanced settings" }).click();
 
     const body = dialog.locator("div.overflow-y-auto.p-5").first();
     const scrollMetrics = await body.evaluate((element) => ({
@@ -320,6 +318,9 @@ async function main() {
       fullPage: true,
     });
 
+    // Repair a provider-level field through the modal Advanced surface.
+    const advancedButton = dialog.getByRole("button", { name: "Advanced settings" });
+    await advancedButton.click();
     const timeout = dialog.getByRole("spinbutton", { name: "Request timeout (ms)" });
     await timeout.fill("45000");
     assert.equal(await dialog.getByTestId("provider-submit-error").count(), 0, "editing should retire the stale save error");
@@ -329,6 +330,11 @@ async function main() {
       path: resolve(OUT_DIR, "models-provider-save-retry-repaired.png"),
       fullPage: true,
     });
+
+    // Advanced is intentionally modal; close it before returning to the footer Save action.
+    await advancedButton.click();
+    await timeout.waitFor({ state: "detached" });
+    await page.waitForTimeout(300);
 
     await saveButton.click();
     await page.waitForFunction(() => window.__auditSavePending === true);
@@ -363,7 +369,7 @@ async function main() {
     const stable = resolve(OUT_DIR, "models-provider-save-retry.webm");
     if (recorded !== stable) renameSync(recorded, stable);
     console.log(`capture: ${stable}`);
-    console.log("audit: failure visible + draft preserved + stale error cleared + retry persisted");
+    console.log("audit: failure visible + draft preserved + stale error cleared + advanced closed + retry persisted");
   } finally {
     await browser.close().catch(() => {});
     await server.close().catch(() => {});
