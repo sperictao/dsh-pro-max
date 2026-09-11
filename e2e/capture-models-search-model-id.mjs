@@ -247,7 +247,7 @@ async function main() {
     assert.equal(await list.getByRole("checkbox", { name: "deepseek-v4-pro", exact: true }).count(), 1);
     assert.equal(await list.getByRole("checkbox", { name: "deepseek-v4-pro-0813", exact: true }).count(), 1);
     assert.equal(await list.getByRole("checkbox", { name: "deepseek-v4-flash", exact: true }).count(), 0);
-    assert.equal(await dialog.getByRole("checkbox", { name: "Select all · 2 models" }).isEnabled(), true);
+    assert.equal(await dialog.getByRole("checkbox", { name: "Select all" }).isEnabled(), true);
     await page.waitForTimeout(800);
     await page.screenshot({
       path: resolve(OUT_DIR, "models-search-model-id-filtered.png"),
@@ -264,7 +264,7 @@ async function main() {
     await dialog.getByText("No matching models", { exact: true }).waitFor({ state: "visible" });
     assert.equal(await dialog.getByRole("status").textContent(), "0 models");
     assert.equal(await list.getAttribute("data-total-count"), "0");
-    assert.equal(await dialog.getByRole("checkbox", { name: "Select all · 0 models" }).isDisabled(), true);
+    assert.equal(await dialog.getByRole("checkbox", { name: "Select all" }).isDisabled(), true);
     assert.equal(await list.getByRole("checkbox").count(), 0);
     await page.waitForTimeout(800);
     await page.screenshot({
