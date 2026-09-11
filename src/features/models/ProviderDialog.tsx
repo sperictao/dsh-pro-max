@@ -78,6 +78,7 @@ export function ProviderDialog({
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [discardPending, setDiscardPending] = useState(false);
+  const baseUrlErrorId = "provider-base-url-error";
 
   // 保存失败属于刚刚那一版草稿。用户继续改任一 Provider 字段后，旧错误
   // 已经不再描述当前草稿，因此统一从唯一 patch 入口撤销，避免局部字段漏清。
@@ -109,6 +110,13 @@ export function ProviderDialog({
     patch(value);
     invalidateTestResult();
     setSubmitError(null);
+  };
+
+  // 一旦 Base URL 的错误已经暴露，就在用户修复过程中持续校验：仍无效时
+  // 保留提示，真正合法后立即退出错误态，避免“错误消失但 Test/Save 仍被禁用”。
+  const updateBaseURL = (raw: string) => {
+    updateConnection({ baseURL: raw || null });
+    if (urlError !== null) setUrlError(validateBaseUrl(raw));
   };
 
   const updateCustomDisplayName = (name: string) => {
@@ -143,13 +151,20 @@ export function ProviderDialog({
     showComposer && launcherCanTest && !currentUrlIssue && Boolean(testTarget) && !saving && !testing;
 
   const onBaseURLBlur = () => {
-    if (draft.baseURL) {
-      const normalized = normalizeBaseUrl(draft.baseURL);
-      patch({ baseURL: normalized || null });
-      setUrlError(validateBaseUrl(normalized));
-    } else {
-      setUrlError(null);
+    const raw = draft.baseURL ?? "";
+    const issue = validateBaseUrl(raw);
+    if (issue) {
+      // 无效输入属于用户正在修复的事实，不应先经过 normalizeBaseUrl() 被静默改写。
+      setUrlError(issue);
+      return;
     }
+    if (!raw.trim()) {
+      setUrlError(null);
+      return;
+    }
+    const normalized = normalizeBaseUrl(raw);
+    patch({ baseURL: normalized || null });
+    setUrlError(null);
   };
 
   const testConnection = async () => {
@@ -462,17 +477,15 @@ export function ProviderDialog({
                       <input
                         className={`${INPUT_MONO} font-mono`}
                         value={draft.baseURL ?? ""}
-                        onChange={(event) => {
-                          updateConnection({ baseURL: event.target.value || null });
-                          setUrlError(null);
-                        }}
+                        onChange={(event) => updateBaseURL(event.target.value)}
                         onBlur={onBaseURLBlur}
                         placeholder="https://gw.example.com/v1"
                         aria-label="Base URL"
                         aria-invalid={Boolean(urlError)}
+                        aria-describedby={urlError ? baseUrlErrorId : undefined}
                       />
                       {urlError && (
-                        <span role="alert" className="text-destructive">
+                        <span id={baseUrlErrorId} role="alert" className="text-destructive">
                           {t(urlError)}
                         </span>
                       )}
@@ -566,16 +579,14 @@ export function ProviderDialog({
                           <input
                             className={`${INPUT_MONO} font-mono`}
                             value={draft.baseURL ?? ""}
-                            onChange={(event) => {
-                              updateConnection({ baseURL: event.target.value || null });
-                              setUrlError(null);
-                            }}
+                            onChange={(event) => updateBaseURL(event.target.value)}
                             onBlur={onBaseURLBlur}
                             aria-label="Base URL"
                             aria-invalid={Boolean(urlError)}
+                            aria-describedby={urlError ? baseUrlErrorId : undefined}
                           />
                           {urlError && (
-                            <span role="alert" className="text-destructive">
+                            <span id={baseUrlErrorId} role="alert" className="text-destructive">
                               {t(urlError)}
                             </span>
                           )}
