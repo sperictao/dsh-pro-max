@@ -1,0 +1,45 @@
+name: UI Audit Advanced Settings
+
+on:
+  pull_request:
+    paths:
+      - "src/features/models/**"
+      - "e2e/capture-models-advanced-settings.mjs"
+      - ".github/workflows/ui-audit-advanced-settings.yml"
+  workflow_dispatch:
+
+jobs:
+  advanced-settings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - run: pnpm install
+      - name: Install Playwright video encoder
+        run: pnpm dlx playwright@1.62.1 install ffmpeg
+      - name: Capture Advanced settings flow
+        run: node e2e/capture-models-advanced-settings.mjs
+      - name: Convert recording to GIF
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -y \
+            -i .artifacts/e2e/models-advanced-settings/models-advanced-settings.webm \
+            -vf "fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" \
+            .artifacts/e2e/models-advanced-settings/models-advanced-settings.gif
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-models-advanced-settings
+          path: .artifacts/e2e/models-advanced-settings/
+          if-no-files-found: error
+          retention-days: 14
