@@ -175,8 +175,9 @@ async function main() {
     const service = dialog.getByRole("combobox", { name: "Service" });
     const startUrl = page.url();
 
-    // Open via focus so the keyboard-neutral state is not affected by a pointer ending up
-    // over a newly reflowed option after the listbox expands.
+    // Park the pointer outside the dialog before focus opens the reflowing listbox, so the
+    // keyboard-neutral state cannot be mutated by an incidental mouseenter on an option.
+    await page.mouse.move(20, 20);
     await service.focus();
     let picker = dialog.getByRole("listbox", { name: "Choose a service or custom endpoint" });
     await picker.waitFor({ state: "visible" });
