@@ -86,18 +86,46 @@ describe("ModelsView catalog observability", () => {
     expect(useAppStore.getState().toasts.at(-1)?.type).toBe("success");
   });
 
-  it("keeps the snapshot visible and surfaces the latest refresh error", async () => {
-    vi.mocked(cmd.modelCatalogRefresh).mockRejectedValue("Failed to reach the model catalog");
+  it("keeps a failed refresh contextual, offers Retry, and retires the stale error during recovery", async () => {
+    let resolveRetry: ((value: ModelCatalogFile) => void) | undefined;
+    vi.mocked(cmd.modelCatalogRefresh)
+      .mockRejectedValueOnce("Failed to reach the model catalog")
+      .mockImplementationOnce(
+        () =>
+          new Promise<ModelCatalogFile>((resolve) => {
+            resolveRetry = resolve;
+          }),
+      );
     const user = userEvent.setup();
     render(createElement(ModelsView));
-    await screen.findByTestId("catalog-status-line");
+    const status = await screen.findByTestId("catalog-status-line");
 
     await user.click(screen.getByRole("button", { name: "Refresh model catalog" }));
 
-    const error = await screen.findByTestId("catalog-error");
+    const error = await screen.findByRole("alert");
     expect(error).toHaveTextContent("Catalog error: Failed to reach the model catalog");
-    expect(screen.getByTestId("catalog-status-line")).toHaveAttribute("data-catalog-source", "snapshot");
-    expect(screen.getByTestId("catalog-status-line")).toHaveTextContent("7 providers");
+    expect(status).toHaveAttribute("data-catalog-source", "snapshot");
+    expect(status).toHaveTextContent("7 providers");
+    expect(screen.getByRole("button", { name: "Retry" })).toHaveAttribute(
+      "aria-describedby",
+      "models-catalog-error",
+    );
+    expect(useAppStore.getState().toasts).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(screen.queryByTestId("catalog-error")).not.toBeInTheDocument());
+    expect(status).toHaveTextContent("Refreshing catalog…");
+    expect(screen.getByRole("button", { name: "Refreshing catalog…" })).toBeDisabled();
+
+    await act(async () => {
+      resolveRetry?.(snapshot(9));
+    });
+
+    await waitFor(() => expect(status).toHaveAttribute("data-catalog-source", "remote"));
+    expect(status).toHaveAttribute("data-provider-count", "9");
+    expect(screen.getByRole("button", { name: "Refresh model catalog" })).toBeEnabled();
+    expect(useAppStore.getState().toasts.at(-1)?.type).toBe("success");
   });
 
   it("background-refreshes a legacy snapshot that lacks providerCount", async () => {
