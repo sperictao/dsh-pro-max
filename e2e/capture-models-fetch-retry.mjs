@@ -209,7 +209,9 @@ async function main() {
 
     const alert = dialog.getByRole("alert");
     await alert.waitFor({ state: "visible" });
-    assert.match((await alert.textContent()) ?? "", /503 Service Unavailable/);
+    const alertText = (await alert.textContent()) ?? "";
+    assert.match(alertText, /503 Service Unavailable/);
+    assert.match(alertText, /Local snapshot/);
     const retry = alert.getByRole("button", { name: "Retry" });
     assert.equal(await retry.isEnabled(), true);
     assert.equal(await list.getByRole("checkbox", { name: "deepseek-chat", exact: true }).count(), 1);
@@ -242,7 +244,7 @@ async function main() {
     assert.equal(calls.filter((call) => call.command === "model_test_connection").length, 0);
     assert.equal(failures.length, 0, failures.join("\n"));
 
-    console.log("audit: cachedRows=preserved; firstFetch=503; retry=immediate; retryLoading=visible; recovered=3 models; navigation=none; saves=0; tests=0");
+    console.log("audit: cachedRows=preserved+labelled; firstFetch=503; retry=immediate; retryLoading=visible; recovered=3 models; navigation=none; saves=0; tests=0");
 
     await context.close();
     const recorded = await video.path();
