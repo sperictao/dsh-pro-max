@@ -82,7 +82,7 @@ describe("ProviderDialog Base URL validation recovery", () => {
     expect(within(dialog).getByRole("alert")).toHaveTextContent("Enter a valid http:// or https:// URL.");
 
     await user.clear(baseURL);
-    await user.type(baseURL, "https:/gateway.example.com/v1/chat/completions");
+    await user.type(baseURL, "ftp://gateway.example.com/v1/chat/completions");
     expect(within(dialog).getByRole("alert")).toHaveTextContent("Enter a valid http:// or https:// URL.");
     expect(baseURL).toHaveAttribute("aria-invalid", "true");
 
