@@ -38,7 +38,7 @@ jobs:
           mkdir -p "$FRAMES"
           "$FFMPEG" -y \
             -i .artifacts/e2e/models-service-picker/models-service-picker.webm \
-            -vf "fps=10,scale=960:-1:flags=lanczos" \
+            -vf "scale=960:-1" \
             "$FRAMES/frame-%04d.png"
           python3 -m pip install --quiet --user --break-system-packages pillow
           python3 - <<'PY'
@@ -49,7 +49,12 @@ jobs:
           paths = sorted((root / 'gif-frames').glob('frame-*.png'))
           if not paths:
               raise SystemExit('No GIF frames generated')
-          frames = [Image.open(path).convert('RGB') for path in paths]
+
+          # Playwright records at 25 fps. Sample the decoded frames to 10 fps here
+          # because its bundled ffmpeg intentionally omits the fps/GIF filters.
+          frame_count = max(1, round(len(paths) * 10 / 25))
+          selected = [paths[min(int(index * 25 / 10), len(paths) - 1)] for index in range(frame_count)]
+          frames = [Image.open(path).convert('RGB') for path in selected]
           frames[0].save(
               root / 'models-service-picker.gif',
               save_all=True,
