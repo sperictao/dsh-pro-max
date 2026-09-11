@@ -147,13 +147,18 @@ async function main() {
 
     const row = dialog.locator(`[data-model-id="${CUSTOM_ID}"]`);
     const advanced = row.getByRole("button", { name: "Advanced" });
+    const advancedPanel = row.getByTestId("model-advanced");
+    await advancedPanel.waitFor({ state: "visible" });
     const expanded = await advanced.getAttribute("aria-expanded");
+    const advancedVisible = await advancedPanel.isVisible();
     const activeLabel = await page.evaluate(() => {
       const active = document.activeElement;
       return active instanceof HTMLElement ? (active.getAttribute("aria-label") || active.textContent || active.tagName).trim() : "";
     });
     const customStillInInput = await input.inputValue();
-    console.log(`baseline: added=${CUSTOM_ID}; advancedExpanded=${expanded}; active=${JSON.stringify(activeLabel)}; input=${JSON.stringify(customStillInInput)}`);
+    console.log(`after: added=${CUSTOM_ID}; advancedExpanded=${expanded}; advancedVisible=${advancedVisible}; active=${JSON.stringify(activeLabel)}; input=${JSON.stringify(customStillInInput)}`);
+    assert.equal(expanded, "true");
+    assert.equal(advancedVisible, true);
     assert.equal(customStillInInput, "");
     assert.equal(await save.isEnabled(), true);
     await page.screenshot({ path: resolve(OUT_DIR, "models-add-custom-model-added.png"), fullPage: true });
