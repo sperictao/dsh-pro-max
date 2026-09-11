@@ -347,7 +347,7 @@ export function ProviderDialog({
           )}
         </div>
 
-        <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5">
           {submitError && (
             <div
               className="sticky top-0 z-10 rounded-md border border-destructive/40 bg-background px-3 py-2 text-xs text-destructive shadow-sm"
