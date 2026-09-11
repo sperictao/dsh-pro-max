@@ -1,6 +1,6 @@
 // Models -> Edit provider -> ProviderDialog close UI audit capture.
 // Scope: pristine Cancel, dirty Cancel/Escape/backdrop protection, nested Advanced Escape,
-// explicit Discard, and opener focus restoration. No save/test/fetch/navigation is allowed.
+// explicit Discard, and opener focus restoration. Close actions must not add save/test/fetch side effects.
 import assert from "node:assert/strict";
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -135,7 +135,9 @@ async function main() {
         model_catalog_refresh: () => ({ ...structuredClone(modelCatalog), fetchedAt: Math.floor(Date.now() / 1000) }),
         model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
         model_remote_cache_get: () => null,
-        model_remote_list_with_headers: () => { throw new Error("Provider dialog close audit must not fetch remote models"); },
+        // Edit provider performs its normal debounced stale-while-revalidate discovery.
+        // The audit records that expected baseline and then forbids close actions from adding calls.
+        model_remote_list_with_headers: () => ["deepseek-chat"],
         model_test_connection: () => { throw new Error("Provider dialog close audit must not test the connection"); },
         "plugin:app|version": () => "0.4.0",
         "plugin:notification|is_permission_granted": () => true,
@@ -180,10 +182,20 @@ async function main() {
     await dialog.waitFor({ state: "hidden" });
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Edit provider");
 
-    // Reopen and make a real edit; every dismissal path must protect it.
+    // Reopen and allow the normal 600ms discovery cycle to settle before measuring side effects.
     await editButton.click();
     dialog = page.getByRole("dialog", { name: "Edit provider" });
     await dialog.waitFor({ state: "visible" });
+    await page.waitForTimeout(750);
+    const sideEffectBaseline = await page.evaluate(() => ({
+      saves: window.__auditCalls.filter((call) => call.command === "model_config_save").length,
+      tests: window.__auditCalls.filter((call) => call.command === "model_test_connection").length,
+      fetches: window.__auditCalls.filter((call) => call.command === "model_remote_list_with_headers").length,
+    }));
+    assert.equal(sideEffectBaseline.saves, 0);
+    assert.equal(sideEffectBaseline.tests, 0);
+
+    // Make a real edit; every dismissal path must protect it.
     const displayName = dialog.getByRole("textbox", { name: "Display Name" });
     await displayName.fill("DeepSeek Production");
     assert.equal(await dialog.getByRole("button", { name: "Save provider" }).isEnabled(), true);
@@ -237,12 +249,12 @@ async function main() {
     await page.screenshot({ path: resolve(OUT_DIR, "models-provider-dialog-close-discarded.png"), fullPage: true });
 
     const calls = await page.evaluate(() => window.__auditCalls);
-    assert.equal(calls.filter((call) => call.command === "model_config_save").length, 0);
-    assert.equal(calls.filter((call) => call.command === "model_test_connection").length, 0);
-    assert.equal(calls.filter((call) => call.command === "model_remote_list_with_headers").length, 0);
+    assert.equal(calls.filter((call) => call.command === "model_config_save").length, sideEffectBaseline.saves);
+    assert.equal(calls.filter((call) => call.command === "model_test_connection").length, sideEffectBaseline.tests);
+    assert.equal(calls.filter((call) => call.command === "model_remote_list_with_headers").length, sideEffectBaseline.fetches);
     assert.equal(failures.length, 0, failures.join("\n"));
 
-    console.log("audit: pristine=direct-close; dirty=protected; advanced=escape-layered; backdrop=protected; discard=explicit; focus=restored; saves=0; tests=0; fetches=0");
+    console.log(`audit: pristine=direct-close; dirty=protected; advanced=escape-layered; backdrop=protected; discard=explicit; focus=restored; saveDelta=0; testDelta=0; fetchDelta=0; discoveryBaseline=${sideEffectBaseline.fetches}`);
 
     await context.close();
     const recorded = await video.path();
