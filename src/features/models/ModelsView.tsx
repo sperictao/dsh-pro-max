@@ -150,6 +150,7 @@ export function ModelsView() {
   const [loading, setLoading] = useState(true);
   const [busyRoute, setBusyRoute] = useState<string | null>(null);
   const [testingRoute, setTestingRoute] = useState<string | null>(null);
+  const [defaultingRoute, setDefaultingRoute] = useState<string | null>(null);
   const [busyGlobal, setBusyGlobal] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
   const [catalogFetchedAt, setCatalogFetchedAt] = useState<number | null>(null);
@@ -305,7 +306,7 @@ export function ModelsView() {
     }
   };
 
-  const persistDefault = async (route: string, model: string) => {
+  const persistDefault = async (route: string, model: string, notify = true) => {
     if (!readyRoutes.has(route)) return;
     const current = config ?? EMPTY_CONFIG;
     const next = withValidDefaultReasoning(
@@ -313,7 +314,9 @@ export function ModelsView() {
       catalog,
     );
     await persist(next);
-    toast(t("Model configuration saved — changes take effect immediately"), "success");
+    if (notify) {
+      toast(t("Model configuration saved — changes take effect immediately"), "success");
+    }
   };
 
   const persistReasoning = async (value: string) => {
@@ -362,7 +365,13 @@ export function ModelsView() {
   const makeDefault = async (provider: ProviderConfig) => {
     const model = firstProviderModelId(provider);
     if (!model || !readyRoutes.has(provider.route)) return;
-    await persistDefault(provider.route, model);
+    setDefaultingRoute(provider.route);
+    try {
+      await persistDefault(provider.route, model, false);
+      toast(`${t("Default model")}: ${provider.displayName ?? provider.route} · ${model}`, "success");
+    } finally {
+      setDefaultingRoute(null);
+    }
   };
 
   const armDelete = (route: string) => {
@@ -583,7 +592,8 @@ export function ModelsView() {
                 const armed = armedDelete === provider.route;
                 const probing = busyRoute === provider.route;
                 const testing = testingRoute === provider.route;
-                const rowBusy = probing || testing;
+                const defaulting = defaultingRoute === provider.route;
+                const rowBusy = probing || testing || defaulting;
                 const firstModel = firstProviderModelId(provider);
                 const displayModel = provider.models[0]?.id ?? null;
                 const readiness =
@@ -650,7 +660,7 @@ export function ModelsView() {
                           disabled={rowBusy || busyGlobal}
                           onClick={() => void makeDefault(provider).catch(() => undefined)}
                         >
-                          {t("Make default")}
+                          {defaulting ? t("Saving…") : t("Make default")}
                         </button>
                       )}
                       <div className="flex items-center gap-1">
