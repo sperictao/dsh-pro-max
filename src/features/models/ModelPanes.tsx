@@ -8,11 +8,13 @@ import { BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import {
   EFFORT_OPTIONS,
+  MODEL_PRESETS,
   emptyModelEntry,
   fmtTokens,
   familyOf,
   inputView,
   reasoningView,
+  validateBaseUrl,
 } from "./shared";
 
 const modelIdKey = (id: string) => id.toLowerCase();
@@ -54,8 +56,16 @@ export function ModelPanes({
 
   const selectedIds = new Set(provider.models.map((m) => modelIdKey(m.id)));
   const family = familyOf(provider.api);
+  const preset = MODEL_PRESETS.find((entry) => entry.id === provider.route.trim()) ?? null;
+  // 与 useProviderModels 的 active/canDiscover 边界保持一致：已知服务在 Add/Edit
+  // 没有显式凭据时不会发匿名探测，自定义端点仍允许无鉴权服务。
+  const connectionReadyForFetch =
+    Boolean(provider.baseURL?.trim()) &&
+    validateBaseUrl(provider.baseURL ?? "") == null &&
+    (!preset || Boolean(provider.apiKeyEnv?.trim()));
 
-  // 候选池：上游拉取优先；未拉取时回落目录按协议家族过滤
+  // 候选池：live 结果优先；已知服务尚未 live 拉取时只回落该服务自己的内置目录，
+  // 不再把同协议家族的其它 Provider 模型冒充成“Models from this service”。
   const candidates = useMemo(() => {
     const pool = new Map<string, { id: string; name: string; context: number | null }>();
     const push = (id: string, name?: string, context?: number | null) => {
@@ -68,6 +78,11 @@ export function ModelPanes({
     };
     if (remote) {
       for (const id of remote) push(id);
+    } else if (preset) {
+      for (const id of preset.modelIds) {
+        const published = index.get(modelIdKey(id));
+        push(id, published?.name, published?.context);
+      }
     } else {
       for (const e of catalog) {
         if (!family || e.family === family) push(e.id, e.name, e.context);
@@ -91,13 +106,13 @@ export function ModelPanes({
       ? rows.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
       : rows;
     return visible;
-  }, [remote, catalog, family, query, provider.models, index]);
+  }, [remote, catalog, family, query, provider.models, index, preset]);
 
   useEffect(() => {
     // 上游/目录切换会改变候选顺序；回到顶部避免保留一个已经无意义的旧滚动位置。
     setCandidateScrollTop(0);
     if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
-  }, [remote, catalog, family]);
+  }, [remote, catalog, family, preset?.id]);
 
   const candidateWindow = useMemo(() => {
     if (candidates.length <= CANDIDATE_VIRTUALIZE_AT) {
@@ -183,7 +198,7 @@ export function ModelPanes({
           <button
             type="button"
             className={BTN_SM}
-            disabled={fetching || !provider.baseURL}
+            disabled={fetching || !connectionReadyForFetch}
             onClick={onFetch}
             title={t("Fetch models")}
           >
@@ -209,7 +224,7 @@ export function ModelPanes({
             </button>
           </p>
         )}
-        {!remote && !fetching && !fetchError && (
+        {!remote && !fetching && !fetchError && !provider.baseURL?.trim() && (
           <p className="text-xs opacity-60">{t("Enter a base URL to load models.")}</p>
         )}
         {remote && remote.length === 0 && !fetchError && (
