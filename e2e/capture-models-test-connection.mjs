@@ -168,8 +168,8 @@ async function main() {
     const testButton = dialog.getByRole("button", { name: "Test connection" });
     assert.equal(await testButton.isEnabled(), true, "Test connection should enable after target model is selected");
 
-    // Keep the user's attention at the model-selection end of the form, then measure where
-    // the baseline feedback actually lands. This is an observation, not a pre-baked defect assertion.
+    // Keep the user's attention at the model-selection end of the form, then verify
+    // completion feedback remains visible without forcing the body back to the top.
     const scrollRegion = dialog.locator(".overflow-y-auto").first();
     await scrollRegion.evaluate((element) => { element.scrollTop = element.scrollHeight; });
     await page.waitForTimeout(700);
@@ -180,7 +180,7 @@ async function main() {
     await page.waitForTimeout(700);
 
     const result = dialog.getByText("Connection successful", { exact: true });
-    await result.waitFor({ state: "attached" });
+    await result.waitFor({ state: "visible" });
     await page.waitForTimeout(900);
 
     const resultVisibleInScrollViewport = await result.evaluate((element) => {
@@ -195,7 +195,9 @@ async function main() {
       const scrollRect = scroller.getBoundingClientRect();
       return resultRect.top >= scrollRect.top && resultRect.bottom <= scrollRect.bottom;
     });
-    console.log(`baseline: scrollTop=${scrollTopBeforeTest}; resultVisible=${resultVisibleInScrollViewport}`);
+    assert.equal(resultVisibleInScrollViewport, true, "Test connection result should remain visible after the request completes");
+    assert.equal(await dialog.getByTestId("provider-test-result").isVisible(), true);
+    console.log(`after: scrollTop=${scrollTopBeforeTest}; resultVisible=${resultVisibleInScrollViewport}`);
 
     const calls = await page.evaluate(() => window.__auditCalls);
     const testCalls = calls.filter((call) => call.command === "model_test_connection");
