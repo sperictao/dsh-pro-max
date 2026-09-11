@@ -153,8 +153,7 @@ async function main() {
       return active instanceof HTMLElement ? (active.getAttribute("aria-label") || active.textContent || active.tagName).trim() : "";
     });
     const customStillInInput = await input.inputValue();
-    const countText = (await dialog.getByText("Model settings", { exact: true }).locator("..").textContent()) ?? "";
-    console.log(`baseline: added=${CUSTOM_ID}; advancedExpanded=${expanded}; active=${JSON.stringify(activeLabel)}; input=${JSON.stringify(customStillInInput)}; settingsHead=${JSON.stringify(countText.trim())}`);
+    console.log(`baseline: added=${CUSTOM_ID}; advancedExpanded=${expanded}; active=${JSON.stringify(activeLabel)}; input=${JSON.stringify(customStillInInput)}`);
     assert.equal(customStillInInput, "");
     assert.equal(await save.isEnabled(), true);
     await page.screenshot({ path: resolve(OUT_DIR, "models-add-custom-model-added.png"), fullPage: true });
