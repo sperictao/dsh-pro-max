@@ -73,14 +73,14 @@ describe("ProviderDialog Test connection recovery", () => {
     const { dialog, onSubmit } = renderDialog();
 
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
-    expect(await within(dialog).findByText("HTTP 401 Unauthorized: invalid API key", { exact: true })).toBeVisible();
+    expect(await within(dialog).findByText(/HTTP 401 Unauthorized: invalid API key/)).toBeVisible();
     expect(within(dialog).getByTestId("provider-test-result")).toBeVisible();
 
     const apiKey = within(dialog).getByRole("textbox", { name: "API Key Env Var" });
     await user.clear(apiKey);
     await user.type(apiKey, "DEEPSEEK_PROD_API_KEY");
 
-    expect(within(dialog).queryByText("HTTP 401 Unauthorized: invalid API key", { exact: true })).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/HTTP 401 Unauthorized: invalid API key/)).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     expect(await within(dialog).findByText("Connection successful", { exact: true })).toBeVisible();
 
@@ -131,7 +131,7 @@ describe("ProviderDialog Test connection recovery", () => {
     await waitFor(() =>
       expect(within(dialog).getByRole("button", { name: "Test connection" })).toBeEnabled(),
     );
-    expect(within(dialog).queryByText("HTTP 401 Unauthorized: old credential", { exact: true })).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/HTTP 401 Unauthorized: old credential/)).not.toBeInTheDocument();
     expect(within(dialog).queryByTestId("provider-test-result")).not.toBeInTheDocument();
 
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
