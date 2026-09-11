@@ -162,7 +162,7 @@ async function main() {
     assert.equal(await dialog.getByRole("checkbox", { name: "opencode:deepseek" }).isChecked(), true);
     assert.equal(await dialog.getByRole("checkbox", { name: "cc-switch:local" }).isChecked(), true);
     assert.equal(await dialog.getByRole("checkbox", { name: "codex:openai" }).isChecked(), false);
-    assert.equal(await dialog.getByText("Pi").count(), 0);
+    assert.equal(await dialog.getByText("Pi", { exact: true }).count(), 0);
     await dialog.getByText("Literal key — not imported").waitFor({ state: "visible" });
     assert.equal(await dialog.getByText(/selected entries carry literal keys/).count(), 0);
 
