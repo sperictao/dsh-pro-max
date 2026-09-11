@@ -145,7 +145,7 @@ async function main() {
     let thinking = panel.getByRole("group", { name: "Thinking levels" });
     const buttons = thinking.getByRole("button");
     assert.deepEqual(await buttons.evaluateAll((items) => items.map((item) => item.getAttribute("aria-pressed"))), ["false", "false", "false", "false", "false", "false", "false"]);
-    assert.equal(await panel.getByText("Follow catalog", { exact: false }).count(), 0);
+    assert.equal(await panel.getByTestId("thinking-levels-inherit").count(), 0);
     assert.equal(await panel.getByRole("textbox", { name: /Wire spelling for/ }).count(), 0);
     await page.screenshot({ path: resolve(OUT_DIR, "models-thinking-levels-inherited.png"), fullPage: true });
 
@@ -184,7 +184,7 @@ async function main() {
     await reopenedHigh.click();
     assert.equal(await reopenedHigh.getAttribute("aria-pressed"), "false");
     assert.equal(await panel.getByRole("textbox", { name: /Wire spelling for/ }).count(), 0);
-    assert.equal(await panel.getByText("Follow catalog", { exact: false }).count(), 0);
+    assert.equal(await panel.getByTestId("thinking-levels-inherit").count(), 0);
     await page.screenshot({ path: resolve(OUT_DIR, "models-thinking-levels-restored.png"), fullPage: true });
 
     save = dialog.getByRole("button", { name: "Save provider" });
