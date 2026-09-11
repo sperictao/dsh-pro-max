@@ -88,19 +88,19 @@ describe("ProviderDialog Base URL validation recovery", () => {
     expect(baseURL).toHaveAttribute("aria-invalid", "true");
 
     await user.keyboard("{Control>}a{/Control}");
-    await user.type(baseURL, "https://gateway.example.com/v1/chat/completions");
+    await user.type(baseURL, "https://gateway.example.com/v2/chat/completions");
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     expect(baseURL).toHaveAttribute("aria-invalid", "false");
     expect(within(dialog).getByRole("button", { name: "Test connection" })).toBeEnabled();
     expect(within(dialog).getByRole("button", { name: "Save provider" })).toBeEnabled();
 
     await user.tab();
-    expect(baseURL).toHaveValue("https://gateway.example.com/v1");
+    expect(baseURL).toHaveValue("https://gateway.example.com/v2");
 
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     expect(await within(dialog).findByText("Connection successful", { exact: true })).toBeVisible();
     expect(cmd.modelTestConnection).toHaveBeenCalledWith(
-      "https://gateway.example.com/v1",
+      "https://gateway.example.com/v2",
       "openai-completions",
       "MY_GATEWAY_KEY",
       null,
@@ -109,6 +109,6 @@ describe("ProviderDialog Base URL validation recovery", () => {
 
     await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
     expect(onSubmit).toHaveBeenCalledOnce();
-    expect(onSubmit.mock.calls[0]?.[0].baseURL).toBe("https://gateway.example.com/v1");
+    expect(onSubmit.mock.calls[0]?.[0].baseURL).toBe("https://gateway.example.com/v2");
   });
 });
