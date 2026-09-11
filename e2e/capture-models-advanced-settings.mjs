@@ -157,8 +157,13 @@ async function main() {
     await advanced.getByLabel("Display Name").fill("DeepSeek Enterprise");
     await advanced.getByLabel("Request timeout (ms)").fill("45000");
     await advanced.getByLabel("Default reasoning level").selectOption("high");
+
+    // Baseline defect: Add header creates an empty row, but normalization immediately filters empty keys.
     await advanced.getByRole("button", { name: "Add header" }).click();
-    await advanced.getByLabel("Header name").fill("X-Client-Name");
+    await page.waitForTimeout(800);
+    assert.equal(await advanced.getByLabel("Header name").count(), 0);
+    // Continue the complete operation through a preset header so the baseline can still save successfully.
+    await advanced.getByLabel("Common headers").selectOption("X-Client-Name");
     await advanced.getByLabel("Header value").fill("dsh-pro-max-audit");
     await page.waitForTimeout(1200);
 
