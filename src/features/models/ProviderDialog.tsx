@@ -610,7 +610,9 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [highlighted, setHighlighted] = useState(-1);
+  // null = no active option; -1 = Custom endpoint; >= 0 = index in the filtered preset list.
+  // Keeping “no active option” distinct prevents Enter after typing from accidentally choosing Custom.
+  const [highlighted, setHighlighted] = useState<number | null>(null);
 
   const q = query.trim().toLowerCase();
   const matched = (
@@ -623,11 +625,18 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
         )
       : MODEL_PRESETS
   ).slice(0, 12);
+  const listboxId = "provider-preset-options";
+  const activeDescendant =
+    open && highlighted === -1
+      ? "provider-preset-custom"
+      : open && highlighted != null && matched[highlighted]
+        ? `provider-preset-${matched[highlighted].id}`
+        : undefined;
 
   const pick = (preset: ModelPreset | null) => {
     onPick(preset);
     setOpen(false);
-    setHighlighted(-1);
+    setHighlighted(null);
     // 选择完成后让输入框继续表达“当前服务”，而不是退回空白 placeholder。
     setQuery(preset?.name ?? t("Custom endpoint"));
   };
@@ -640,31 +649,44 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
         role="combobox"
         aria-autocomplete="list"
         aria-expanded={open}
+        aria-controls={listboxId}
+        aria-activedescendant={activeDescendant}
         value={query}
         placeholder={t("Choose a service or custom endpoint")}
         onFocus={(event) => {
           setOpen(true);
+          setHighlighted(null);
           if (query) event.currentTarget.select();
         }}
         onChange={(event) => {
           setQuery(event.target.value);
           setOpen(true);
-          setHighlighted(-1);
+          setHighlighted(null);
         }}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
             event.preventDefault();
             setOpen(true);
-            setHighlighted((value) => Math.min(value + 1, matched.length - 1));
+            setHighlighted((value) => {
+              if (value == null) return matched.length > 0 ? 0 : -1;
+              return Math.min(value + 1, matched.length - 1);
+            });
           } else if (event.key === "ArrowUp") {
             event.preventDefault();
-            setHighlighted((value) => Math.max(value - 1, -1));
+            setOpen(true);
+            setHighlighted((value) => {
+              if (value == null) return -1;
+              return Math.max(value - 1, -1);
+            });
           } else if (event.key === "Enter" && open) {
             event.preventDefault();
-            if (highlighted >= 0 && matched[highlighted]) pick(matched[highlighted]);
-            else if (highlighted === -1) pick(null);
-          } else if (event.key === "Escape") {
+            if (highlighted === -1) pick(null);
+            else if (highlighted != null && matched[highlighted]) pick(matched[highlighted]);
+          } else if (event.key === "Escape" && open) {
+            event.preventDefault();
+            event.stopPropagation();
             setOpen(false);
+            setHighlighted(null);
           }
         }}
         aria-label={t("Service")}
@@ -672,12 +694,14 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
       />
       {open && (
         <ul
+          id={listboxId}
           role="listbox"
           aria-label={t("Choose a service or custom endpoint")}
           className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-background py-1 shadow-lg"
         >
           <li>
             <button
+              id="provider-preset-custom"
               type="button"
               role="option"
               aria-selected={highlighted === -1}
@@ -695,6 +719,7 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
           {matched.map((preset, index) => (
             <li key={preset.id}>
               <button
+                id={`provider-preset-${preset.id}`}
                 type="button"
                 role="option"
                 aria-selected={index === highlighted}
