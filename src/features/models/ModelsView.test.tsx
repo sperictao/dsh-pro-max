@@ -434,6 +434,9 @@ describe("ModelsView provider studio", () => {
 
     await user.click(screen.getByRole("button", { name: "Edit provider" }));
     const dialog = await screen.findByRole("dialog");
+    const displayName = within(dialog).getByLabelText("Display Name");
+    await user.clear(displayName);
+    await user.type(displayName, "Spero Save Failure");
     await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Failed to write settings.yaml");
