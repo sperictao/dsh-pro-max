@@ -121,7 +121,7 @@ async function main() {
     const failures = [];
     page.on("pageerror", (error) => failures.push(`pageerror: ${error.message}`));
 
-    await page.addInitScript(({ appConfig, dshStatus, modelConfig, modelCatalog }) => {
+    await page.addInitScript(({ appConfig, dshStatus, modelConfig, modelCatalog, MODEL_ID }) => {
       let nextId = 1;
       const callbacks = new Map();
       let currentModelConfig = structuredClone(modelConfig);
