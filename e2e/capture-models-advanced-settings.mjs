@@ -149,23 +149,27 @@ async function main() {
     const advancedButton = dialog.getByRole("button", { name: "Advanced settings" });
     await advancedButton.click();
     const advanced = dialog.getByTestId("provider-advanced");
-    await advanced.waitFor({ state: "attached" });
-    await page.waitForTimeout(900);
-    await advanced.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(700);
+    await advanced.waitFor({ state: "visible" });
+    assert.equal(await advanced.evaluate((element) => getComputedStyle(element).position), "fixed");
+    await page.waitForTimeout(1100);
 
     await advanced.getByLabel("Display Name").fill("DeepSeek Enterprise");
     await advanced.getByLabel("Request timeout (ms)").fill("45000");
     await advanced.getByLabel("Default reasoning level").selectOption("high");
 
-    // Baseline defect: Add header creates an empty row, but normalization immediately filters empty keys.
     await advanced.getByRole("button", { name: "Add header" }).click();
-    await page.waitForTimeout(800);
-    assert.equal(await advanced.getByLabel("Header name").count(), 0);
-    // Continue the complete operation through a preset header so the baseline can still save successfully.
-    await advanced.getByLabel("Common headers").selectOption("X-Client-Name");
-    await advanced.getByLabel("Header value").fill("dsh-pro-max-audit");
+    const headerName = advanced.getByLabel("Header name");
+    const headerValue = advanced.getByLabel("Header value");
+    await headerName.waitFor({ state: "visible" });
+    assert.equal(await headerName.count(), 1);
+    await headerName.fill("X-Client-Name");
+    await headerValue.fill("dsh-pro-max-audit");
     await page.waitForTimeout(1200);
+
+    // Collapse the focused secondary task before committing the provider.
+    await advancedButton.click();
+    await advanced.waitFor({ state: "detached" });
+    await page.waitForTimeout(700);
 
     const saveButton = dialog.getByRole("button", { name: "Save provider" });
     assert.equal(await saveButton.isEnabled(), true);
