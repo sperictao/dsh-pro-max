@@ -82,14 +82,21 @@ beforeEach(() => {
   vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
 });
 
+async function providerRows() {
+  await screen.findAllByRole("button", { name: "Fetch list" });
+  return {
+    primaryRow: document.querySelector('[data-route="primary-api"]') as HTMLElement,
+    backupRow: document.querySelector('[data-route="backup-api"]') as HTMLElement,
+  };
+}
+
 describe("ModelsView provider card Fetch list", () => {
   it("discovers models directly from the card without opening the dialog or saving", async () => {
     const user = userEvent.setup();
     vi.mocked(cmd.modelRemoteList).mockResolvedValueOnce(["alpha", "beta", "gamma"]);
     render(createElement(ModelsView));
 
-    const primaryRow = document.querySelector('[data-route="primary-api"]') as HTMLElement;
-    await waitFor(() => expect(primaryRow).toBeInTheDocument());
+    const { primaryRow } = await providerRows();
     await user.click(within(primaryRow).getByRole("button", { name: "Fetch list" }));
 
     await waitFor(() => expect(cmd.modelRemoteList).toHaveBeenCalledOnce());
@@ -115,9 +122,7 @@ describe("ModelsView provider card Fetch list", () => {
     );
     render(createElement(ModelsView));
 
-    const primaryRow = document.querySelector('[data-route="primary-api"]') as HTMLElement;
-    const backupRow = document.querySelector('[data-route="backup-api"]') as HTMLElement;
-    await waitFor(() => expect(primaryRow).toBeInTheDocument());
+    const { primaryRow, backupRow } = await providerRows();
     const primaryFetch = within(primaryRow).getByRole("button", { name: "Fetch list" });
     const backupFetch = within(backupRow).getByRole("button", { name: "Fetch list" });
 
@@ -145,8 +150,7 @@ describe("ModelsView provider card Fetch list", () => {
     vi.mocked(cmd.modelRemoteList).mockRejectedValueOnce(new Error("503 Service Unavailable"));
     render(createElement(ModelsView));
 
-    const backupRow = document.querySelector('[data-route="backup-api"]') as HTMLElement;
-    await waitFor(() => expect(backupRow).toBeInTheDocument());
+    const { backupRow } = await providerRows();
     await user.click(within(backupRow).getByRole("button", { name: "Fetch list" }));
 
     await waitFor(() =>
