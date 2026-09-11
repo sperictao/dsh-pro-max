@@ -431,7 +431,7 @@ export function ProviderDialog({
                       <input
                         className={`${INPUT_MONO} font-mono`}
                         value={draft.route}
-                        onChange={(event) => updateConnection({ route: event.target.value })
+                        onChange={(event) => updateConnection({ route: event.target.value })}
                         placeholder="my-gateway"
                         aria-label={t("Route key")}
                         data-testid="route-input"
@@ -570,7 +570,7 @@ export function ProviderDialog({
                           >
                             <option value="">{t("Not set")}</option>
                             {API_OPTIONS.map((value) => (
-                              <option key={value}>
+                              <option key={value} value={value}>
                                 {value}
                               </option>
                             ))}
