@@ -116,7 +116,7 @@ export function ProviderDialog({
   // 保留提示，真正合法后立即退出错误态，避免“错误消失但 Test/Save 仍被禁用”。
   const updateBaseURL = (raw: string) => {
     updateConnection({ baseURL: raw || null });
-    if (urlError !== null) setUrlError(validateBaseUrl(raw));
+    setUrlError((current) => (current !== null ? validateBaseUrl(raw) : null));
   };
 
   const updateCustomDisplayName = (name: string) => {
