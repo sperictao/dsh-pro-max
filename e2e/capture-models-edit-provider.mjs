@@ -138,12 +138,16 @@ async function main() {
     const commonCardText = (await dialog.locator("section").first().textContent()) ?? "";
     const technicalSummaryPresent = commonCardText.includes("deepseek") && commonCardText.includes("api.deepseek.com") && commonCardText.includes("openai-completions");
     const saveEnabledBeforeChanges = await saveButton.isEnabled();
-    console.log(`baseline: saveEnabledBeforeChanges=${saveEnabledBeforeChanges}; close=${closeCount}; cancel=${cancelCount}; technicalSummary=${technicalSummaryPresent}; catalogHint=${routeHintCount}`);
-    assert.equal(saveEnabledBeforeChanges, true);
-    assert.equal(closeCount, 1);
+    const testConnectionCount = await dialog.getByRole("button", { name: "Test connection" }).count();
+    const advancedCount = await dialog.getByRole("button", { name: "Advanced settings" }).count();
+    console.log(`after: saveEnabledBeforeChanges=${saveEnabledBeforeChanges}; close=${closeCount}; cancel=${cancelCount}; technicalSummary=${technicalSummaryPresent}; catalogHint=${routeHintCount}; test=${testConnectionCount}; advanced=${advancedCount}`);
+    assert.equal(saveEnabledBeforeChanges, false);
+    assert.equal(closeCount, 0);
     assert.equal(cancelCount, 1);
-    assert.equal(routeHintCount, 1);
-    assert.equal(technicalSummaryPresent, true);
+    assert.equal(routeHintCount, 0);
+    assert.equal(technicalSummaryPresent, false);
+    assert.equal(testConnectionCount, 1);
+    assert.equal(advancedCount, 1);
     await page.screenshot({ path: resolve(OUT_DIR, "models-edit-provider-open.png"), fullPage: true });
 
     const displayName = dialog.getByRole("textbox", { name: "Display Name" });
@@ -151,6 +155,7 @@ async function main() {
     assert.equal(await displayName.inputValue(), "DeepSeek");
     assert.equal(await apiKeyEnv.inputValue(), "DEEPSEEK_API_KEY");
     await displayName.fill("DeepSeek Production");
+    assert.equal(await saveButton.isEnabled(), true);
     await apiKeyEnv.fill("DEEPSEEK_PROD_API_KEY");
     assert.equal(await saveButton.isEnabled(), true);
     await page.waitForTimeout(500);
@@ -179,7 +184,7 @@ async function main() {
     assert.equal(saved.defaultModel, "glm-5.2");
     assert.equal(saved.defaultReasoningEffort, "max");
     await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).waitFor({ state: "visible" });
-    console.log("baseline: saved edit preserved route/base/protocol/models/default; toast=generic");
+    console.log("after: saved edit preserved route/base/protocol/models/default; toast=generic");
     assert.equal(failures.length, 0, failures.join("\n"));
 
     await page.screenshot({ path: resolve(OUT_DIR, "models-edit-provider.png"), fullPage: true });
