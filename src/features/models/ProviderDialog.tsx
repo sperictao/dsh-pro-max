@@ -1,7 +1,7 @@
 // 添加/编辑 AI 服务：参考 PI-Desktop Provider Setup 的渐进披露。
 // 添加已知服务时只保留主路径需要的服务、凭据和模型；连接细节退到高级设置。
 // Custom endpoint 也保持“身份 → 连接 → 模型”的顺序，并避免把本地目录误当远端结果。
-// 编辑态继续保留现有字段与测试入口，避免 Add provider 优化扩散到其他功能点。
+// 编辑态同样聚焦高频字段；测试与高级连接细节保持独立入口。
 
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -26,6 +26,17 @@ import {
 export type ProviderDialogState =
   | { mode: "add" }
   | { mode: "edit"; index: number; provider: ProviderConfig };
+
+/** 与最终写盘规范化保持一致，用于判断 Edit 是否真的产生了配置变化。 */
+function comparableProvider(provider: ProviderConfig): string {
+  return JSON.stringify({
+    ...provider,
+    route: provider.route.trim(),
+    displayName: provider.displayName?.trim() || null,
+    baseURL: provider.baseURL?.trim() ? normalizeBaseUrl(provider.baseURL) : null,
+    apiKeyEnv: provider.apiKeyEnv?.trim() || null,
+  });
+}
 
 export function ProviderDialog({
   state,
@@ -66,6 +77,7 @@ export function ProviderDialog({
   const effectivePreset = pickedPreset ?? (isEdit ? presetOfRoute : null);
   const knownService = effectivePreset != null;
   const showComposer = isEdit || serviceChosen;
+  const editChanged = !isEdit || comparableProvider(draft) !== comparableProvider(state.provider);
 
   const updateConnection = (value: Partial<ProviderConfig>) => {
     patch(value);
@@ -175,8 +187,9 @@ export function ProviderDialog({
     draft.route.trim().length > 0 &&
     !currentUrlIssue &&
     (knownService || Boolean(draft.baseURL?.trim())) &&
-    // 新增 Provider 至少选择一个模型才是可用配置；编辑态保留原有宽松语义。
+    // 新增 Provider 至少选择一个模型才是可用配置；编辑态仅在确有变更时允许保存。
     (isEdit || draft.models.length > 0) &&
+    editChanged &&
     !saving;
 
   const save = async () => {
@@ -263,12 +276,6 @@ export function ProviderDialog({
                   {t("Advanced settings")}
                 </button>
               )}
-              {/* Add 模式底部已有 Cancel；避免同一关闭动作在上下各出现一次。 */}
-              {isEdit && (
-                <button type="button" className={BTN_SM} onClick={onClose} disabled={saving}>
-                  {t("Close")}
-                </button>
-              )}
             </div>
           </div>
 
@@ -314,7 +321,7 @@ export function ProviderDialog({
 
           {showComposer && (
             <>
-              {/* 已知服务的 Add 主路径只要求凭据；命名和连接细节退到 Advanced。 */}
+              {/* 已知服务的高频字段保留在主路径；底层连接细节统一留给 Advanced。 */}
               <section className="rounded-lg border border-border bg-card p-4">
                 {knownService ? (
                   isEdit ? (
@@ -344,22 +351,6 @@ export function ProviderDialog({
                           aria-label={t("API Key Env Var")}
                         />
                       </label>
-                      <div className="col-span-2 flex flex-wrap gap-x-2 gap-y-1 rounded-md bg-muted px-3 py-2 text-xs opacity-70">
-                        <span className="font-mono">{draft.route}</span>
-                        <span aria-hidden>·</span>
-                        <span>{hostOf(draft.baseURL) ?? t("Inherits the built-in catalog")}</span>
-                        {draft.api && (
-                          <>
-                            <span aria-hidden>·</span>
-                            <span className="font-mono">{draft.api}</span>
-                          </>
-                        )}
-                      </div>
-                      {presetOfRoute && (
-                        <p className="col-span-2 text-xs opacity-60" data-testid="catalog-route-hint">
-                          {t("Inherits the built-in catalog")}
-                        </p>
-                      )}
                     </div>
                   ) : (
                     <label className="flex flex-col gap-1 text-xs opacity-70">
