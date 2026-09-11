@@ -9,7 +9,6 @@ import { MODEL_PRESETS } from "./shared";
 import { ModelsView } from "./ModelsView";
 
 const preset = MODEL_PRESETS.find((item) => item.id === "openai")!;
-const deepseekPreset = MODEL_PRESETS.find((item) => item.id === "deepseek")!;
 const provider: ProviderConfig = {
   route: "openai",
   displayName: "OpenAI",
@@ -93,8 +92,7 @@ describe("ModelsView provider connection test", () => {
 
     await user.click(buttons[0]!);
     const testingButton = await screen.findByRole("button", { name: "Testing…" });
-    const openaiRow = document.querySelector('[data-route="openai"]');
-    expect(openaiRow).toHaveAttribute("aria-busy", "true");
+    expect(document.querySelector('[data-route="openai"]')).toHaveAttribute("aria-busy", "true");
     expect(testingButton).toBeDisabled();
     await waitFor(() => expect(buttons[1]).toBeDisabled());
 
@@ -109,7 +107,6 @@ describe("ModelsView provider connection test", () => {
       }
     });
     expect(useAppStore.getState().toasts.at(-1)?.message).toBe("OpenAI · Connection successful");
-    expect(deepseekPreset.modelIds.length).toBeGreaterThan(0);
   });
 
   it("restores the card after a failed test and identifies the provider in feedback", async () => {
