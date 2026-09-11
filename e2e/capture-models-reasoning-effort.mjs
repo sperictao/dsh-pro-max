@@ -178,8 +178,10 @@ async function main() {
 
     assert.equal(await reasoning.inputValue(), "max");
     await reasoning.click();
-    await page.waitForTimeout(800);
-    await reasoning.selectOption("high");
+    await page.waitForTimeout(900);
+    await reasoning.press("ArrowUp");
+    await page.waitForTimeout(650);
+    await reasoning.press("Enter");
     await page.waitForFunction(() => window.__auditSavedConfigs.length === 1);
     await page.waitForFunction(() => document.querySelector('select[aria-label="Reasoning Effort"]')?.value === "high");
     await page.waitForTimeout(1300);
