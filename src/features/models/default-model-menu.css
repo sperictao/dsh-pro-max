@@ -1,0 +1,37 @@
+/* Default Model -> Change picker only.
+   Keep model IDs authoritative, but never hide the distinguishing suffix of a long ID. */
+#btn-change-default-model[aria-expanded="true"] + div {
+  width: min(24rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  overflow: hidden;
+}
+
+#btn-change-default-model + div [role="option"] {
+  align-items: center;
+  min-height: 2.25rem;
+  width: calc(100% - 0.5rem);
+  margin-inline: 0.25rem;
+  border-radius: 0.375rem;
+}
+
+/* The canonical model ID is selection-critical. Wrapping is preferable to
+   ellipsis because two model IDs often differ only near the suffix. */
+#btn-change-default-model + div [role="option"] > span:nth-child(2) {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+/* Current state must remain visible even when the pointer is elsewhere. */
+#btn-change-default-model + div [role="option"][aria-selected="true"] {
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+#btn-change-default-model + div [role="option"][aria-selected="true"] > span:first-child {
+  color: var(--primary);
+  font-weight: 700;
+}

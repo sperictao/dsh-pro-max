@@ -4,18 +4,22 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
+import { BTN_DANGER_SM, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import {
   EFFORT_OPTIONS,
+  MODEL_PRESETS,
   emptyModelEntry,
   fmtTokens,
   familyOf,
   inputView,
   reasoningView,
+  validateBaseUrl,
 } from "./shared";
 
 const modelIdKey = (id: string) => id.toLowerCase();
+const effortLabel = (level: string) =>
+  level === "xhigh" ? "XHigh" : level.charAt(0).toUpperCase() + level.slice(1);
 
 // 左侧候选行是单行 28px；大列表只渲染视口附近节点，完整 candidates 仍承担搜索/全选语义。
 const CANDIDATE_ROW_HEIGHT = 28;
@@ -54,8 +58,16 @@ export function ModelPanes({
 
   const selectedIds = new Set(provider.models.map((m) => modelIdKey(m.id)));
   const family = familyOf(provider.api);
+  const preset = MODEL_PRESETS.find((entry) => entry.id === provider.route.trim()) ?? null;
+  // 与 useProviderModels 的 active/canDiscover 边界保持一致：已知服务在 Add/Edit
+  // 没有显式凭据时不会发匿名探测，自定义端点仍允许无鉴权服务。
+  const connectionReadyForFetch =
+    Boolean(provider.baseURL?.trim()) &&
+    validateBaseUrl(provider.baseURL ?? "") == null &&
+    (!preset || Boolean(provider.apiKeyEnv?.trim()));
 
-  // 候选池：上游拉取优先；未拉取时回落目录按协议家族过滤
+  // 候选池：live 结果优先；已知服务尚未 live 拉取时只回落该服务自己的内置目录，
+  // 不再把同协议家族的其它 Provider 模型冒充成“Models from this service”。
   const candidates = useMemo(() => {
     const pool = new Map<string, { id: string; name: string; context: number | null }>();
     const push = (id: string, name?: string, context?: number | null) => {
@@ -68,6 +80,11 @@ export function ModelPanes({
     };
     if (remote) {
       for (const id of remote) push(id);
+    } else if (preset) {
+      for (const id of preset.modelIds) {
+        const published = index.get(modelIdKey(id));
+        push(id, published?.name, published?.context);
+      }
     } else {
       for (const e of catalog) {
         if (!family || e.family === family) push(e.id, e.name, e.context);
@@ -87,17 +104,17 @@ export function ModelPanes({
     }
     const q = query.trim().toLowerCase();
     const rows = [...pool.values()];
-    const visible = q
-      ? rows.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
-      : rows;
+    // 搜索控件明确承诺 Search model ID，因此只按 ID 做大小写不敏感包含匹配；
+    // display name 继续只作为展示元数据，避免出现“看似按 ID 搜索、实际命中名称”的隐藏语义。
+    const visible = q ? rows.filter((e) => e.id.toLowerCase().includes(q)) : rows;
     return visible;
-  }, [remote, catalog, family, query, provider.models, index]);
+  }, [remote, catalog, family, query, provider.models, index, preset]);
 
   useEffect(() => {
     // 上游/目录切换会改变候选顺序；回到顶部避免保留一个已经无意义的旧滚动位置。
     setCandidateScrollTop(0);
     if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
-  }, [remote, catalog, family]);
+  }, [remote, catalog, family, preset?.id]);
 
   const candidateWindow = useMemo(() => {
     if (candidates.length <= CANDIDATE_VIRTUALIZE_AT) {
@@ -118,6 +135,7 @@ export function ModelPanes({
     };
   }, [candidates.length, candidateScrollTop]);
   const renderedCandidates = candidates.slice(candidateWindow.start, candidateWindow.end);
+  const isSearching = query.trim().length > 0;
 
   const visibleSelected = candidates.filter((e) => selectedIds.has(modelIdKey(e.id)));
   const allChecked = visibleSelected.length > 0 && visibleSelected.length === candidates.length;
@@ -126,10 +144,17 @@ export function ModelPanes({
   const toggle = (id: string) => {
     const key = modelIdKey(id);
     if (selectedIds.has(key)) {
+      if (expanded != null && modelIdKey(expanded) === key) setExpanded(null);
       onModelsChange(provider.models.filter((m) => modelIdKey(m.id) !== key));
     } else {
       onModelsChange([...provider.models, emptyModelEntry(id)]);
     }
+  };
+
+  const removeModel = (id: string) => {
+    const key = modelIdKey(id);
+    if (expanded != null && modelIdKey(expanded) === key) setExpanded(null);
+    onModelsChange(provider.models.filter((m) => modelIdKey(m.id) !== key));
   };
 
   const toggleAll = () => {
@@ -156,6 +181,7 @@ export function ModelPanes({
     }
     setCustomError(false);
     setCustomId("");
+    setExpanded(id);
     onModelsChange([...provider.models, emptyModelEntry(id)]);
   };
 
@@ -167,23 +193,35 @@ export function ModelPanes({
     <div className="grid grid-cols-2 gap-4" data-testid="model-panes">
       {/* —— 左栏：候选 —— */}
       <div className="flex flex-col gap-2 rounded-md border border-border p-3">
-        <div className="flex items-center justify-between">
-          <label className="flex items-center gap-2 text-sm font-medium">
-            <input
-              type="checkbox"
-              checked={allChecked}
-              ref={(el) => {
-                if (el) el.indeterminate = someChecked;
-              }}
-              onChange={toggleAll}
-              aria-label={t("Select all")}
-            />
-            {t("Models from this service")}
-          </label>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                disabled={candidates.length === 0}
+                ref={(el) => {
+                  if (el) el.indeterminate = someChecked;
+                }}
+                onChange={toggleAll}
+                aria-label={t("Select all")}
+              />
+              {t("Models from this service")}
+            </label>
+            {isSearching && (
+              <span
+                className="shrink-0 rounded bg-muted px-1.5 text-xs opacity-70"
+                role="status"
+                aria-live="polite"
+              >
+                {t("{{count}} models", { count: candidates.length })}
+              </span>
+            )}
+          </div>
           <button
             type="button"
             className={BTN_SM}
-            disabled={fetching || !provider.baseURL}
+            disabled={fetching || !connectionReadyForFetch}
             onClick={onFetch}
             title={t("Fetch models")}
           >
@@ -191,12 +229,22 @@ export function ModelPanes({
           </button>
         </div>
         <input
+          type="search"
           className={INPUT}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
             setCandidateScrollTop(0);
             if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && query) {
+              e.preventDefault();
+              e.stopPropagation();
+              setQuery("");
+              setCandidateScrollTop(0);
+              if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
+            }
           }}
           placeholder={t("Search model ID…")}
           aria-label={t("Search model ID…")}
@@ -209,7 +257,7 @@ export function ModelPanes({
             </button>
           </p>
         )}
-        {!remote && !fetching && !fetchError && (
+        {!remote && !fetching && !fetchError && !provider.baseURL?.trim() && (
           <p className="text-xs opacity-60">{t("Enter a base URL to load models.")}</p>
         )}
         {remote && remote.length === 0 && !fetchError && (
@@ -260,7 +308,7 @@ export function ModelPanes({
           {candidateWindow.bottom > 0 && (
             <li aria-hidden="true" role="presentation" style={{ height: candidateWindow.bottom }} />
           )}
-          {candidates.length === 0 && query.trim() && (
+          {candidates.length === 0 && isSearching && (
             <li className="px-1 py-2 text-xs opacity-60">{t("No matching models")}</li>
           )}
         </ul>
@@ -306,16 +354,30 @@ export function ModelPanes({
         )}
         <ul className="flex flex-col gap-1 overflow-y-auto" aria-label={t("Model settings")}>
           {provider.models.map((m) => {
-            const tokens = fmtTokens(index.get(modelIdKey(m.id))?.context ?? null);
+            const catalogEntry = index.get(modelIdKey(m.id));
+            const contextTokens = fmtTokens(m.contextWindow ?? catalogEntry?.context ?? null);
+            const outputTokens = fmtTokens(m.maxTokens ?? catalogEntry?.maxTokens ?? null);
             const isExpanded = expanded === m.id;
             const view = reasoningView(m);
+            const alias = m.name?.trim();
             return (
               <li key={m.id} className="rounded border border-border" data-model-id={m.id}>
                 <div className="flex items-center gap-2 px-2 py-1.5">
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs" title={m.id}>
-                    {m.name ?? m.id}
-                  </span>
-                  {tokens && <span className="shrink-0 text-xs opacity-60">{tokens}</span>}
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate font-mono text-xs" title={m.id}>
+                      {m.id}
+                    </span>
+                    {alias && alias !== m.id && (
+                      <span className="block truncate text-xs opacity-60" title={alias}>
+                        {alias}
+                      </span>
+                    )}
+                  </div>
+                  {(contextTokens || outputTokens) && (
+                    <span className="shrink-0 text-xs opacity-60">
+                      {contextTokens ?? "—"} · {outputTokens ?? "—"}
+                    </span>
+                  )}
                   <button
                     type="button"
                     className={BTN_SM}
@@ -326,9 +388,10 @@ export function ModelPanes({
                   </button>
                   <button
                     type="button"
-                    className={BTN_SM}
-                    onClick={() => toggle(m.id)}
+                    className={BTN_DANGER_SM}
+                    onClick={() => removeModel(m.id)}
                     aria-label={t("Remove model")}
+                    title={t("Remove model")}
                   >
                     ✕
                   </button>
@@ -336,7 +399,7 @@ export function ModelPanes({
                 {isExpanded && (
                   <ModelAdvancedPanel
                     model={m}
-                    catalogEntry={index.get(modelIdKey(m.id)) ?? null}
+                    catalogEntry={catalogEntry ?? null}
                     onChange={(patch) => patchModel(m.id, patch)}
                   />
                 )}
@@ -369,12 +432,29 @@ function ModelAdvancedPanel({
   const view = reasoningView(model);
   const levels = view.kind === "levels" ? view.levels : new Map<string, string | null>();
   const enabledLevels = EFFORT_OPTIONS.filter((l) => levels.has(l));
+  const publishedReasoningLevels = EFFORT_OPTIONS.filter((level) =>
+    catalogEntry?.reasoningLevels?.includes(level),
+  );
+  // 与 modelReasoningCapability 保持同一继承语义：目录明确支持 reasoning 但未给出
+  // 档位时，仍使用 low / medium / high 的兼容默认。按钮继续只表示“显式覆盖”，
+  // 不把继承档位伪装成已按下的 override。
+  const inheritedReasoningLevels =
+    catalogEntry?.reasoning === true
+      ? publishedReasoningLevels.length > 0
+        ? publishedReasoningLevels
+        : (["low", "medium", "high"] as const)
+      : [];
+  const thinkingInheritId = `thinking-levels-inherit-${model.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
   const iview = inputView(model);
   const publishedCapabilities = new Set(catalogEntry?.capabilities ?? []);
   const publishedVision =
     publishedCapabilities.has("vision") || Boolean(catalogEntry?.input?.includes("image"));
   const publishedPdf =
     publishedCapabilities.has("pdf") || Boolean(catalogEntry?.input?.includes("pdf"));
+  const publishedImageInputKnown = catalogEntry?.input != null || catalogEntry?.capabilities != null;
+  const inheritedInputLabel = publishedImageInputKnown
+    ? `${t("Follow catalog")} · ${publishedVision ? t("Text and images") : t("Text only")}`
+    : t("Follow catalog");
 
   const toggleLevel = (level: string) => {
     const base = view.kind === "levels" ? levels : new Map<string, string | null>();
@@ -425,7 +505,7 @@ function ModelAdvancedPanel({
 
   return (
     <div className="flex flex-col gap-3 border-t border-border px-2 py-2" data-testid="model-advanced">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="flex flex-col gap-2">
         <label className="flex flex-col gap-1 text-xs opacity-70">
           {t("Alias")}
           <input
@@ -436,12 +516,19 @@ function ModelAdvancedPanel({
             aria-label={t("Alias")}
           />
         </label>
-        {numberField(t("Context window"), model.contextWindow, (v) => onChange({ contextWindow: v }), t("Context window"))}
-        {numberField(t("Max output"), model.maxTokens, (v) => onChange({ maxTokens: v }), t("Max output"))}
+        <div className="grid grid-cols-2 gap-2">
+          {numberField(t("Context window"), model.contextWindow, (v) => onChange({ contextWindow: v }), t("Context window"))}
+          {numberField(t("Max output"), model.maxTokens, (v) => onChange({ maxTokens: v }), t("Max output"))}
+        </div>
       </div>
       <div className="flex flex-col gap-1">
         <span className="text-xs opacity-70">{t("Thinking levels")}</span>
-        <div className="flex flex-wrap gap-1" role="group" aria-label={t("Thinking levels")}>
+        <div
+          className="flex flex-wrap gap-1"
+          role="group"
+          aria-label={t("Thinking levels")}
+          aria-describedby={view.kind === "inherit" ? thinkingInheritId : undefined}
+        >
           {EFFORT_OPTIONS.map((level) => {
             const on = levels.has(level);
             return (
@@ -449,21 +536,33 @@ function ModelAdvancedPanel({
                 key={level}
                 type="button"
                 className={`${BTN_SM} ${on ? "bg-primary text-primary-foreground" : ""}`}
+                aria-label={level}
                 aria-pressed={on}
                 onClick={() => toggleLevel(level)}
               >
-                {level}
+                {effortLabel(level)}
               </button>
             );
           })}
         </div>
+        {view.kind === "inherit" && (
+          <p
+            id={thinkingInheritId}
+            data-testid="thinking-levels-inherit"
+            className="text-xs opacity-60"
+          >
+            {t("Follow catalog")}
+            {inheritedReasoningLevels.length > 0 &&
+              ` · ${inheritedReasoningLevels.map(effortLabel).join(", ")}`}
+          </p>
+        )}
         {enabledLevels.filter((l) => l !== "off").length > 0 && (
           <div className="flex flex-wrap gap-2">
             {enabledLevels
               .filter((l) => l !== "off")
               .map((level) => (
                 <label key={level} className="flex items-center gap-1 text-xs opacity-70">
-                  {level}
+                  {effortLabel(level)}
                   <input
                     className={`${INPUT_MONO} h-6 w-24 px-1 text-xs`}
                     value={levels.get(level) ?? ""}
@@ -502,7 +601,7 @@ function ModelAdvancedPanel({
           onChange={(e) => setInputView(e.target.value as "inherit" | "text" | "text-image")}
           aria-label={t("Image input")}
         >
-          <option value="inherit">{t("Follow catalog")}</option>
+          <option value="inherit">{inheritedInputLabel}</option>
           <option value="text">{t("Text only")}</option>
           <option value="text-image">{t("Text and images")}</option>
           {iview === "custom" && <option value="custom">{t("Custom (kept as-is)")}</option>}

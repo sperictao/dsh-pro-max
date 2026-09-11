@@ -37,6 +37,11 @@ const EMPTY_CONFIG: ModelConfig = {
   providers: [],
 };
 
+const ROW_ICON_BUTTON =
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50";
+const ROW_ICON_DANGER =
+  `${ROW_ICON_BUTTON} text-destructive hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive`;
+
 function configValidationError(config: ModelConfig): string | null {
   if (config.defaultProvider?.trim() && !config.defaultModel?.trim()) {
     return "Default model provider and model are required";
@@ -144,7 +149,10 @@ export function ModelsView() {
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyRoute, setBusyRoute] = useState<string | null>(null);
+  const [probingRoute, setProbingRoute] = useState<string | null>(null);
   const [testingRoute, setTestingRoute] = useState<string | null>(null);
+  const [defaultingRoute, setDefaultingRoute] = useState<string | null>(null);
+  const [deletingRoute, setDeletingRoute] = useState<string | null>(null);
   const [busyGlobal, setBusyGlobal] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
   const [catalogFetchedAt, setCatalogFetchedAt] = useState<number | null>(null);
@@ -252,6 +260,10 @@ export function ModelsView() {
   );
 
   const refreshCatalog = async (background: boolean) => {
+    // A user-initiated retry starts a fresh attempt: retire the previous inline error
+    // immediately so the UI never says both “refreshing” and “failed”. Background
+    // refreshes stay silent and keep their existing observability semantics.
+    if (!background) setCatalogError(null);
     setCatalogRefreshing(true);
     try {
       const fresh = await cmd.modelCatalogRefresh();
@@ -261,9 +273,16 @@ export function ModelsView() {
       setCatalogSource("remote");
       setCatalogError(null);
       setCatalogState("ready");
+      if (!background) {
+        toast(
+          `${t("Refresh model catalog")} · models.dev · ${t("{{count}} models", { count: fresh.entries.length })}`,
+          "success",
+        );
+      }
     } catch (error) {
+      // The Catalog owns a persistent, actionable inline error surface next to Retry.
+      // Avoid duplicating the same failure as a transient global toast.
       setCatalogError(String(error));
-      if (!background) toast(tErr(String(error)), "error");
     } finally {
       setCatalogRefreshing(false);
     }
@@ -272,11 +291,16 @@ export function ModelsView() {
   /**
    * 模型域唯一写入口：校验完整 ModelConfig 后原子覆盖本域。
    * UI 不保留“待保存副本”，成功即刷新内存事实；失败保持旧配置。
+   * reportError=false 仅用于拥有自己的持久 inline error 的 ProviderDialog。
    */
-  const persist = async (next: ModelConfig, route: string | null = null) => {
+  const persist = async (
+    next: ModelConfig,
+    route: string | null = null,
+    reportError = true,
+  ) => {
     const validation = configValidationError(next);
     if (validation) {
-      toast(t(validation), "error");
+      if (reportError) toast(t(validation), "error");
       throw new Error(validation);
     }
     if (route) setBusyRoute(route);
@@ -292,7 +316,7 @@ export function ModelsView() {
       setConfig(next);
       setEnvStatus(status);
     } catch (error) {
-      toast(tErr(String(error)), "error");
+      if (reportError) toast(tErr(String(error)), "error");
       throw error;
     } finally {
       if (route) setBusyRoute(null);
@@ -300,7 +324,7 @@ export function ModelsView() {
     }
   };
 
-  const persistDefault = async (route: string, model: string) => {
+  const persistDefault = async (route: string, model: string, notify = true) => {
     if (!readyRoutes.has(route)) return;
     const current = config ?? EMPTY_CONFIG;
     const next = withValidDefaultReasoning(
@@ -308,7 +332,9 @@ export function ModelsView() {
       catalog,
     );
     await persist(next);
-    toast(t("Model configuration saved — changes take effect immediately"), "success");
+    if (notify) {
+      toast(t("Model configuration saved — changes take effect immediately"), "success");
+    }
   };
 
   const persistReasoning = async (value: string) => {
@@ -349,7 +375,9 @@ export function ModelsView() {
       ),
       catalog,
     );
-    await persist(next, provider.route);
+    // ProviderDialog owns a persistent contextual error and retry path; avoid duplicating
+    // the same save failure as a transient page-level toast.
+    await persist(next, provider.route, false);
     setDialog(null);
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
@@ -357,7 +385,13 @@ export function ModelsView() {
   const makeDefault = async (provider: ProviderConfig) => {
     const model = firstProviderModelId(provider);
     if (!model || !readyRoutes.has(provider.route)) return;
-    await persistDefault(provider.route, model);
+    setDefaultingRoute(provider.route);
+    try {
+      await persistDefault(provider.route, model, false);
+      toast(`${t("Default model")}: ${provider.displayName ?? provider.route} · ${model}`, "success");
+    } finally {
+      setDefaultingRoute(null);
+    }
   };
 
   const armDelete = (route: string) => {
@@ -368,18 +402,38 @@ export function ModelsView() {
 
   const disarmDelete = () => {
     if (deleteTimer.current) clearTimeout(deleteTimer.current);
+    deleteTimer.current = null;
     setArmedDelete(null);
   };
-
   const removeProvider = async (route: string) => {
-    disarmDelete();
+    if (deleteTimer.current) clearTimeout(deleteTimer.current);
+    deleteTimer.current = null;
     const current = config ?? EMPTY_CONFIG;
+    const removed = current.providers.find((provider) => provider.route === route);
+    const removedName = removed?.displayName ?? removed?.route ?? route;
+    const removedWasDefault = current.defaultProvider === route;
     const next = withValidDefaultReasoning(
       removeProviderFromConfig(current, route, readyRoutes),
       catalog,
     );
-    await persist(next, route);
-    toast(t("Model configuration saved — changes take effect immediately"), "success");
+    const fallback = next.defaultProvider
+      ? next.providers.find((provider) => provider.route === next.defaultProvider)
+      : null;
+    setDeletingRoute(route);
+    try {
+      await persist(next, route);
+      disarmDelete();
+      const defaultFeedback = removedWasDefault
+        ? ` · ${t("Default model")}: ${
+            fallback && next.defaultModel
+              ? `${fallback.displayName ?? fallback.route} · ${next.defaultModel}`
+              : t("Not set")
+          }`
+        : "";
+      toast(`${t("Remove provider")}: ${removedName}${defaultFeedback}`, "success");
+    } finally {
+      setDeletingRoute(null);
+    }
   };
 
   /** 连接测试与模型发现分离：真实推理请求验证 endpoint/auth/model，绝不调用 /models。 */
@@ -388,6 +442,7 @@ export function ModelsView() {
     const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
     if (!target || !launcherRemoteProbeAllowed(readiness)) return;
     setTestingRoute(provider.route);
+    const providerName = provider.displayName ?? provider.route;
     try {
       await cmd.modelTestConnection(
         target.baseURL,
@@ -396,9 +451,9 @@ export function ModelsView() {
         provider.headers,
         target.model,
       );
-      toast(t("Connection successful"), "success");
+      toast(`${providerName} · ${t("Connection successful")}`, "success");
     } catch (error) {
-      toast(tErr(String(error)), "error");
+      toast(`${providerName} · ${tErr(String(error))}`, "error");
     } finally {
       setTestingRoute(null);
     }
@@ -408,7 +463,8 @@ export function ModelsView() {
   const probeProvider = async (provider: ProviderConfig) => {
     const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
     if (!provider.baseURL?.trim() || !launcherRemoteProbeAllowed(readiness)) return;
-    setBusyRoute(provider.route);
+    setProbingRoute(provider.route);
+    const providerName = provider.displayName ?? provider.route;
     try {
       const models = await cmd.modelRemoteList(
         provider.baseURL,
@@ -416,11 +472,11 @@ export function ModelsView() {
         provider.apiKeyEnv,
         provider.headers,
       );
-      toast(`${t("Models from this service")}: ${t("{{count}} models", { count: models.length })}`, "success");
+      toast(`${providerName} · ${t("Models from this service")}: ${t("{{count}} models", { count: models.length })}`, "success");
     } catch (error) {
-      toast(tErr(String(error)), "error");
+      toast(`${providerName} · ${tErr(String(error))}`, "error");
     } finally {
-      setBusyRoute(null);
+      setProbingRoute(null);
     }
   };
 
@@ -465,11 +521,6 @@ export function ModelsView() {
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h2 className="text-base font-semibold">{t("Model Configuration")}</h2>
-            <p className="mt-1 text-xs opacity-60">
-              {t(
-                "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.",
-              )}
-            </p>
           </div>
           <button className={BTN} id="btn-import-models" onClick={openImport} disabled={busyGlobal}>
             {t("Import configuration")}
@@ -513,26 +564,28 @@ export function ModelsView() {
                 <div className="text-sm">{t("Reasoning Effort")}</div>
                 <div className="mt-0.5 text-xs opacity-60">{t("Default reasoning level")}</div>
               </div>
-              <select
-                className={`${SELECT} w-44`}
-                value={currentReasoning}
-                disabled={reasoningDisabled}
-                onChange={(event) => void persistReasoning(event.target.value).catch(() => undefined)}
-                aria-label={t("Reasoning Effort")}
-                data-reasoning-capability={defaultReasoningCapability.kind}
-              >
-                <option value="">{t("Not set")}</option>
-                {invalidCurrentReasoning && (
-                  <option value={currentReasoning} disabled>
-                    {currentReasoning}
-                  </option>
-                )}
-                {reasoningOptions.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
+              <div className="w-44 shrink-0">
+                <select
+                  className={SELECT}
+                  value={currentReasoning}
+                  disabled={reasoningDisabled}
+                  onChange={(event) => void persistReasoning(event.target.value).catch(() => undefined)}
+                  aria-label={t("Reasoning Effort")}
+                  data-reasoning-capability={defaultReasoningCapability.kind}
+                >
+                  <option value="">{t("Not set")}</option>
+                  {invalidCurrentReasoning && (
+                    <option value={currentReasoning} disabled>
+                      {currentReasoning}
+                    </option>
+                  )}
+                  {reasoningOptions.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
         </section>
@@ -579,9 +632,12 @@ export function ModelsView() {
               {cfg.providers.map((provider, index) => {
                 const isDefault = provider.route === (cfg.defaultProvider ?? "").trim();
                 const armed = armedDelete === provider.route;
-                const probing = busyRoute === provider.route;
+                const deleting = deletingRoute === provider.route;
+                const saving = busyRoute === provider.route && !deleting;
+                const probing = probingRoute === provider.route;
                 const testing = testingRoute === provider.route;
-                const rowBusy = probing || testing;
+                const defaulting = defaultingRoute === provider.route;
+                const rowBusy = saving || probing || testing || defaulting || deleting;
                 const firstModel = firstProviderModelId(provider);
                 const displayModel = provider.models[0]?.id ?? null;
                 const readiness =
@@ -589,6 +645,16 @@ export function ModelsView() {
                 const launcherProbeAllowed = launcherRemoteProbeAllowed(readiness);
                 const canTest = Boolean(providerConnectionTarget(provider)) && launcherProbeAllowed;
                 const canProbe = Boolean(provider.baseURL?.trim()) && launcherProbeAllowed;
+                const removalPreview =
+                  armed && isDefault
+                    ? withValidDefaultReasoning(
+                        removeProviderFromConfig(cfg, provider.route, readyRoutes),
+                        catalog,
+                      )
+                    : null;
+                const fallbackProvider = removalPreview?.defaultProvider
+                  ? cfg.providers.find((item) => item.route === removalPreview.defaultProvider)
+                  : null;
                 return (
                   <div
                     key={provider.route}
@@ -597,7 +663,7 @@ export function ModelsView() {
                     data-route={provider.route}
                     aria-busy={rowBusy}
                     onBlur={(event) => {
-                      if (!event.currentTarget.contains(event.relatedTarget as Node)) disarmDelete();
+                      if (!deleting && !event.currentTarget.contains(event.relatedTarget as Node)) disarmDelete();
                     }}
                   >
                     <div
@@ -641,62 +707,107 @@ export function ModelsView() {
                       </div>
                     </div>
 
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      {!isDefault && firstModel && readiness.ready && (
-                        <button
-                          className={BTN_SM}
-                          disabled={rowBusy || busyGlobal}
-                          onClick={() => void makeDefault(provider).catch(() => undefined)}
+                    <div className="flex shrink-0 items-center gap-2">
+                      {deleting ? (
+                        <div
+                          className="flex min-w-28 items-center justify-end gap-2 text-xs text-destructive"
+                          role="status"
+                          data-testid={`provider-removing-${index}`}
                         >
-                          {t("Make default")}
-                        </button>
-                      )}
-                      {canTest && (
-                        <button
-                          className={BTN_SM}
-                          disabled={rowBusy || busyGlobal}
-                          onClick={() => void testProvider(provider)}
-                          title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+                          <ProviderActionIcon kind="delete" busy />
+                          <span>{t("Removing…")}</span>
+                        </div>
+                      ) : armed ? (
+                        <div
+                          className="flex items-center gap-2"
+                          role="group"
+                          aria-label={`${t("Remove provider")}: ${provider.displayName ?? provider.route}`}
+                          data-testid={`provider-remove-confirm-${index}`}
                         >
-                          {testing ? t("Testing…") : t("Test connection")}
-                        </button>
-                      )}
-                      {canProbe && (
-                        <button
-                          className={BTN_SM}
-                          disabled={rowBusy || busyGlobal}
-                          onClick={() => void probeProvider(provider)}
-                          title={t("Fetch models")}
-                        >
-                          {probing ? t("Loading models…") : t("Fetch list")}
-                        </button>
-                      )}
-                      <button
-                        className={BTN_SM}
-                        aria-label={t("Edit provider")}
-                        disabled={rowBusy || busyGlobal}
-                        onClick={() => setDialog({ mode: "edit", index, provider })}
-                      >
-                        {t("Edit")}
-                      </button>
-                      {armed ? (
-                        <button
-                          className={BTN_DANGER_SM}
-                          id={`btn-confirm-delete-${index}`}
-                          disabled={rowBusy || busyGlobal}
-                          onClick={() => void removeProvider(provider.route).catch(() => undefined)}
-                        >
-                          {t("Delete?")}
-                        </button>
+                          <div className="max-w-56 text-right">
+                            <div className="text-xs font-medium text-destructive">
+                              {`${t("Remove")} ${provider.displayName ?? provider.route}?`}
+                            </div>
+                            {isDefault && (
+                              <div className="mt-0.5 text-[11px] opacity-60">
+                                {`${t("Default model")}: ${
+                                  fallbackProvider && removalPreview?.defaultModel
+                                    ? `${fallbackProvider.displayName ?? fallbackProvider.route} · ${removalPreview.defaultModel}`
+                                    : t("Not set")
+                                }`}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            className={BTN_SM}
+                            onClick={disarmDelete}
+                          >
+                            {t("Cancel")}
+                          </button>
+                          <button
+                            type="button"
+                            className={BTN_DANGER_SM}
+                            id={`btn-confirm-delete-${index}`}
+                            onClick={() => void removeProvider(provider.route).catch(() => undefined)}
+                          >
+                            {t("Remove")}
+                          </button>
+                        </div>
                       ) : (
-                        <button
-                          className={BTN_DANGER_SM}
-                          aria-label={t("Remove provider")}
-                          disabled={rowBusy || busyGlobal}
-                          onClick={() => armDelete(provider.route)}
-                        >
-                          {t("Delete")}
-                        </button>
+                        <>
+                          {!isDefault && firstModel && readiness.ready && (
+                            <button
+                              className={BTN_SM}
+                              disabled={rowBusy || busyGlobal}
+                              onClick={() => void makeDefault(provider).catch(() => undefined)}
+                            >
+                              {defaulting ? t("Saving…") : t("Make default")}
+                            </button>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <button
+                              className={ROW_ICON_BUTTON}
+                              aria-label={t("Edit provider")}
+                              title={t("Edit provider")}
+                              disabled={rowBusy || busyGlobal}
+                              onClick={() => setDialog({ mode: "edit", index, provider })}
+                            >
+                              <ProviderActionIcon kind="edit" />
+                            </button>
+                            {canTest && (
+                              <button
+                                className={ROW_ICON_BUTTON}
+                                aria-label={testing ? t("Testing…") : t("Test connection")}
+                                disabled={rowBusy || busyGlobal || testingRoute !== null}
+                                onClick={() => void testProvider(provider)}
+                                title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+                              >
+                                <ProviderActionIcon kind="test" busy={testing} />
+                              </button>
+                            )}
+                            {canProbe && (
+                              <button
+                                className={ROW_ICON_BUTTON}
+                                aria-label={probing ? t("Loading models…") : t("Fetch list")}
+                                disabled={rowBusy || busyGlobal || probingRoute !== null}
+                                onClick={() => void probeProvider(provider)}
+                                title={t("Fetch models")}
+                              >
+                                <ProviderActionIcon kind="fetch" busy={probing} />
+                              </button>
+                            )}
+                            <button
+                              className={ROW_ICON_DANGER}
+                              aria-label={t("Remove provider")}
+                              title={t("Delete")}
+                              disabled={rowBusy || busyGlobal}
+                              onClick={() => armDelete(provider.route)}
+                            >
+                              <ProviderActionIcon kind="delete" />
+                            </button>
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>
@@ -706,32 +817,45 @@ export function ModelsView() {
           )}
         </section>
 
-        {/* —— 目录状态：辅助信息退到页面底部，不与配置主任务抢层级 —— */}
-        <div className="flex items-start justify-between gap-4 text-xs opacity-70" id="models-catalog">
-          <div className="min-w-0">
+        {/* —— 目录状态：辅助信息保持低层级，但手动刷新仍是清晰可操作的动作 —— */}
+        <div
+          className="flex items-start justify-between gap-4 text-xs"
+          id="models-catalog"
+          aria-busy={catalogRefreshing}
+        >
+          <div className="min-w-0 text-muted-foreground">
             <div
+              role="status"
+              aria-live="polite"
               data-testid="catalog-status-line"
               data-catalog-source={catalogSource ?? "none"}
               data-provider-count={catalogProviderCount ?? ""}
             >
-              {catalogState === "ready"
-                ? t("Catalog: {{source}} · {{providers}} providers · {{models}} models · updated {{time}}", {
-                    source:
-                      catalogSource === "snapshot"
-                        ? t("Local snapshot")
-                        : catalogSource === "remote"
-                          ? "models.dev"
-                          : "—",
-                    providers: catalogProviderCount ?? "—",
-                    models: catalog.length,
-                    time: catalogFetchedAt ? new Date(catalogFetchedAt * 1000).toLocaleString() : "—",
-                  })
-                : catalogState === "loading"
-                  ? t("Loading catalog…")
-                  : t("Catalog: unavailable")}
+              {catalogRefreshing
+                ? t("Refreshing catalog…")
+                : catalogState === "ready"
+                  ? t("Catalog: {{source}} · {{providers}} providers · {{models}} models · updated {{time}}", {
+                      source:
+                        catalogSource === "snapshot"
+                          ? t("Local snapshot")
+                          : catalogSource === "remote"
+                            ? "models.dev"
+                            : "—",
+                      providers: catalogProviderCount ?? "—",
+                      models: catalog.length,
+                      time: catalogFetchedAt ? new Date(catalogFetchedAt * 1000).toLocaleString() : "—",
+                    })
+                  : catalogState === "loading"
+                    ? t("Loading catalog…")
+                    : t("Catalog: unavailable")}
             </div>
             {catalogError && (
-              <div className="mt-0.5 text-destructive" role="status" data-testid="catalog-error">
+              <div
+                className="mt-0.5 text-destructive"
+                id="models-catalog-error"
+                role="alert"
+                data-testid="catalog-error"
+              >
                 {t("Catalog error: {{error}}", { error: tErr(catalogError) })}
               </div>
             )}
@@ -740,12 +864,24 @@ export function ModelsView() {
             className={BTN_SM}
             id="btn-refresh-catalog"
             disabled={catalogRefreshing}
+            aria-describedby={catalogError ? "models-catalog-error" : undefined}
             onClick={() => void refreshCatalog(false)}
           >
-            {catalogRefreshing ? t("Refreshing catalog…") : t("Refresh model catalog")}
+            {catalogRefreshing
+              ? t("Refreshing catalog…")
+              : catalogError
+                ? t("Retry")
+                : t("Refresh model catalog")}
           </button>
         </div>
-        <p className="text-xs opacity-60">{t("Changes take effect immediately after saving (hot reload).")}</p>
+        <div className="space-y-1 text-xs opacity-60">
+          <p>{t("Changes take effect immediately after saving (hot reload).")}</p>
+          <p>
+            {t(
+              "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.",
+            )}
+          </p>
+        </div>
       </div>
 
       {dialog && (
@@ -790,6 +926,50 @@ export function ModelsView() {
         />
       )}
     </main>
+  );
+}
+
+function ProviderActionIcon({
+  kind,
+  busy = false,
+}: {
+  kind: "edit" | "test" | "fetch" | "delete";
+  busy?: boolean;
+}) {
+  if (busy) {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4 animate-spin" fill="none" aria-hidden>
+        <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (kind === "edit") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+        <path d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+        <path d="m13.5 8.5 3 3" stroke="currentColor" strokeWidth="1.7" />
+      </svg>
+    );
+  }
+  if (kind === "test") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+        <path d="M13.5 2 5 13h6l-.5 9L19 11h-6l.5-9Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "fetch") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+        <path d="M20 7v5h-5M4 17v-5h5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M18.5 12a6.5 6.5 0 0 0-11-4.7L4 12M5.5 12a6.5 6.5 0 0 0 11 4.7L20 12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+      <path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5M14 11v5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 

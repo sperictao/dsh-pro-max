@@ -86,6 +86,9 @@ describe("ModelsView inherited catalog defaults", () => {
 
     await user.click(await screen.findByRole("button", { name: "Edit provider" }));
     const dialog = await screen.findByRole("dialog");
+    const displayName = within(dialog).getByRole("textbox", { name: "Display Name" });
+    await user.clear(displayName);
+    await user.type(displayName, "OpenAI Edited");
     await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
 
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
@@ -93,5 +96,6 @@ describe("ModelsView inherited catalog defaults", () => {
     expect(saved.defaultProvider).toBe("openai");
     expect(saved.defaultModel).toBe(secondInheritedModel);
     expect(saved.providers[0].models).toEqual([]);
+    expect(saved.providers[0].displayName).toBe("OpenAI Edited");
   });
 });

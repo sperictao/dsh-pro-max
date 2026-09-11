@@ -1,0 +1,48 @@
+name: UI Audit Provider Save Retry
+
+on:
+  pull_request:
+    paths:
+      - "src/features/models/**"
+      - "src/shared/i18n/**"
+      - "e2e/capture-models-provider-save-retry.mjs"
+      - ".github/workflows/ui-audit-provider-save-retry.yml"
+  workflow_dispatch:
+
+jobs:
+  provider-save-retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - run: pnpm install
+      - name: Run provider save recovery tests
+        run: pnpm vitest run src/features/models/ModelsView.save-retry.test.tsx src/features/models/ModelsView.test.tsx src/features/models/ProviderDialog.edit.test.tsx
+      - name: Install Playwright video encoder
+        run: pnpm dlx playwright@1.62.1 install ffmpeg
+      - name: Capture provider save recovery flow
+        run: node e2e/capture-models-provider-save-retry.mjs
+      - name: Convert recording to GIF
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -y \
+            -i .artifacts/e2e/models-provider-save-retry/models-provider-save-retry.webm \
+            -vf "fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" \
+            .artifacts/e2e/models-provider-save-retry/models-provider-save-retry.gif
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-models-provider-save-retry
+          path: .artifacts/e2e/models-provider-save-retry/
+          if-no-files-found: error
+          retention-days: 14

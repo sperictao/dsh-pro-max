@@ -21,6 +21,18 @@ const provider: ProviderConfig = {
   reasoning: null,
   extra: null,
 };
+const deepseekProvider: ProviderConfig = {
+  route: "deepseek",
+  displayName: "DeepSeek",
+  baseURL: null,
+  api: null,
+  apiKeyEnv: "DEEPSEEK_API_KEY",
+  models: [],
+  headers: null,
+  timeoutMs: null,
+  reasoning: null,
+  extra: null,
+};
 const config: ModelConfig = {
   defaultProvider: "openai",
   defaultModel: preset.modelIds[0]!,
@@ -36,13 +48,16 @@ beforeEach(() => {
   vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(structuredClone(config));
   vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
   vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(catalog);
-  vi.spyOn(cmd, "modelEnvStatus").mockResolvedValue({ OPENAI_API_KEY: true });
+  vi.spyOn(cmd, "modelEnvStatus").mockResolvedValue({
+    OPENAI_API_KEY: true,
+    DEEPSEEK_API_KEY: true,
+  });
   vi.spyOn(cmd, "modelTestConnection").mockResolvedValue(undefined);
   vi.spyOn(cmd, "modelRemoteList").mockResolvedValue([]);
 });
 
 describe("ModelsView provider connection test", () => {
-  it("tests the inherited inference target without calling model discovery", async () => {
+  it("tests the inherited inference target without discovery or navigation", async () => {
     const user = userEvent.setup();
     render(createElement(ModelsView));
 
@@ -57,6 +72,56 @@ describe("ModelsView provider connection test", () => {
       preset.modelIds[0],
     );
     expect(cmd.modelRemoteList).not.toHaveBeenCalled();
-    expect(useAppStore.getState().toasts.at(-1)?.message).toBe("Connection successful");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(useAppStore.getState().toasts.at(-1)?.message).toBe("OpenAI · Connection successful");
+  });
+
+  it("keeps one card test active at a time and restores both rows after success", async () => {
+    const user = userEvent.setup();
+    vi.mocked(cmd.modelConfigLoad).mockResolvedValue(
+      structuredClone({ ...config, providers: [provider, deepseekProvider] }),
+    );
+    let resolveTest!: () => void;
+    vi.mocked(cmd.modelTestConnection).mockImplementationOnce(
+      () => new Promise<void>((resolve) => { resolveTest = resolve; }),
+    );
+
+    render(createElement(ModelsView));
+    const buttons = await screen.findAllByRole("button", { name: "Test connection" });
+    expect(buttons).toHaveLength(2);
+
+    await user.click(buttons[0]!);
+    const testingButton = await screen.findByRole("button", { name: "Testing…" });
+    expect(document.querySelector('[data-route="openai"]')).toHaveAttribute("aria-busy", "true");
+    expect(testingButton).toBeDisabled();
+    await waitFor(() => expect(buttons[1]).toBeDisabled());
+
+    await user.click(buttons[1]!);
+    expect(cmd.modelTestConnection).toHaveBeenCalledTimes(1);
+
+    resolveTest();
+    await waitFor(() => {
+      expect(document.querySelector('[data-route="openai"]')).toHaveAttribute("aria-busy", "false");
+      for (const button of screen.getAllByRole("button", { name: "Test connection" })) {
+        expect(button).toBeEnabled();
+      }
+    });
+    expect(useAppStore.getState().toasts.at(-1)?.message).toBe("OpenAI · Connection successful");
+  });
+
+  it("restores the card after a failed test and identifies the provider in feedback", async () => {
+    const user = userEvent.setup();
+    vi.mocked(cmd.modelTestConnection).mockRejectedValueOnce(new Error("401 Unauthorized"));
+    render(createElement(ModelsView));
+
+    await user.click(await screen.findByRole("button", { name: "Test connection" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Test connection" })).toBeEnabled());
+    expect(document.querySelector('[data-route="openai"]')).toHaveAttribute("aria-busy", "false");
+    const feedback = useAppStore.getState().toasts.at(-1);
+    expect(feedback?.type).toBe("error");
+    expect(feedback?.message).toContain("OpenAI");
+    expect(feedback?.message).toContain("401 Unauthorized");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

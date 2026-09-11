@@ -369,7 +369,7 @@ describe("ModelsView provider studio", () => {
     expect(saved.providers[0].models[1].input).toEqual(["text", "image"]);
   });
 
-  it("removes the default provider with two-step confirmation and persists a valid fallback immediately", async () => {
+  it("removes the default provider with clear consequences and persists a valid fallback immediately", async () => {
     loadWith({
       ...config,
       providers: [
@@ -415,7 +415,11 @@ describe("ModelsView provider studio", () => {
     await waitFor(() => expect(screen.getByText("Second")).toBeInTheDocument());
 
     await user.click(screen.getAllByRole("button", { name: "Remove provider" })[0]);
-    await user.click(screen.getByRole("button", { name: "Delete?" }));
+    const confirmation = screen.getByTestId("provider-remove-confirm-0");
+    expect(within(confirmation).getByText("Remove Spero AI?")).toBeInTheDocument();
+    expect(within(confirmation).getByText("Default model: Second · m2")).toBeInTheDocument();
+    expect(within(confirmation).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    await user.click(within(confirmation).getByRole("button", { name: "Remove" }));
 
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
     const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
@@ -423,6 +427,9 @@ describe("ModelsView provider studio", () => {
     expect(saved.defaultProvider).toBe("second-ai");
     expect(saved.defaultModel).toBe("m2");
     expect(screen.getByTestId("default-model-summary")).toHaveTextContent("Second · m2");
+    expect(useAppStore.getState().toasts.at(-1)?.message).toBe(
+      "Remove provider: Spero AI · Default model: Second · m2",
+    );
   });
 
   it("keeps a failed provider save inside the dialog with an actionable inline error", async () => {
@@ -434,6 +441,9 @@ describe("ModelsView provider studio", () => {
 
     await user.click(screen.getByRole("button", { name: "Edit provider" }));
     const dialog = await screen.findByRole("dialog");
+    const displayName = within(dialog).getByLabelText("Display Name");
+    await user.clear(displayName);
+    await user.type(displayName, "Spero Save Failure");
     await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Failed to write settings.yaml");

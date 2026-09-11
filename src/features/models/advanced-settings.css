@@ -1,0 +1,73 @@
+/* Advanced settings is a secondary task. Keep the main provider composer visible as
+   context, but isolate expert-only fields in a focused overlay instead of extending
+   the already scrollable model-selection form below the fold. */
+#provider-dialog:has([data-testid="provider-advanced"]) > div {
+  pointer-events: none;
+}
+
+#provider-dialog [data-testid="provider-advanced"] {
+  position: fixed;
+  left: 50%;
+  top: 12vh;
+  z-index: 70;
+  width: min(44rem, calc(100vw - 4rem));
+  max-height: 76vh;
+  transform: translateX(-50%);
+  overflow-y: auto;
+  pointer-events: auto;
+  padding-top: 3.5rem;
+  background: var(--card);
+  box-shadow:
+    0 0 0 100vmax rgb(0 0 0 / 0.42),
+    0 24px 60px rgb(0 0 0 / 0.24);
+}
+
+/* Reuse the already translated Advanced-settings toggle as the overlay title/close action.
+   This avoids a CSS-only hard-coded English heading and preserves the existing Escape path. */
+#provider-dialog > div > div:first-child button[aria-expanded="true"] {
+  position: fixed;
+  top: calc(12vh + 0.75rem);
+  left: max(2.5rem, calc(50% - 21rem));
+  z-index: 80;
+  pointer-events: auto;
+  border-color: transparent;
+  background: transparent;
+  font-size: 0.875rem;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+#provider-dialog > div > div:first-child button[aria-expanded="true"]::after {
+  content: "×";
+  margin-left: 0.5rem;
+  font-size: 1rem;
+  font-weight: 400;
+  opacity: 0.55;
+}
+
+/* Shared input primitives are width-full. In a header row, make the key deliberately
+   fixed-width so the value keeps the primary editing space instead of collapsing. */
+#provider-dialog [data-testid="provider-advanced"] [data-testid="headers-editor"] input[aria-label="Header name"] {
+  width: 12rem;
+  flex: 0 0 12rem;
+}
+
+#provider-dialog [data-testid="provider-advanced"] [data-testid="headers-editor"] input[aria-label="Header value"] {
+  min-width: 0;
+  width: auto;
+  flex: 1 1 0%;
+}
+
+/* Canonical reasoning tokens stay lowercase in config; only their presentation is user-facing. */
+#provider-dialog [data-testid="provider-advanced"] select[aria-label="Default reasoning level"] {
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+#provider-dialog [data-testid="provider-advanced"] select[aria-label="Default reasoning level"] option {
+  text-transform: capitalize;
+}
+
+#provider-dialog [data-testid="provider-advanced"] select[aria-label="Default reasoning level"] option[value="xhigh"] {
+  text-transform: uppercase;
+}

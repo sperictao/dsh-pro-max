@@ -1,0 +1,75 @@
+name: UI Audit Service Picker
+
+on:
+  pull_request:
+    paths:
+      - "src/features/models/**"
+      - "src/shared/lib/model-presets.generated.ts"
+      - "e2e/capture-models-service-picker.mjs"
+      - ".github/workflows/ui-audit-service-picker.yml"
+  workflow_dispatch:
+
+jobs:
+  service-picker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - run: pnpm install
+      - name: Run service picker tests
+        run: pnpm vitest run src/features/models/ProviderDialog.picker.test.tsx src/features/models/ProviderDialog.add.test.tsx
+      - name: Install Playwright video encoder
+        run: pnpm dlx playwright@1.62.1 install ffmpeg
+      - name: Capture service picker flow
+        run: node e2e/capture-models-service-picker.mjs
+      - name: Convert recording to GIF
+        shell: bash
+        run: |
+          FFMPEG="$(find "$HOME/.cache/ms-playwright" -path '*/ffmpeg-*/ffmpeg-linux' -type f | head -n 1)"
+          test -n "$FFMPEG"
+          FRAMES=.artifacts/e2e/models-service-picker/gif-frames
+          mkdir -p "$FRAMES"
+          "$FFMPEG" -y \
+            -i .artifacts/e2e/models-service-picker/models-service-picker.webm \
+            -vf "scale=960:-1" \
+            "$FRAMES/frame-%04d.png"
+          python3 -m pip install --quiet --user --break-system-packages pillow
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          root = Path('.artifacts/e2e/models-service-picker')
+          paths = sorted((root / 'gif-frames').glob('frame-*.png'))
+          if not paths:
+              raise SystemExit('No GIF frames generated')
+
+          # Playwright records at 25 fps. Sample the decoded frames to 10 fps here
+          # because its bundled ffmpeg intentionally omits the fps/GIF filters.
+          frame_count = max(1, round(len(paths) * 10 / 25))
+          selected = [paths[min(int(index * 25 / 10), len(paths) - 1)] for index in range(frame_count)]
+          frames = [Image.open(path).convert('RGB') for path in selected]
+          frames[0].save(
+              root / 'models-service-picker.gif',
+              save_all=True,
+              append_images=frames[1:],
+              duration=100,
+              loop=0,
+              optimize=True,
+          )
+          for frame in frames:
+              frame.close()
+          PY
+          rm -rf "$FRAMES"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-models-service-picker
+          path: .artifacts/e2e/models-service-picker/
+          if-no-files-found: error
+          retention-days: 14

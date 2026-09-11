@@ -29,8 +29,17 @@ export function ImportDialog({
         const result = await cmd.modelConfigImportScan();
         if (!disposed) {
           setGroups(result);
-          // 全选非空来源的条目（PI 同款：扫描即可勾选导入）
-          setSelected(new Set(result.flatMap((g) => g.entries.map((e) => e.key))));
+          // 安全默认值：可直接复用的 env/无凭据条目自动勾选；来源持明文 key 的
+          // 条目必须由用户显式选择，避免一键导入后得到“看似成功、实际缺凭据”的 provider。
+          setSelected(
+            new Set(
+              result.flatMap((group) =>
+                group.entries
+                  .filter((entry) => entry.credential !== "literal")
+                  .map((entry) => entry.key),
+              ),
+            ),
+          );
         }
       } catch (e) {
         if (!disposed) setError(tErr(String(e)));
@@ -88,7 +97,10 @@ export function ImportDialog({
         )
       : g.entries,
   }));
+  // 空来源是扫描实现细节，不占用结果区；搜索后也只保留真正命中的来源。
+  const visibleGroups = visible.filter((group) => group.entries.length > 0);
   const totalFound = (groups ?? []).reduce((n, g) => n + g.entries.length, 0);
+  const visibleFound = visibleGroups.reduce((n, g) => n + g.entries.length, 0);
   const literalCount = [...selected].length > 0 ? countLiteral(groups ?? [], selected) : 0;
 
   return (
@@ -137,57 +149,58 @@ export function ImportDialog({
                 aria-label={t("Search providers…")}
               />
               <span className="shrink-0 text-xs opacity-60">
-                {t("Providers found: {{count}}", { count: totalFound })}
+                {t("Providers found: {{count}}", { count: q ? visibleFound : totalFound })}
               </span>
             </div>
-            <div className="flex flex-col gap-3 overflow-y-auto">
-              {visible.map((group) => (
-                <div key={group.source} className="rounded-md border border-border p-3" data-source={group.source}>
-                  <label className="flex items-center gap-2 text-sm font-medium">
+            <div className="flex flex-col gap-2 overflow-y-auto">
+              {visibleGroups.map((group) => (
+                <div key={group.source} className="rounded-md border border-border" data-source={group.source}>
+                  <label className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm font-medium">
                     <input
                       type="checkbox"
-                      checked={
-                        group.entries.length > 0 &&
-                        group.entries.every((e) => selected.has(e.key))
-                      }
+                      checked={group.entries.every((e) => selected.has(e.key))}
                       ref={(el) => {
                         if (el)
                           el.indeterminate =
                             !group.entries.every((e) => selected.has(e.key)) &&
                             group.entries.some((e) => selected.has(e.key));
                       }}
-                      disabled={group.entries.length === 0}
                       onChange={() => toggleGroup(group)}
                       aria-label={group.source}
                     />
-                    {sourceLabel(group.source)}
-                    <span className="text-xs opacity-60">{group.entries.length}</span>
+                    <span>{sourceLabel(group.source)}</span>
+                    <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-normal opacity-70">
+                      {group.entries.length}
+                    </span>
                   </label>
-                  {group.entries.length === 0 && (
-                    <p className="mt-1 text-xs opacity-60">{t("Nothing found")}</p>
-                  )}
-                  <ul className="mt-1 flex flex-col gap-1">
+                  <ul className="p-1">
                     {group.entries.map((e) => (
                       <li key={e.key}>
-                        <label className="flex cursor-pointer items-baseline gap-2 rounded px-1 py-1 text-sm hover:bg-accent">
+                        <label className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 hover:bg-accent">
                           <input
+                            className="mt-0.5"
                             type="checkbox"
                             checked={selected.has(e.key)}
                             onChange={() => toggle(e.key)}
                             aria-label={e.key}
                           />
-                          <span className="min-w-0 flex-1 truncate font-mono text-xs">
-                            {e.route}
-                          </span>
-                          <span className="max-w-32 truncate text-xs opacity-60">{e.name}</span>
-                          {e.baseURL && (
-                            <span className="max-w-40 truncate text-xs opacity-60">{e.baseURL}</span>
-                          )}
-                          {e.credential === "literal" && (
-                            <span className="shrink-0 text-xs text-amber-700 dark:text-amber-400">
-                              {t("Literal key — not imported")}
+                          <span className="min-w-0 flex-1">
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className="truncate font-mono text-xs font-medium">{e.route}</span>
+                              <span className="truncate text-xs opacity-60">{e.name}</span>
                             </span>
-                          )}
+                            <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] opacity-60">
+                              {e.baseURL && <span className="truncate">{e.baseURL}</span>}
+                              {e.credential === "env" && e.apiKeyEnv && (
+                                <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{e.apiKeyEnv}</span>
+                              )}
+                              {e.credential === "literal" && (
+                                <span className="font-medium text-amber-700 opacity-100 dark:text-amber-400">
+                                  {t("Literal key — not imported")}
+                                </span>
+                              )}
+                            </span>
+                          </span>
                         </label>
                       </li>
                     ))}
@@ -196,6 +209,9 @@ export function ImportDialog({
               ))}
               {totalFound === 0 && (
                 <p className="text-sm opacity-60">{t("No provider configurations found on this machine.")}</p>
+              )}
+              {totalFound > 0 && q && visibleFound === 0 && (
+                <p className="text-sm opacity-60">{t("Nothing found")}</p>
               )}
             </div>
             <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
