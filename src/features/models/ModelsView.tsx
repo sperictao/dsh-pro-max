@@ -37,6 +37,11 @@ const EMPTY_CONFIG: ModelConfig = {
   providers: [],
 };
 
+const ROW_ICON_BUTTON =
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50";
+const ROW_ICON_DANGER =
+  `${ROW_ICON_BUTTON} text-destructive hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive`;
+
 function configValidationError(config: ModelConfig): string | null {
   if (config.defaultProvider?.trim() && !config.defaultModel?.trim()) {
     return "Default model provider and model are required";
@@ -465,11 +470,6 @@ export function ModelsView() {
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <h2 className="text-base font-semibold">{t("Model Configuration")}</h2>
-            <p className="mt-1 text-xs opacity-60">
-              {t(
-                "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.",
-              )}
-            </p>
           </div>
           <button className={BTN} id="btn-import-models" onClick={openImport} disabled={busyGlobal}>
             {t("Import configuration")}
@@ -513,26 +513,28 @@ export function ModelsView() {
                 <div className="text-sm">{t("Reasoning Effort")}</div>
                 <div className="mt-0.5 text-xs opacity-60">{t("Default reasoning level")}</div>
               </div>
-              <select
-                className={`${SELECT} w-44`}
-                value={currentReasoning}
-                disabled={reasoningDisabled}
-                onChange={(event) => void persistReasoning(event.target.value).catch(() => undefined)}
-                aria-label={t("Reasoning Effort")}
-                data-reasoning-capability={defaultReasoningCapability.kind}
-              >
-                <option value="">{t("Not set")}</option>
-                {invalidCurrentReasoning && (
-                  <option value={currentReasoning} disabled>
-                    {currentReasoning}
-                  </option>
-                )}
-                {reasoningOptions.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
+              <div className="w-44 shrink-0">
+                <select
+                  className={SELECT}
+                  value={currentReasoning}
+                  disabled={reasoningDisabled}
+                  onChange={(event) => void persistReasoning(event.target.value).catch(() => undefined)}
+                  aria-label={t("Reasoning Effort")}
+                  data-reasoning-capability={defaultReasoningCapability.kind}
+                >
+                  <option value="">{t("Not set")}</option>
+                  {invalidCurrentReasoning && (
+                    <option value={currentReasoning} disabled>
+                      {currentReasoning}
+                    </option>
+                  )}
+                  {reasoningOptions.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
         </section>
@@ -641,7 +643,7 @@ export function ModelsView() {
                       </div>
                     </div>
 
-                    <div className="flex shrink-0 items-center gap-1.5">
+                    <div className="flex shrink-0 items-center gap-2">
                       {!isDefault && firstModel && readiness.ready && (
                         <button
                           className={BTN_SM}
@@ -651,53 +653,59 @@ export function ModelsView() {
                           {t("Make default")}
                         </button>
                       )}
-                      {canTest && (
+                      <div className="flex items-center gap-1">
                         <button
-                          className={BTN_SM}
+                          className={ROW_ICON_BUTTON}
+                          aria-label={t("Edit provider")}
+                          title={t("Edit provider")}
                           disabled={rowBusy || busyGlobal}
-                          onClick={() => void testProvider(provider)}
-                          title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+                          onClick={() => setDialog({ mode: "edit", index, provider })}
                         >
-                          {testing ? t("Testing…") : t("Test connection")}
+                          <ProviderActionIcon kind="edit" />
                         </button>
-                      )}
-                      {canProbe && (
-                        <button
-                          className={BTN_SM}
-                          disabled={rowBusy || busyGlobal}
-                          onClick={() => void probeProvider(provider)}
-                          title={t("Fetch models")}
-                        >
-                          {probing ? t("Loading models…") : t("Fetch list")}
-                        </button>
-                      )}
-                      <button
-                        className={BTN_SM}
-                        aria-label={t("Edit provider")}
-                        disabled={rowBusy || busyGlobal}
-                        onClick={() => setDialog({ mode: "edit", index, provider })}
-                      >
-                        {t("Edit")}
-                      </button>
-                      {armed ? (
-                        <button
-                          className={BTN_DANGER_SM}
-                          id={`btn-confirm-delete-${index}`}
-                          disabled={rowBusy || busyGlobal}
-                          onClick={() => void removeProvider(provider.route).catch(() => undefined)}
-                        >
-                          {t("Delete?")}
-                        </button>
-                      ) : (
-                        <button
-                          className={BTN_DANGER_SM}
-                          aria-label={t("Remove provider")}
-                          disabled={rowBusy || busyGlobal}
-                          onClick={() => armDelete(provider.route)}
-                        >
-                          {t("Delete")}
-                        </button>
-                      )}
+                        {canTest && (
+                          <button
+                            className={ROW_ICON_BUTTON}
+                            aria-label={testing ? t("Testing…") : t("Test connection")}
+                            disabled={rowBusy || busyGlobal}
+                            onClick={() => void testProvider(provider)}
+                            title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+                          >
+                            <ProviderActionIcon kind="test" busy={testing} />
+                          </button>
+                        )}
+                        {canProbe && (
+                          <button
+                            className={ROW_ICON_BUTTON}
+                            aria-label={probing ? t("Loading models…") : t("Fetch list")}
+                            disabled={rowBusy || busyGlobal}
+                            onClick={() => void probeProvider(provider)}
+                            title={t("Fetch models")}
+                          >
+                            <ProviderActionIcon kind="fetch" busy={probing} />
+                          </button>
+                        )}
+                        {armed ? (
+                          <button
+                            className={BTN_DANGER_SM}
+                            id={`btn-confirm-delete-${index}`}
+                            disabled={rowBusy || busyGlobal}
+                            onClick={() => void removeProvider(provider.route).catch(() => undefined)}
+                          >
+                            {t("Delete?")}
+                          </button>
+                        ) : (
+                          <button
+                            className={ROW_ICON_DANGER}
+                            aria-label={t("Remove provider")}
+                            title={t("Delete")}
+                            disabled={rowBusy || busyGlobal}
+                            onClick={() => armDelete(provider.route)}
+                          >
+                            <ProviderActionIcon kind="delete" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -745,7 +753,14 @@ export function ModelsView() {
             {catalogRefreshing ? t("Refreshing catalog…") : t("Refresh model catalog")}
           </button>
         </div>
-        <p className="text-xs opacity-60">{t("Changes take effect immediately after saving (hot reload).")}</p>
+        <div className="space-y-1 text-xs opacity-60">
+          <p>{t("Changes take effect immediately after saving (hot reload).")}</p>
+          <p>
+            {t(
+              "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.",
+            )}
+          </p>
+        </div>
       </div>
 
       {dialog && (
@@ -790,6 +805,50 @@ export function ModelsView() {
         />
       )}
     </main>
+  );
+}
+
+function ProviderActionIcon({
+  kind,
+  busy = false,
+}: {
+  kind: "edit" | "test" | "fetch" | "delete";
+  busy?: boolean;
+}) {
+  if (busy) {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4 animate-spin" fill="none" aria-hidden>
+        <path d="M20 12a8 8 0 1 1-2.34-5.66" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (kind === "edit") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+        <path d="M4 20h4l10.5-10.5a2.12 2.12 0 0 0-3-3L5 17v3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+        <path d="m13.5 8.5 3 3" stroke="currentColor" strokeWidth="1.7" />
+      </svg>
+    );
+  }
+  if (kind === "test") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+        <path d="M13.5 2 5 13h6l-.5 9L19 11h-6l.5-9Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (kind === "fetch") {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+        <path d="M20 7v5h-5M4 17v-5h5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M18.5 12a6.5 6.5 0 0 0-11-4.7L4 12M5.5 12a6.5 6.5 0 0 0 11 4.7L20 12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+      <path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5M14 11v5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
