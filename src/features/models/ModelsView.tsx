@@ -151,6 +151,7 @@ export function ModelsView() {
   const [busyRoute, setBusyRoute] = useState<string | null>(null);
   const [testingRoute, setTestingRoute] = useState<string | null>(null);
   const [defaultingRoute, setDefaultingRoute] = useState<string | null>(null);
+  const [deletingRoute, setDeletingRoute] = useState<string | null>(null);
   const [busyGlobal, setBusyGlobal] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
   const [catalogFetchedAt, setCatalogFetchedAt] = useState<number | null>(null);
@@ -382,18 +383,39 @@ export function ModelsView() {
 
   const disarmDelete = () => {
     if (deleteTimer.current) clearTimeout(deleteTimer.current);
+    deleteTimer.current = null;
     setArmedDelete(null);
   };
 
   const removeProvider = async (route: string) => {
-    disarmDelete();
+    if (deleteTimer.current) clearTimeout(deleteTimer.current);
+    deleteTimer.current = null;
     const current = config ?? EMPTY_CONFIG;
+    const removed = current.providers.find((provider) => provider.route === route);
+    const removedName = removed?.displayName ?? removed?.route ?? route;
+    const removedWasDefault = current.defaultProvider === route;
     const next = withValidDefaultReasoning(
       removeProviderFromConfig(current, route, readyRoutes),
       catalog,
     );
-    await persist(next, route);
-    toast(t("Model configuration saved — changes take effect immediately"), "success");
+    const fallback = next.defaultProvider
+      ? next.providers.find((provider) => provider.route === next.defaultProvider)
+      : null;
+    setDeletingRoute(route);
+    try {
+      await persist(next, route);
+      disarmDelete();
+      const defaultFeedback = removedWasDefault
+        ? ` · ${t("Default model")}: ${
+            fallback && next.defaultModel
+              ? `${fallback.displayName ?? fallback.route} · ${next.defaultModel}`
+              : t("Not set")
+          }`
+        : "";
+      toast(`${t("Remove provider")}: ${removedName}${defaultFeedback}`, "success");
+    } finally {
+      setDeletingRoute(null);
+    }
   };
 
   /** 连接测试与模型发现分离：真实推理请求验证 endpoint/auth/model，绝不调用 /models。 */
@@ -590,10 +612,11 @@ export function ModelsView() {
               {cfg.providers.map((provider, index) => {
                 const isDefault = provider.route === (cfg.defaultProvider ?? "").trim();
                 const armed = armedDelete === provider.route;
-                const probing = busyRoute === provider.route;
+                const deleting = deletingRoute === provider.route;
+                const probing = busyRoute === provider.route && !deleting;
                 const testing = testingRoute === provider.route;
                 const defaulting = defaultingRoute === provider.route;
-                const rowBusy = probing || testing || defaulting;
+                const rowBusy = probing || testing || defaulting || deleting;
                 const firstModel = firstProviderModelId(provider);
                 const displayModel = provider.models[0]?.id ?? null;
                 const readiness =
@@ -601,6 +624,16 @@ export function ModelsView() {
                 const launcherProbeAllowed = launcherRemoteProbeAllowed(readiness);
                 const canTest = Boolean(providerConnectionTarget(provider)) && launcherProbeAllowed;
                 const canProbe = Boolean(provider.baseURL?.trim()) && launcherProbeAllowed;
+                const removalPreview =
+                  armed && isDefault
+                    ? withValidDefaultReasoning(
+                        removeProviderFromConfig(cfg, provider.route, readyRoutes),
+                        catalog,
+                      )
+                    : null;
+                const fallbackProvider = removalPreview?.defaultProvider
+                  ? cfg.providers.find((item) => item.route === removalPreview.defaultProvider)
+                  : null;
                 return (
                   <div
                     key={provider.route}
@@ -609,7 +642,7 @@ export function ModelsView() {
                     data-route={provider.route}
                     aria-busy={rowBusy}
                     onBlur={(event) => {
-                      if (!event.currentTarget.contains(event.relatedTarget as Node)) disarmDelete();
+                      if (!deleting && !event.currentTarget.contains(event.relatedTarget as Node)) disarmDelete();
                     }}
                   >
                     <div
@@ -654,68 +687,107 @@ export function ModelsView() {
                     </div>
 
                     <div className="flex shrink-0 items-center gap-2">
-                      {!isDefault && firstModel && readiness.ready && (
-                        <button
-                          className={BTN_SM}
-                          disabled={rowBusy || busyGlobal}
-                          onClick={() => void makeDefault(provider).catch(() => undefined)}
+                      {deleting ? (
+                        <div
+                          className="flex min-w-28 items-center justify-end gap-2 text-xs text-destructive"
+                          role="status"
+                          data-testid={`provider-removing-${index}`}
                         >
-                          {defaulting ? t("Saving…") : t("Make default")}
-                        </button>
-                      )}
-                      <div className="flex items-center gap-1">
-                        <button
-                          className={ROW_ICON_BUTTON}
-                          aria-label={t("Edit provider")}
-                          title={t("Edit provider")}
-                          disabled={rowBusy || busyGlobal}
-                          onClick={() => setDialog({ mode: "edit", index, provider })}
+                          <ProviderActionIcon kind="delete" busy />
+                          <span>{t("Removing…")}</span>
+                        </div>
+                      ) : armed ? (
+                        <div
+                          className="flex items-center gap-2"
+                          role="group"
+                          aria-label={`${t("Remove provider")}: ${provider.displayName ?? provider.route}`}
+                          data-testid={`provider-remove-confirm-${index}`}
                         >
-                          <ProviderActionIcon kind="edit" />
-                        </button>
-                        {canTest && (
+                          <div className="max-w-56 text-right">
+                            <div className="text-xs font-medium text-destructive">
+                              {`${t("Remove")} ${provider.displayName ?? provider.route}?`}
+                            </div>
+                            {isDefault && (
+                              <div className="mt-0.5 text-[11px] opacity-60">
+                                {`${t("Default model")}: ${
+                                  fallbackProvider && removalPreview?.defaultModel
+                                    ? `${fallbackProvider.displayName ?? fallbackProvider.route} · ${removalPreview.defaultModel}`
+                                    : t("Not set")
+                                }`}
+                              </div>
+                            )}
+                          </div>
                           <button
-                            className={ROW_ICON_BUTTON}
-                            aria-label={testing ? t("Testing…") : t("Test connection")}
-                            disabled={rowBusy || busyGlobal}
-                            onClick={() => void testProvider(provider)}
-                            title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+                            type="button"
+                            className={BTN_SM}
+                            onClick={disarmDelete}
                           >
-                            <ProviderActionIcon kind="test" busy={testing} />
+                            {t("Cancel")}
                           </button>
-                        )}
-                        {canProbe && (
                           <button
-                            className={ROW_ICON_BUTTON}
-                            aria-label={probing ? t("Loading models…") : t("Fetch list")}
-                            disabled={rowBusy || busyGlobal}
-                            onClick={() => void probeProvider(provider)}
-                            title={t("Fetch models")}
-                          >
-                            <ProviderActionIcon kind="fetch" busy={probing} />
-                          </button>
-                        )}
-                        {armed ? (
-                          <button
+                            type="button"
                             className={BTN_DANGER_SM}
                             id={`btn-confirm-delete-${index}`}
-                            disabled={rowBusy || busyGlobal}
                             onClick={() => void removeProvider(provider.route).catch(() => undefined)}
                           >
-                            {t("Delete?")}
+                            {t("Remove")}
                           </button>
-                        ) : (
-                          <button
-                            className={ROW_ICON_DANGER}
-                            aria-label={t("Remove provider")}
-                            title={t("Delete")}
-                            disabled={rowBusy || busyGlobal}
-                            onClick={() => armDelete(provider.route)}
-                          >
-                            <ProviderActionIcon kind="delete" />
-                          </button>
-                        )}
-                      </div>
+                        </div>
+                      ) : (
+                        <>
+                          {!isDefault && firstModel && readiness.ready && (
+                            <button
+                              className={BTN_SM}
+                              disabled={rowBusy || busyGlobal}
+                              onClick={() => void makeDefault(provider).catch(() => undefined)}
+                            >
+                              {defaulting ? t("Saving…") : t("Make default")}
+                            </button>
+                          )}
+                          <div className="flex items-center gap-1">
+                            <button
+                              className={ROW_ICON_BUTTON}
+                              aria-label={t("Edit provider")}
+                              title={t("Edit provider")}
+                              disabled={rowBusy || busyGlobal}
+                              onClick={() => setDialog({ mode: "edit", index, provider })}
+                            >
+                              <ProviderActionIcon kind="edit" />
+                            </button>
+                            {canTest && (
+                              <button
+                                className={ROW_ICON_BUTTON}
+                                aria-label={testing ? t("Testing…") : t("Test connection")}
+                                disabled={rowBusy || busyGlobal}
+                                onClick={() => void testProvider(provider)}
+                                title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+                              >
+                                <ProviderActionIcon kind="test" busy={testing} />
+                              </button>
+                            )}
+                            {canProbe && (
+                              <button
+                                className={ROW_ICON_BUTTON}
+                                aria-label={probing ? t("Loading models…") : t("Fetch list")}
+                                disabled={rowBusy || busyGlobal}
+                                onClick={() => void probeProvider(provider)}
+                                title={t("Fetch models")}
+                              >
+                                <ProviderActionIcon kind="fetch" busy={probing} />
+                              </button>
+                            )}
+                            <button
+                              className={ROW_ICON_DANGER}
+                              aria-label={t("Remove provider")}
+                              title={t("Delete")}
+                              disabled={rowBusy || busyGlobal}
+                              onClick={() => armDelete(provider.route)}
+                            >
+                              <ProviderActionIcon kind="delete" />
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
