@@ -70,6 +70,11 @@ async function launchBrowser() {
   throw new Error("no browser available for UI capture");
 }
 
+async function settlePointer(page) {
+  await page.mouse.move(20, 20);
+  await page.waitForTimeout(150);
+}
+
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   const server = await createServer({ root: ROOT, logLevel: "error", server: { host: "127.0.0.1", port: PORT, strictPort: true } });
@@ -151,6 +156,7 @@ async function main() {
     assert.equal((await inherit.textContent())?.replace(/\s+/g, " ").trim(), "Follow catalog · Low, Medium, High");
     assert.equal(await thinking.getAttribute("aria-describedby"), await inherit.getAttribute("id"));
     assert.equal(await panel.getByRole("textbox", { name: /Wire spelling for/ }).count(), 0);
+    await settlePointer(page);
     await page.screenshot({ path: resolve(OUT_DIR, "models-thinking-levels-inherited.png"), fullPage: true });
 
     // One explicit override intentionally replaces inherited catalog levels with a one-level map.
@@ -162,6 +168,7 @@ async function main() {
     await highSpelling.waitFor({ state: "visible" });
     assert.equal(await highSpelling.inputValue(), "high");
     await highSpelling.fill("reasoner-high");
+    await settlePointer(page);
     await page.screenshot({ path: resolve(OUT_DIR, "models-thinking-levels-explicit.png"), fullPage: true });
 
     let save = dialog.getByRole("button", { name: "Save provider" });
@@ -195,6 +202,7 @@ async function main() {
     await inherit.waitFor({ state: "visible" });
     assert.equal((await inherit.textContent())?.replace(/\s+/g, " ").trim(), "Follow catalog · Low, Medium, High");
     assert.equal(await thinking.getAttribute("aria-describedby"), await inherit.getAttribute("id"));
+    await settlePointer(page);
     await page.screenshot({ path: resolve(OUT_DIR, "models-thinking-levels-restored.png"), fullPage: true });
 
     save = dialog.getByRole("button", { name: "Save provider" });
