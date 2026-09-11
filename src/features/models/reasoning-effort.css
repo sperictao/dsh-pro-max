@@ -1,0 +1,20 @@
+/* Reasoning Effort keeps the native select for platform keyboard/a11y behavior.
+   Stored values stay canonical lowercase tokens; presentation is user-facing. */
+#models-default select[data-reasoning-capability] {
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+#models-default select[data-reasoning-capability] option {
+  text-transform: capitalize;
+}
+
+/* `xhigh` is one canonical pi-ai token; all-caps reads more deliberately than
+   the browser's generic `Xhigh` capitalization while preserving its value. */
+#models-default select[data-reasoning-capability] option[value="xhigh"] {
+  text-transform: uppercase;
+}
+
+#models-default select[data-reasoning-capability]:disabled {
+  cursor: not-allowed;
+}
