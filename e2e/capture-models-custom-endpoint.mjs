@@ -141,21 +141,34 @@ async function main() {
     await dialog.getByRole("option", { name: /Custom endpoint/ }).click();
     await page.waitForTimeout(900);
 
-    await dialog.getByLabel("Display Name").fill("Acme Gateway");
-    await dialog.getByLabel("Route key").fill("acme-gateway");
-    await dialog.getByLabel("Base URL").fill("https://gateway.acme.test/v1/chat/completions");
-    await dialog.getByLabel("Base URL").press("Tab");
+    const displayName = dialog.getByLabel("Display Name");
+    assert.equal(await displayName.evaluate((element) => element === document.activeElement), true, "Custom endpoint should focus Display Name");
+    const modelList = dialog.getByRole("list", { name: "Models from this service" });
+    assert.equal(await modelList.getAttribute("data-total-count"), "0", "catalog models must stay hidden before remote discovery");
+    assert.equal(await modelList.getByRole("checkbox", { name: "glm-5.2" }).count(), 0, "catalog model leaked into Custom endpoint candidates");
+
+    await displayName.fill("Acme Gateway");
+    const route = dialog.getByLabel("Route key");
+    assert.equal(await route.inputValue(), "acme-gateway", "Display Name should derive Route key");
+
+    const baseURL = dialog.getByLabel("Base URL");
+    await baseURL.fill("https://gateway.acme.test/v1/chat/completions");
+    await baseURL.press("Tab");
+    assert.equal(await baseURL.inputValue(), "https://gateway.acme.test/v1", "operation URL should normalize to service root");
     await dialog.getByLabel("API Key Env Var").fill("ACME_API_KEY");
     await dialog.getByLabel("Wire Protocol").selectOption("openai-completions");
     await page.waitForTimeout(1500);
 
-    const modelList = dialog.getByRole("list", { name: "Models from this service" });
+    await page.waitForFunction(() => document.querySelector('#provider-dialog ul[aria-label="Models from this service"]')?.dataset.totalCount === "2");
     const modelCheckbox = modelList.getByRole("checkbox", { name: "acme-chat-pro" });
     await modelCheckbox.waitFor({ state: "visible" });
+    const save = dialog.getByRole("button", { name: "Save provider" });
+    assert.equal(await save.isDisabled(), true, "Save must wait for a model selection");
     await modelCheckbox.check();
+    assert.equal(await save.isEnabled(), true, "selecting a model should enable Save provider");
     await page.waitForTimeout(900);
 
-    await dialog.getByRole("button", { name: "Save provider" }).click();
+    await save.click();
     await page.getByRole("button", { name: "Saving…" }).waitFor({ state: "visible" });
     await dialog.waitFor({ state: "hidden" });
     await page.waitForFunction(() => window.__auditSavedConfigs.length === 1);
