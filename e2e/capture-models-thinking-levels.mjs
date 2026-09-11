@@ -1,5 +1,6 @@
 // Models -> Edit provider -> Model settings -> Advanced -> Thinking levels UI audit.
-// First-pass capture fixes the current inherited-vs-explicit reasoning override behavior in a real dialog.
+// Scope: inherited catalog reasoning, explicit per-model overrides, wire spelling, persistence,
+// restoration to inheritance, and the resulting default-reasoning validation.
 import assert from "node:assert/strict";
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -143,16 +144,20 @@ async function main() {
     let panel = row.getByTestId("model-advanced");
     await panel.waitFor({ state: "visible" });
     let thinking = panel.getByRole("group", { name: "Thinking levels" });
-    const buttons = thinking.getByRole("button");
+    let buttons = thinking.getByRole("button");
     assert.deepEqual(await buttons.evaluateAll((items) => items.map((item) => item.getAttribute("aria-pressed"))), ["false", "false", "false", "false", "false", "false", "false"]);
-    assert.equal(await panel.getByTestId("thinking-levels-inherit").count(), 0);
+    let inherit = panel.getByTestId("thinking-levels-inherit");
+    await inherit.waitFor({ state: "visible" });
+    assert.equal((await inherit.textContent())?.replace(/\s+/g, " ").trim(), "Follow catalog · Low, Medium, High");
+    assert.equal(await thinking.getAttribute("aria-describedby"), await inherit.getAttribute("id"));
     assert.equal(await panel.getByRole("textbox", { name: /Wire spelling for/ }).count(), 0);
     await page.screenshot({ path: resolve(OUT_DIR, "models-thinking-levels-inherited.png"), fullPage: true });
 
-    // Current explicit override path: one click converts inherited reasoning into an explicit one-level map.
+    // One explicit override intentionally replaces inherited catalog levels with a one-level map.
     const high = thinking.getByRole("button", { name: "high", exact: true });
     await high.click();
     assert.equal(await high.getAttribute("aria-pressed"), "true");
+    assert.equal(await panel.getByTestId("thinking-levels-inherit").count(), 0);
     const highSpelling = panel.getByRole("textbox", { name: "Wire spelling for high" });
     await highSpelling.waitFor({ state: "visible" });
     assert.equal(await highSpelling.inputValue(), "high");
@@ -167,11 +172,11 @@ async function main() {
     let saved = await page.evaluate(() => window.__auditSavedConfigs.at(-1));
     let savedModel = saved.providers.find((item) => item.route === "deepseek").models.find((item) => item.id === "deepseek-reasoner");
     assert.deepEqual(savedModel.reasoningEfforts, { high: "reasoner-high" });
-    // The model override now supports only High, so ModelsView intentionally clears the no-longer-valid
-    // global Medium default instead of preserving a default the selected model cannot honor.
+    // The explicit model map supports only High. ModelsView therefore removes the now-invalid
+    // global Medium default instead of persisting a default this model cannot honor.
     assert.equal(saved.defaultReasoningEffort, null);
 
-    // Reopen, remove the only explicit level, and verify that the data returns to inheritance.
+    // Reopen, verify wire spelling persisted, then remove the only explicit level.
     await providerRow.getByRole("button", { name: "Edit provider" }).click();
     dialog = page.getByRole("dialog", { name: "Edit provider" });
     await dialog.waitFor({ state: "visible" });
@@ -186,7 +191,10 @@ async function main() {
     await reopenedHigh.click();
     assert.equal(await reopenedHigh.getAttribute("aria-pressed"), "false");
     assert.equal(await panel.getByRole("textbox", { name: /Wire spelling for/ }).count(), 0);
-    assert.equal(await panel.getByTestId("thinking-levels-inherit").count(), 0);
+    inherit = panel.getByTestId("thinking-levels-inherit");
+    await inherit.waitFor({ state: "visible" });
+    assert.equal((await inherit.textContent())?.replace(/\s+/g, " ").trim(), "Follow catalog · Low, Medium, High");
+    assert.equal(await thinking.getAttribute("aria-describedby"), await inherit.getAttribute("id"));
     await page.screenshot({ path: resolve(OUT_DIR, "models-thinking-levels-restored.png"), fullPage: true });
 
     save = dialog.getByRole("button", { name: "Save provider" });
@@ -197,7 +205,7 @@ async function main() {
     saved = await page.evaluate(() => window.__auditSavedConfigs.at(-1));
     savedModel = saved.providers.find((item) => item.route === "deepseek").models.find((item) => item.id === "deepseek-reasoner");
     assert.equal(savedModel.reasoningEfforts, null);
-    // Restoring inheritance does not guess the user's former global default; the cleared default stays unset.
+    // Restoring inheritance does not guess the user's former global default; it remains unset.
     assert.equal(saved.defaultReasoningEffort, null);
     assert.equal(page.url(), startUrl);
 
@@ -205,7 +213,7 @@ async function main() {
     assert.equal(calls.filter((call) => call.command === "model_config_save").length, 2);
     assert.equal(calls.filter((call) => call.command === "model_test_connection").length, 0);
     assert.equal(failures.length, 0, failures.join("\n"));
-    console.log("audit-current: inherited=all-buttons-off-without-hint; explicit-high=custom-wire; incompatible-global-default=cleared; remove-last=inherit-null; saves=2");
+    console.log("audit: inherit-hint=Low/Medium/High; explicit-high=custom-wire; incompatible-global-default=cleared; remove-last=inherit-hint-restored; saves=2");
 
     await context.close();
     const recorded = await video.path();
