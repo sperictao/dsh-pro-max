@@ -22,24 +22,27 @@
     0 24px 60px rgb(0 0 0 / 0.24);
 }
 
-#provider-dialog [data-testid="provider-advanced"]::before {
-  content: "Advanced settings";
-  position: absolute;
-  left: 1rem;
-  top: 1rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--foreground);
-}
-
-/* The existing toggle remains the close action while the focused panel is open. */
+/* Reuse the already translated Advanced-settings toggle as the overlay title/close action.
+   This avoids a CSS-only hard-coded English heading and preserves the existing Escape path. */
 #provider-dialog > div > div:first-child button[aria-expanded="true"] {
   position: fixed;
   top: calc(12vh + 0.75rem);
-  right: max(2.5rem, calc(50% - 21rem));
+  left: max(2.5rem, calc(50% - 21rem));
   z-index: 80;
   pointer-events: auto;
-  background: var(--background);
+  border-color: transparent;
+  background: transparent;
+  font-size: 0.875rem;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+#provider-dialog > div > div:first-child button[aria-expanded="true"]::after {
+  content: "×";
+  margin-left: 0.5rem;
+  font-size: 1rem;
+  font-weight: 400;
+  opacity: 0.55;
 }
 
 /* Shared input primitives are width-full. In a header row, make the key deliberately
