@@ -144,6 +144,7 @@ export function ModelPanes({
   const toggle = (id: string) => {
     const key = modelIdKey(id);
     if (selectedIds.has(key)) {
+      if (expanded != null && modelIdKey(expanded) === key) setExpanded(null);
       onModelsChange(provider.models.filter((m) => modelIdKey(m.id) !== key));
     } else {
       onModelsChange([...provider.models, emptyModelEntry(id)]);
