@@ -203,11 +203,7 @@ export function ModelPanes({
                   if (el) el.indeterminate = someChecked;
                 }}
                 onChange={toggleAll}
-                aria-label={
-                  isSearching
-                    ? `${t("Select all")} · ${t("{{count}} models", { count: candidates.length })}`
-                    : t("Select all")
-                }
+                aria-label={t("Select all")}
               />
               {t("Models from this service")}
             </label>
