@@ -1,0 +1,48 @@
+name: UI Audit Image Input Override
+
+on:
+  pull_request:
+    paths:
+      - "src/features/models/**"
+      - "src/shared/i18n/**"
+      - "e2e/capture-models-image-input-override.mjs"
+      - ".github/workflows/ui-audit-image-input-override.yml"
+  workflow_dispatch:
+
+jobs:
+  image-input-override:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - run: pnpm install
+      - name: Run image input override tests
+        run: pnpm vitest run src/features/models/ModelPanes.image-input.test.tsx src/features/models/ModelPanes.advanced.test.tsx
+      - name: Install Playwright video encoder
+        run: pnpm dlx playwright@1.62.1 install ffmpeg
+      - name: Capture image input override flow
+        run: node e2e/capture-models-image-input-override.mjs
+      - name: Convert recording to GIF
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -y \
+            -i .artifacts/e2e/models-image-input-override/models-image-input-override.webm \
+            -vf "fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" \
+            .artifacts/e2e/models-image-input-override/models-image-input-override.gif
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-models-image-input-override
+          path: .artifacts/e2e/models-image-input-override/
+          if-no-files-found: error
+          retention-days: 14
