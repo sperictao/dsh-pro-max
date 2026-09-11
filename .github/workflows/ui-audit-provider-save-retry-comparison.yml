@@ -1,0 +1,79 @@
+name: UI Audit Provider Save Retry Comparison
+
+on:
+  pull_request:
+    paths:
+      - "e2e/capture-models-provider-save-retry-comparison.mjs"
+      - ".github/workflows/ui-audit-provider-save-retry-comparison.yml"
+  workflow_dispatch:
+
+jobs:
+  compare-provider-save-retry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout #48 head
+        uses: actions/checkout@v5
+        with:
+          ref: ui/provider-save-retry-audit
+          path: after
+      - name: Checkout #47 baseline
+        uses: actions/checkout@v5
+        with:
+          ref: 1f278d6154e2f8ab40aa90f96a10fc97f5a16fbb
+          path: before
+      - name: Overlay neutral A/B capture on baseline
+        run: cp after/e2e/capture-models-provider-save-retry-comparison.mjs before/e2e/
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: after/pnpm-lock.yaml
+      - name: Install baseline dependencies
+        working-directory: before
+        run: pnpm install --frozen-lockfile
+      - name: Install fixed dependencies
+        working-directory: after
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright video encoder
+        working-directory: after
+        run: pnpm dlx playwright@1.62.1 install ffmpeg
+      - name: Capture before (#47)
+        working-directory: before
+        env:
+          AUDIT_LABEL: before
+          AUDIT_PORT: "5231"
+        run: node e2e/capture-models-provider-save-retry-comparison.mjs
+      - name: Capture after (#48)
+        working-directory: after
+        env:
+          AUDIT_LABEL: after
+          AUDIT_PORT: "5232"
+        run: node e2e/capture-models-provider-save-retry-comparison.mjs
+      - name: Convert A/B recordings to GIF
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          ffmpeg -y \
+            -i before/.artifacts/e2e/models-provider-save-retry-comparison/before/models-provider-save-retry-before.webm \
+            -vf "fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" \
+            before/.artifacts/e2e/models-provider-save-retry-comparison/before/models-provider-save-retry-before.gif
+          ffmpeg -y \
+            -i after/.artifacts/e2e/models-provider-save-retry-comparison/after/models-provider-save-retry-after.webm \
+            -vf "fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" \
+            after/.artifacts/e2e/models-provider-save-retry-comparison/after/models-provider-save-retry-after.gif
+      - name: Upload before/after GIFs
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-audit-models-provider-save-retry-comparison
+          path: |
+            before/.artifacts/e2e/models-provider-save-retry-comparison/before/
+            after/.artifacts/e2e/models-provider-save-retry-comparison/after/
+          if-no-files-found: error
+          retention-days: 14
