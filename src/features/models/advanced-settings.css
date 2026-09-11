@@ -1,0 +1,57 @@
+/* Advanced settings is a secondary task. Keep the main provider composer visible as
+   context, but isolate expert-only fields in a focused overlay instead of extending
+   the already scrollable model-selection form below the fold. */
+#provider-dialog:has([data-testid="provider-advanced"]) > div {
+  pointer-events: none;
+}
+
+#provider-dialog [data-testid="provider-advanced"] {
+  position: fixed;
+  left: 50%;
+  top: 12vh;
+  z-index: 70;
+  width: min(44rem, calc(100vw - 4rem));
+  max-height: 76vh;
+  transform: translateX(-50%);
+  overflow-y: auto;
+  pointer-events: auto;
+  padding-top: 3.5rem;
+  background: var(--card);
+  box-shadow:
+    0 0 0 100vmax rgb(0 0 0 / 0.42),
+    0 24px 60px rgb(0 0 0 / 0.24);
+}
+
+#provider-dialog [data-testid="provider-advanced"]::before {
+  content: "Advanced settings";
+  position: absolute;
+  left: 1rem;
+  top: 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* The existing toggle remains the close action while the focused panel is open. */
+#provider-dialog > div > div:first-child button[aria-expanded="true"] {
+  position: fixed;
+  top: calc(12vh + 0.75rem);
+  right: max(2.5rem, calc(50% - 21rem));
+  z-index: 80;
+  pointer-events: auto;
+  background: var(--background);
+}
+
+/* Canonical reasoning tokens stay lowercase in config; only their presentation is user-facing. */
+#provider-dialog [data-testid="provider-advanced"] select[aria-label="Default reasoning level"] {
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+#provider-dialog [data-testid="provider-advanced"] select[aria-label="Default reasoning level"] option {
+  text-transform: capitalize;
+}
+
+#provider-dialog [data-testid="provider-advanced"] select[aria-label="Default reasoning level"] option[value="xhigh"] {
+  text-transform: uppercase;
+}
