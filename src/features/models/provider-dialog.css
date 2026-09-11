@@ -1,10 +1,11 @@
 /* ProviderDialog uses fixed header/footer regions around one scrollable flex body.
  * Keep the card on a definite vertical track, then force the middle region to start
- * from zero intrinsic height and grow only into the remaining space. This prevents
- * long Advanced content from pushing the footer outside the card's hit-test area. */
+ * from zero intrinsic height and grow only into the remaining space. The card itself
+ * must remain the interactive hit-test layer above the backdrop. */
 #provider-dialog > div {
   height: 90vh;
   min-height: 0;
+  pointer-events: auto;
 }
 
 #provider-dialog > div > div:nth-child(2) {
