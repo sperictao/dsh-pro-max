@@ -24,48 +24,17 @@ const provider = {
   reasoning: null,
   extra: null,
 };
-
-const modelConfig = {
-  defaultProvider: "my-gateway",
-  defaultModel: "my-model",
-  defaultReasoningEffort: null,
-  providers: [provider],
-};
-
+const modelConfig = { defaultProvider: "my-gateway", defaultModel: "my-model", defaultReasoningEffort: null, providers: [provider] };
 const modelCatalog = {
   fetchedAt: Math.floor(Date.now() / 1000),
   providerCount: 1,
   entries: [{ id: "my-model", name: "My Model", family: "openai", context: 128000, maxTokens: 16384, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] }],
 };
-
-const appConfig = {
-  minimize_to_tray_on_close: false,
-  language: "en",
-  dsh_admin_cap_domain: "",
-  dsh_use_cap_domain: "",
-  dsh_extra_allowed_logins: "",
-  market_catalog_url: "",
-};
-
+const appConfig = { minimize_to_tray_on_close: false, language: "en", dsh_admin_cap_domain: "", dsh_use_cap_domain: "", dsh_extra_allowed_logins: "", market_catalog_url: "" };
 const dshStatus = {
-  nodeAvailable: false,
-  dshInstalled: false,
-  dshVersion: null,
-  supportedVersion: "0.1.1-rc.2",
-  dshCompatible: false,
-  dshVersionAboveSupported: false,
-  pluginsInstalled: false,
-  dshRunning: false,
-  tailscaleInstalled: false,
-  tailscaleOnline: false,
-  hostname: null,
-  localUrl: null,
-  url: null,
-  remoteUrlAccess: null,
-  magicDnsEnabled: false,
-  serveConfigured: false,
-  autostartEnabled: false,
-  error: null,
+  nodeAvailable: false, dshInstalled: false, dshVersion: null, supportedVersion: "0.1.1-rc.2", dshCompatible: false, dshVersionAboveSupported: false,
+  pluginsInstalled: false, dshRunning: false, tailscaleInstalled: false, tailscaleOnline: false, hostname: null, localUrl: null, url: null,
+  remoteUrlAccess: null, magicDnsEnabled: false, serveConfigured: false, autostartEnabled: false, error: null,
   readyTimeline: ["node", "install", "start", "ready"].map((id, index) => ({ index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
 };
 
@@ -108,20 +77,13 @@ async function main() {
         dsh_detect: () => dshStatus,
         dsh_step_schema: ({ remote } = {}) => (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({ index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
         model_config_load: () => structuredClone(currentModelConfig),
-        model_config_save: ({ config }) => {
-          currentModelConfig = structuredClone(config);
-          window.__auditSavedConfigs.push(structuredClone(config));
-          return new Promise((resolve) => setTimeout(() => resolve(null), 300));
-        },
+        model_config_save: ({ config }) => { currentModelConfig = structuredClone(config); window.__auditSavedConfigs.push(structuredClone(config)); return new Promise((resolve) => setTimeout(() => resolve(null), 300)); },
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
         model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: () => ["my-model"],
-        model_test_connection: (args) => {
-          window.__auditTestCalls.push(structuredClone(args));
-          return new Promise((resolve) => setTimeout(() => resolve(null), 400));
-        },
+        model_test_connection: (args) => { window.__auditTestCalls.push(structuredClone(args)); return new Promise((resolve) => setTimeout(() => resolve(null), 400)); },
         "plugin:app|version": () => "0.4.0",
         "plugin:notification|is_permission_granted": () => true,
       };
@@ -160,25 +122,24 @@ async function main() {
     await baseURL.fill(invalidRaw);
     await baseURL.press("Tab");
     await dialog.getByRole("alert").waitFor({ state: "visible" });
-    const afterBlurValue = await baseURL.inputValue();
-    const invalidValuePreserved = afterBlurValue === invalidRaw;
-    const describedBy = await baseURL.getAttribute("aria-describedby");
+    const invalidValuePreserved = (await baseURL.inputValue()) === invalidRaw;
     console.log(`${label}: invalid-value-preserved=${invalidValuePreserved}`);
-    console.log(`${label}: validation-associated=${Boolean(describedBy)}`);
+    console.log(`${label}: validation-associated=${Boolean(await baseURL.getAttribute("aria-describedby"))}`);
     assert.equal(await testButton.isDisabled(), true);
     assert.equal(await saveButton.isDisabled(), true);
     assert.equal(await page.evaluate(() => window.__auditTestCalls.length), 0);
     assert.equal(await page.evaluate(() => window.__auditSavedConfigs.length), 0);
     await page.waitForTimeout(1100);
 
-    await baseURL.fill("ftp://gateway.example.com/v1/chat/completions");
+    // Replace in one edit so the A/B comparison does not transit through an empty value.
+    await baseURL.fill("ftp://gateway.example.com/v2/chat/completions");
     await page.waitForTimeout(900);
     const invalidRepairErrorCount = await dialog.getByText("Enter a valid http:// or https:// URL.", { exact: true }).count();
     console.log(`${label}: error-visible-during-invalid-repair=${invalidRepairErrorCount}`);
     assert.equal(await testButton.isDisabled(), true);
     assert.equal(await saveButton.isDisabled(), true);
 
-    await baseURL.fill("https://gateway.example.com/v1/chat/completions");
+    await baseURL.fill("https://gateway.example.com/v2/chat/completions");
     await page.waitForTimeout(650);
     const validRepairErrorCount = await dialog.getByText("Enter a valid http:// or https:// URL.", { exact: true }).count();
     console.log(`${label}: error-after-valid-repair=${validRepairErrorCount}`);
@@ -188,7 +149,7 @@ async function main() {
     assert.equal(await saveButton.isEnabled(), true);
 
     await baseURL.press("Tab");
-    assert.equal(await baseURL.inputValue(), "https://gateway.example.com/v1");
+    assert.equal(await baseURL.inputValue(), "https://gateway.example.com/v2");
     await page.waitForTimeout(650);
     await testButton.click();
     await dialog.getByText("Connection successful", { exact: true }).waitFor({ state: "visible" });
@@ -197,7 +158,7 @@ async function main() {
     await dialog.waitFor({ state: "hidden" });
     await page.waitForFunction(() => window.__auditSavedConfigs.length === 1);
     const saved = await page.evaluate(() => window.__auditSavedConfigs[0]);
-    assert.equal(saved.providers[0].baseURL, "https://gateway.example.com/v1");
+    assert.equal(saved.providers[0].baseURL, "https://gateway.example.com/v2");
     assert.equal(pageErrors.length, 0, pageErrors.join("\n"));
     await page.waitForTimeout(850);
 
@@ -212,7 +173,4 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(String(error?.stack ?? error));
-  process.exit(1);
-});
+main().catch((error) => { console.error(String(error?.stack ?? error)); process.exit(1); });
