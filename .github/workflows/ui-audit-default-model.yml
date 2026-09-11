@@ -24,7 +24,7 @@ jobs:
           cache: "pnpm"
       - run: pnpm install
       - name: Install Playwright video encoder
-        run: pnpm exec playwright install ffmpeg
+        run: pnpm dlx playwright@1.62.1 install ffmpeg
       - name: Capture default model change
         run: node e2e/capture-models-default-model.mjs
       - name: Convert recording to GIF
