@@ -167,7 +167,7 @@ async function main() {
     const added = saved.providers.find((provider) => provider.route === "acme-gateway");
     assert.ok(added, "custom provider was not saved");
     assert.equal(added.displayName, "Acme Gateway");
-    assert.equal(added.baseURL, "https://gateway.acme.test/v1/chat/completions");
+    assert.equal(added.baseURL, "https://gateway.acme.test/v1");
     assert.equal(added.api, "openai-completions");
     assert.equal(added.apiKeyEnv, "ACME_API_KEY");
     assert.deepEqual(added.models.map((model) => model.id), ["acme-chat-pro"]);
