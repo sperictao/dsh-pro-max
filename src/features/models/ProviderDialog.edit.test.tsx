@@ -41,7 +41,7 @@ const catalog: ModelCatalogEntry[] = provider.models.map((model) => ({
   id: model.id,
   name: model.name ?? model.id,
   family: "openai",
-  context: model.contextWindow ?? undefined,
+  context: model.contextWindow ?? null,
   maxTokens: model.maxTokens ?? undefined,
   input: model.input ?? ["text"],
   reasoning: Boolean(model.reasoningEfforts),
