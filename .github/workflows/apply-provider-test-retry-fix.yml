@@ -1,0 +1,134 @@
+name: Apply Provider Test Retry Fix
+
+on:
+  push:
+    branches:
+      - ui/provider-test-connection-retry-audit
+    paths:
+      - ".github/workflows/apply-provider-test-retry-fix.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ui/provider-test-connection-retry-audit
+      - name: Patch ProviderDialog test request state machine
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("src/features/models/ProviderDialog.tsx")
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '  const keepEditingButtonRef = useRef<HTMLButtonElement>(null);\n',
+                  '  const keepEditingButtonRef = useRef<HTMLButtonElement>(null);\n'
+                  '  // Every connection/model edit invalidates the result of the request that was launched\n'
+                  '  // for the previous draft. The revision also lets a repaired draft retry immediately\n'
+                  '  // without an older in-flight request later overwriting the new state.\n'
+                  '  const testRevisionRef = useRef(0);\n',
+              ),
+              (
+                  '  const updateConnection = (value: Partial<ProviderConfig>) => {\n'
+                  '    patch(value);\n'
+                  '    setTestResult(null);\n'
+                  '    setSubmitError(null);\n'
+                  '  };\n',
+                  '  const invalidateTestResult = () => {\n'
+                  '    testRevisionRef.current += 1;\n'
+                  '    setTestResult(null);\n'
+                  '    setTesting(false);\n'
+                  '  };\n\n'
+                  '  const updateConnection = (value: Partial<ProviderConfig>) => {\n'
+                  '    patch(value);\n'
+                  '    invalidateTestResult();\n'
+                  '    setSubmitError(null);\n'
+                  '  };\n',
+              ),
+              (
+                  '  const testConnection = async () => {\n'
+                  '    const target = providerConnectionTarget(draft);\n'
+                  '    if (!target || currentUrlIssue) return;\n'
+                  '    setTesting(true);\n'
+                  '    setTestResult(null);\n'
+                  '    try {\n'
+                  '      await cmd.modelTestConnection(\n'
+                  '        target.baseURL,\n'
+                  '        target.api,\n'
+                  '        draft.apiKeyEnv,\n'
+                  '        draft.headers,\n'
+                  '        target.model,\n'
+                  '      );\n'
+                  '      setTestResult({ kind: "success", text: t("Connection successful") });\n'
+                  '    } catch (error) {\n'
+                  '      setTestResult({ kind: "error", text: tErr(String(error)) });\n'
+                  '    } finally {\n'
+                  '      setTesting(false);\n'
+                  '    }\n'
+                  '  };\n',
+                  '  const testConnection = async () => {\n'
+                  '    const target = providerConnectionTarget(draft);\n'
+                  '    if (!target || currentUrlIssue) return;\n'
+                  '    const requestRevision = ++testRevisionRef.current;\n'
+                  '    setTesting(true);\n'
+                  '    setTestResult(null);\n'
+                  '    try {\n'
+                  '      await cmd.modelTestConnection(\n'
+                  '        target.baseURL,\n'
+                  '        target.api,\n'
+                  '        draft.apiKeyEnv,\n'
+                  '        draft.headers,\n'
+                  '        target.model,\n'
+                  '      );\n'
+                  '      if (testRevisionRef.current === requestRevision) {\n'
+                  '        setTestResult({ kind: "success", text: t("Connection successful") });\n'
+                  '      }\n'
+                  '    } catch (error) {\n'
+                  '      if (testRevisionRef.current === requestRevision) {\n'
+                  '        setTestResult({ kind: "error", text: tErr(String(error)) });\n'
+                  '      }\n'
+                  '    } finally {\n'
+                  '      if (testRevisionRef.current === requestRevision) setTesting(false);\n'
+                  '    }\n'
+                  '  };\n',
+              ),
+              (
+                  '    setSubmitError(null);\n    setTestResult(null);\n\n    if (!preset) {',
+                  '    setSubmitError(null);\n    invalidateTestResult();\n\n    if (!preset) {',
+              ),
+              (
+                  '  const setModels = (models: ModelEntry[]) => {\n'
+                  '    patch({ models });\n'
+                  '    setTestResult(null);\n'
+                  '  };',
+                  '  const setModels = (models: ModelEntry[]) => {\n'
+                  '    patch({ models });\n'
+                  '    invalidateTestResult();\n'
+                  '  };',
+              ),
+          ]
+
+          for old, new in replacements:
+              if old not in text:
+                  raise SystemExit(f"expected ProviderDialog pattern not found:\n{old}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text)
+      - name: Commit product fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/features/models/ProviderDialog.tsx
+          if git diff --cached --quiet; then
+            echo "ProviderDialog already patched"
+            exit 0
+          fi
+          git commit -m "fix(ui): invalidate stale provider connection tests"
+          git push origin HEAD:ui/provider-test-connection-retry-audit
