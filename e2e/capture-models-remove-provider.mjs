@@ -190,24 +190,29 @@ async function main() {
     await remove.click();
     await page.waitForTimeout(500);
 
-    const confirm = speroRow.getByRole("button", { name: "Delete?" });
-    await confirm.waitFor({ state: "visible" });
-    const cancelCount = await speroRow.getByRole("button", { name: /Cancel/i }).count();
-    const namedWarning = await speroRow.getByText(/Spero AI/i).count();
-    const fallbackWarning = await speroRow.getByText(/DeepSeek|default/i).count();
-    console.log(`baseline: confirm=${JSON.stringify((await confirm.textContent())?.trim())}; cancel=${cancelCount}; namedWarning=${namedWarning}; fallbackWarning=${fallbackWarning}`);
+    const confirmGroup = speroRow.getByTestId("provider-remove-confirm-0");
+    await confirmGroup.waitFor({ state: "visible" });
+    const confirm = confirmGroup.getByRole("button", { name: "Remove", exact: true });
+    assert.equal(await confirmGroup.getByText("Remove Spero AI?", { exact: true }).count(), 1);
+    assert.equal(await confirmGroup.getByText("Default model: DeepSeek · deepseek-chat", { exact: true }).count(), 1);
+    assert.equal(await confirmGroup.getByRole("button", { name: "Cancel", exact: true }).count(), 1);
+    assert.equal(await confirm.isEnabled(), true);
+    console.log("after: confirmation names Spero AI, previews DeepSeek · deepseek-chat, and exposes Cancel + Remove");
     await page.screenshot({ path: resolve(OUT_DIR, "models-remove-provider-armed.png"), fullPage: true });
 
     await confirm.click();
     await page.waitForFunction(() => window.__auditSavePending === true);
     await page.waitForTimeout(350);
 
-    const pendingDeleteLabel = await speroRow.getByText(/Deleting/i).count();
-    const pendingRemoveIcon = await speroRow.getByRole("button", { name: "Remove provider" }).count();
+    const removing = speroRow.getByRole("status");
+    await removing.waitFor({ state: "visible" });
+    assert.equal((await removing.textContent())?.trim(), "Removing…");
+    assert.equal(await speroRow.getByRole("button", { name: "Remove provider" }).count(), 0);
+    assert.equal(await speroRow.getByText("Loading models…", { exact: true }).count(), 0);
     const pendingBusy = await speroRow.getAttribute("aria-busy");
     const pendingSummary = (await summary.textContent())?.trim();
     const toastDuringSave = await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).count();
-    console.log(`baseline: pendingDeletingLabel=${pendingDeleteLabel}; pendingRemoveIcon=${pendingRemoveIcon}; rowAriaBusy=${pendingBusy}; summary=${JSON.stringify(pendingSummary)}; toastDuringSave=${toastDuringSave}`);
+    console.log(`after: pending=Removing…; rowAriaBusy=${pendingBusy}; summary=${JSON.stringify(pendingSummary)}; genericToastDuringSave=${toastDuringSave}`);
     assert.equal(pendingBusy, "true");
     assert.equal(pendingSummary, "Spero AI · glm-5.2");
     assert.equal(toastDuringSave, 0);
@@ -225,8 +230,10 @@ async function main() {
     assert.equal(await speroRow.count(), 0);
     assert.equal(await deepseekRow.getByText("default", { exact: true }).count(), 1);
     const genericToast = await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).count();
-    const targetedToast = await page.getByText(/Removed|Deleted|DeepSeek.*default/i).count();
-    console.log(`baseline: savedFallback=deepseek/deepseek-chat; reasoningReset=true; genericToast=${genericToast}; targetedToast=${targetedToast}`);
+    const targetedToast = page.getByText("Remove provider: Spero AI · Default model: DeepSeek · deepseek-chat", { exact: true });
+    await targetedToast.waitFor({ state: "visible" });
+    assert.equal(genericToast, 0);
+    console.log("after: savedFallback=deepseek/deepseek-chat; reasoningReset=true; toast=remove-specific; genericToast=false");
     assert.equal(failures.length, 0, failures.join("\n"));
 
     await page.screenshot({ path: resolve(OUT_DIR, "models-remove-provider.png"), fullPage: true });
