@@ -62,6 +62,10 @@ export function ProviderDialog({
   const closeOriginRef = useRef<HTMLElement | null>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const keepEditingButtonRef = useRef<HTMLButtonElement>(null);
+  // Every connection/model edit invalidates the result of the request that was launched
+  // for the previous draft. The revision also lets a repaired draft retry immediately
+  // without an older in-flight request later overwriting the new state.
+  const testRevisionRef = useRef(0);
   const [draft, setDraft] = useState<ProviderConfig>(
     isEdit ? structuredClone(state.provider) : emptyProvider(),
   );
@@ -95,9 +99,15 @@ export function ProviderDialog({
   // Add 尚未选服务时只有临时搜索文本，不算配置工作；一旦选定服务就保护这段进度。
   const hasUnsavedChanges = isEdit ? editChanged : serviceChosen;
 
+  const invalidateTestResult = () => {
+    testRevisionRef.current += 1;
+    setTestResult(null);
+    setTesting(false);
+  };
+
   const updateConnection = (value: Partial<ProviderConfig>) => {
     patch(value);
-    setTestResult(null);
+    invalidateTestResult();
     setSubmitError(null);
   };
 
@@ -145,6 +155,7 @@ export function ProviderDialog({
   const testConnection = async () => {
     const target = providerConnectionTarget(draft);
     if (!target || currentUrlIssue) return;
+    const requestRevision = ++testRevisionRef.current;
     setTesting(true);
     setTestResult(null);
     try {
@@ -155,11 +166,15 @@ export function ProviderDialog({
         draft.headers,
         target.model,
       );
-      setTestResult({ kind: "success", text: t("Connection successful") });
+      if (testRevisionRef.current === requestRevision) {
+        setTestResult({ kind: "success", text: t("Connection successful") });
+      }
     } catch (error) {
-      setTestResult({ kind: "error", text: tErr(String(error)) });
+      if (testRevisionRef.current === requestRevision) {
+        setTestResult({ kind: "error", text: tErr(String(error)) });
+      }
     } finally {
-      setTesting(false);
+      if (testRevisionRef.current === requestRevision) setTesting(false);
     }
   };
 
@@ -169,7 +184,7 @@ export function ProviderDialog({
     setAdvancedOpen(false);
     setUrlError(null);
     setSubmitError(null);
-    setTestResult(null);
+    invalidateTestResult();
 
     if (!preset) {
       // 自定义端点从干净连接配置开始；extra 等初始为空，不产生第二份事实。
@@ -195,7 +210,7 @@ export function ProviderDialog({
 
   const setModels = (models: ModelEntry[]) => {
     patch({ models });
-    setTestResult(null);
+    invalidateTestResult();
   };
 
   const canSave =
