@@ -225,50 +225,68 @@ export function ProviderDialog({
         className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
         aria-busy={saving}
       >
-        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-4">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold">
-              {isEdit ? t("Edit provider") : t("Add provider")}
-            </h3>
-            {showComposer && (
-              <p className="mt-0.5 truncate text-xs opacity-60">
-                {knownService
-                  ? `${effectivePreset?.name ?? draft.displayName ?? draft.route} · ${hostOf(draft.baseURL) ?? t("Inherits the built-in catalog")}`
-                  : draft.displayName || draft.route || t("Custom endpoint")}
-              </p>
-            )}
+        <div className="shrink-0 border-b border-border">
+          <div className="flex items-center justify-between gap-4 px-5 py-4">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold">
+                {isEdit ? t("Edit provider") : t("Add provider")}
+              </h3>
+              {showComposer && (
+                <p className="mt-0.5 truncate text-xs opacity-60">
+                  {knownService
+                    ? `${effectivePreset?.name ?? draft.displayName ?? draft.route} · ${hostOf(draft.baseURL) ?? t("Inherits the built-in catalog")}`
+                    : draft.displayName || draft.route || t("Custom endpoint")}
+                </p>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {/* 已知服务 Add 主路径不提前制造诊断任务；Custom endpoint 与 Edit 保持原测试入口。 */}
+              {showComposer && (isEdit || !knownService) && (
+                <button
+                  type="button"
+                  className={BTN_SM}
+                  disabled={!canTest}
+                  onClick={() => void testConnection()}
+                  title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+                >
+                  {testing ? t("Testing…") : t("Test connection")}
+                </button>
+              )}
+              {showComposer && (
+                <button
+                  type="button"
+                  className={BTN_SM}
+                  aria-expanded={advancedOpen}
+                  onClick={() => setAdvancedOpen((value) => !value)}
+                  disabled={saving}
+                >
+                  {t("Advanced settings")}
+                </button>
+              )}
+              {/* Add 模式底部已有 Cancel；避免同一关闭动作在上下各出现一次。 */}
+              {isEdit && (
+                <button type="button" className={BTN_SM} onClick={onClose} disabled={saving}>
+                  {t("Close")}
+                </button>
+              )}
+            </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {/* 已知服务 Add 主路径不提前制造诊断任务；Custom endpoint 与 Edit 保持原测试入口。 */}
-            {showComposer && (isEdit || !knownService) && (
-              <button
-                type="button"
-                className={BTN_SM}
-                disabled={!canTest}
-                onClick={() => void testConnection()}
-                title={t("Sends a minimal model request to verify the endpoint and credentials.")}
+
+          {/* 连接测试由头部动作触发；结果留在同一固定上下文，避免正文滚动后反馈跑出视野。 */}
+          {testResult && (
+            <div className="px-5 pb-3" data-testid="provider-test-result">
+              <div
+                className={`rounded-md border px-3 py-2 text-xs ${
+                  testResult.kind === "success"
+                    ? "border-primary/30 bg-primary/5 text-primary"
+                    : "border-destructive/40 bg-destructive/5 text-destructive"
+                }`}
+                role={testResult.kind === "error" ? "alert" : "status"}
               >
-                {testing ? t("Testing…") : t("Test connection")}
-              </button>
-            )}
-            {showComposer && (
-              <button
-                type="button"
-                className={BTN_SM}
-                aria-expanded={advancedOpen}
-                onClick={() => setAdvancedOpen((value) => !value)}
-                disabled={saving}
-              >
-                {t("Advanced settings")}
-              </button>
-            )}
-            {/* Add 模式底部已有 Cancel；避免同一关闭动作在上下各出现一次。 */}
-            {isEdit && (
-              <button type="button" className={BTN_SM} onClick={onClose} disabled={saving}>
-                {t("Close")}
-              </button>
-            )}
-          </div>
+                {testResult.text}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
@@ -278,18 +296,6 @@ export function ProviderDialog({
               role="alert"
             >
               {submitError}
-            </div>
-          )}
-          {testResult && (
-            <div
-              className={`rounded-md border px-3 py-2 text-xs ${
-                testResult.kind === "success"
-                  ? "border-primary/30 bg-primary/5 text-primary"
-                  : "border-destructive/40 bg-destructive/5 text-destructive"
-              }`}
-              role={testResult.kind === "error" ? "alert" : "status"}
-            >
-              {testResult.text}
             </div>
           )}
 
