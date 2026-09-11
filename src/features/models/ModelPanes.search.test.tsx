@@ -105,7 +105,7 @@ describe("ModelPanes Search model ID", () => {
     expect(within(list).queryByRole("checkbox", { name: "acme-chat-flash" })).not.toBeInTheDocument();
     expect(within(list).getByText("No matching models")).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("0 models");
-    expect(screen.getByRole("checkbox", { name: "Select all · 0 models" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: "Select all" })).toBeDisabled();
   });
 
   it("shows the filtered result count and keeps visible-only Select all available for matches", async () => {
@@ -115,7 +115,7 @@ describe("ModelPanes Search model ID", () => {
     await user.type(screen.getByRole("searchbox", { name: "Search model ID…" }), "acme-chat");
 
     expect(screen.getByRole("status")).toHaveTextContent("2 models");
-    const selectAll = screen.getByRole("checkbox", { name: "Select all · 2 models" });
+    const selectAll = screen.getByRole("checkbox", { name: "Select all" });
     expect(selectAll).toBeEnabled();
     await user.click(selectAll);
 
