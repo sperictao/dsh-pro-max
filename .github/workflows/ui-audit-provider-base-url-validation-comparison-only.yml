@@ -25,7 +25,7 @@ jobs:
       - name: Checkout After (#52)
         uses: actions/checkout@v5
         with:
-          ref: ui/custom-base-url-validation-audit
+          ref: e97c2260b098fd192905e4062eaad9669a12184f
           path: after
       - name: Overlay neutral A/B capture
         shell: bash
