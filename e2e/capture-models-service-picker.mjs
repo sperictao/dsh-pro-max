@@ -175,7 +175,9 @@ async function main() {
     const service = dialog.getByRole("combobox", { name: "Service" });
     const startUrl = page.url();
 
-    await service.click();
+    // Open via focus so the keyboard-neutral state is not affected by a pointer ending up
+    // over a newly reflowed option after the listbox expands.
+    await service.focus();
     let picker = dialog.getByRole("listbox", { name: "Choose a service or custom endpoint" });
     await picker.waitFor({ state: "visible" });
     assert.equal(await service.getAttribute("aria-expanded"), "true");
