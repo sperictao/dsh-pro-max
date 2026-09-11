@@ -4,16 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import { ModelPanes } from "./ModelPanes";
 
-const model = (id: string, name: string | null = null): ModelEntry => ({
-  id,
-  name,
-  contextWindow: null,
-  maxTokens: null,
-  input: null,
-  reasoningEfforts: null,
-  extra: null,
-});
-
 const provider = (models: ModelEntry[] = []): ProviderConfig => ({
   route: "acme",
   displayName: "Acme",
