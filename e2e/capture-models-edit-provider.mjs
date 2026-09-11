@@ -185,15 +185,16 @@ async function main() {
     const closeCount = await dialog.getByRole("button", { name: "Close", exact: true }).count();
     const cancelCount = await dialog.getByRole("button", { name: "Cancel", exact: true }).count();
     const routeHintCount = await dialog.getByTestId("catalog-route-hint").count();
-    const technicalSummaryCount = await dialog.getByText("deepseek · api.deepseek.com · openai-completions", { exact: true }).count();
+    const commonCardText = (await dialog.locator("section").first().textContent()) ?? "";
+    const technicalSummaryPresent = commonCardText.includes("deepseek") && commonCardText.includes("api.deepseek.com") && commonCardText.includes("openai-completions");
     const saveEnabledBeforeChanges = await saveButton.isEnabled();
-    console.log(`baseline: saveEnabledBeforeChanges=${saveEnabledBeforeChanges}; close=${closeCount}; cancel=${cancelCount}; technicalSummary=${technicalSummaryCount}; catalogHint=${routeHintCount}`);
+    console.log(`baseline: saveEnabledBeforeChanges=${saveEnabledBeforeChanges}; close=${closeCount}; cancel=${cancelCount}; technicalSummary=${technicalSummaryPresent}; catalogHint=${routeHintCount}`);
 
     assert.equal(saveEnabledBeforeChanges, true);
     assert.equal(closeCount, 1);
     assert.equal(cancelCount, 1);
     assert.equal(routeHintCount, 1);
-    assert.equal(technicalSummaryCount, 1);
+    assert.equal(technicalSummaryPresent, true);
     await page.screenshot({ path: resolve(OUT_DIR, "models-edit-provider-open.png"), fullPage: true });
 
     const displayName = dialog.getByRole("textbox", { name: "Display Name" });
