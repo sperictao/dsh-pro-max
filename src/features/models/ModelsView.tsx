@@ -149,6 +149,7 @@ export function ModelsView() {
   const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyRoute, setBusyRoute] = useState<string | null>(null);
+  const [probingRoute, setProbingRoute] = useState<string | null>(null);
   const [testingRoute, setTestingRoute] = useState<string | null>(null);
   const [defaultingRoute, setDefaultingRoute] = useState<string | null>(null);
   const [deletingRoute, setDeletingRoute] = useState<string | null>(null);
@@ -455,7 +456,8 @@ export function ModelsView() {
   const probeProvider = async (provider: ProviderConfig) => {
     const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
     if (!provider.baseURL?.trim() || !launcherRemoteProbeAllowed(readiness)) return;
-    setBusyRoute(provider.route);
+    setProbingRoute(provider.route);
+    const providerName = provider.displayName ?? provider.route;
     try {
       const models = await cmd.modelRemoteList(
         provider.baseURL,
@@ -463,11 +465,11 @@ export function ModelsView() {
         provider.apiKeyEnv,
         provider.headers,
       );
-      toast(`${t("Models from this service")}: ${t("{{count}} models", { count: models.length })}`, "success");
+      toast(`${providerName} · ${t("Models from this service")}: ${t("{{count}} models", { count: models.length })}`, "success");
     } catch (error) {
-      toast(tErr(String(error)), "error");
+      toast(`${providerName} · ${tErr(String(error))}`, "error");
     } finally {
-      setBusyRoute(null);
+      setProbingRoute(null);
     }
   };
 
@@ -624,10 +626,11 @@ export function ModelsView() {
                 const isDefault = provider.route === (cfg.defaultProvider ?? "").trim();
                 const armed = armedDelete === provider.route;
                 const deleting = deletingRoute === provider.route;
-                const probing = busyRoute === provider.route && !deleting;
+                const saving = busyRoute === provider.route && !deleting;
+                const probing = probingRoute === provider.route;
                 const testing = testingRoute === provider.route;
                 const defaulting = defaultingRoute === provider.route;
-                const rowBusy = probing || testing || defaulting || deleting;
+                const rowBusy = saving || probing || testing || defaulting || deleting;
                 const firstModel = firstProviderModelId(provider);
                 const displayModel = provider.models[0]?.id ?? null;
                 const readiness =
@@ -780,7 +783,7 @@ export function ModelsView() {
                               <button
                                 className={ROW_ICON_BUTTON}
                                 aria-label={probing ? t("Loading models…") : t("Fetch list")}
-                                disabled={rowBusy || busyGlobal}
+                                disabled={rowBusy || busyGlobal || probingRoute !== null}
                                 onClick={() => void probeProvider(provider)}
                                 title={t("Fetch models")}
                               >
