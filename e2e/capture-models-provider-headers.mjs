@@ -1,5 +1,6 @@
 // Models -> Edit provider -> Advanced settings -> Headers editor UI audit.
-// First-pass audit records duplicate header casing and partial JSON-import behavior.
+// Scope: case-insensitive header identity, atomic JSON import, reserved credential filtering,
+// persistence, and reopening the provider to verify the saved result.
 import assert from "node:assert/strict";
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -65,6 +66,7 @@ async function main() {
       const callbacks = new Map();
       let currentModelConfig = structuredClone(modelConfig);
       window.__auditSavedConfigs = [];
+      window.__auditCalls = [];
       const handlers = {
         get_resolved_language: () => "en",
         load_config: () => appConfig,
@@ -80,7 +82,7 @@ async function main() {
         model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
         model_remote_cache_get: () => ({ models: ["deepseek-chat"], fetchedAt: Math.floor(Date.now() / 1000) }),
         model_remote_list_with_headers: () => ["deepseek-chat"],
-        model_test_connection: () => null,
+        model_test_connection: () => { throw new Error("Provider headers audit must not test the connection"); },
         "plugin:app|version": () => "0.4.0",
         "plugin:notification|is_permission_granted": () => true,
       };
@@ -91,11 +93,16 @@ async function main() {
         runCallback: (id, data) => callbacks.get(id)?.(data),
         callbacks,
         invoke: (command, args) => {
+          window.__auditCalls.push({ command, args: args == null ? null : structuredClone(args) });
           if (command === "plugin:event|listen") return Promise.resolve(nextId++);
           if (command === "plugin:event|unlisten") return Promise.resolve(null);
           const handler = handlers[command];
           if (!handler) return Promise.reject(new Error(`capture mock: unhandled command "${command}"`));
-          return Promise.resolve(handler(args));
+          try {
+            return Promise.resolve(handler(args));
+          } catch (error) {
+            return Promise.reject(error);
+          }
         },
       };
       window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: (_event, id) => callbacks.delete(id) };
@@ -105,33 +112,54 @@ async function main() {
     await page.goto(BASE, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "DSH Pro Max" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Models" }).click();
+    const startUrl = page.url();
     const edit = page.locator('[data-route="deepseek"]').getByRole("button", { name: "Edit provider" });
     await edit.click();
-    const dialog = page.getByRole("dialog", { name: "Edit provider" });
+    let dialog = page.getByRole("dialog", { name: "Edit provider" });
     await dialog.waitFor({ state: "visible" });
     await page.waitForTimeout(700);
-    const advancedButton = dialog.getByRole("button", { name: "Advanced settings" });
+    let advancedButton = dialog.getByRole("button", { name: "Advanced settings" });
     await advancedButton.click();
-    const advanced = dialog.getByTestId("provider-advanced");
-    const editor = advanced.getByTestId("headers-editor");
+    let advanced = dialog.getByTestId("provider-advanced");
+    let editor = advanced.getByTestId("headers-editor");
     await editor.waitFor({ state: "visible" });
     await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-before.png"), fullPage: true });
 
-    // Existing behavior: a case-only duplicate remains as a second visible row and a second persisted key.
+    // A case-only duplicate may remain as a visible draft row while typing so focus is stable,
+    // but its persisted identity must replace the earlier casing instead of creating two headers.
     await editor.getByRole("button", { name: "Add header" }).click();
-    const names = editor.getByLabel("Header name");
-    const values = editor.getByLabel("Header value");
+    let names = editor.getByLabel("Header name");
+    let values = editor.getByLabel("Header value");
     assert.equal(await names.count(), 2);
     await names.nth(1).fill("x-title");
     await values.nth(1).fill("duplicate");
-    await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-duplicate.png"), fullPage: true });
+    await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-case-duplicate.png"), fullPage: true });
 
-    // Existing behavior: non-string JSON values are silently skipped while valid siblings are applied.
-    await editor.getByRole("button", { name: "Import JSON" }).click();
-    await editor.getByLabel("Headers JSON").fill(JSON.stringify({ "X-Client-Name": "audit", Retries: 3, Authorization: "Bearer literal-secret" }));
+    // Mixed-value JSON must fail atomically: no valid sibling is partially applied.
+    const importButton = editor.getByRole("button", { name: "Import JSON" });
+    await importButton.click();
+    assert.equal(await importButton.getAttribute("aria-expanded"), "true");
+    const json = editor.getByLabel("Headers JSON");
+    await json.fill(JSON.stringify({ "X-Client-Name": "partial-must-not-apply", Retries: 3 }));
     await editor.getByRole("button", { name: "Apply" }).click();
-    await editor.getByRole("alert").waitFor({ state: "visible" });
-    await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-json.png"), fullPage: true });
+    await editor.getByRole("alert").filter({ hasText: "Use a JSON object with header names and string values." }).waitFor({ state: "visible" });
+    assert.equal(await importButton.getAttribute("aria-expanded"), "true");
+    assert.equal(await editor.getByDisplayValue("partial-must-not-apply").count(), 0);
+    assert.equal(await names.count(), 2);
+    await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-invalid-json.png"), fullPage: true });
+
+    // A valid import replaces/extends ordinary headers and keeps reserved credential rows visible
+    // just long enough to explain that those rows are ignored by persistence.
+    await json.fill(JSON.stringify({ "X-Client-Name": "audit", Authorization: "Bearer literal-secret" }));
+    await editor.getByRole("button", { name: "Apply" }).click();
+    assert.equal(await importButton.getAttribute("aria-expanded"), "false");
+    const reservedAlert = editor.getByRole("alert").filter({ hasText: "Reserved credential headers are ignored" });
+    await reservedAlert.waitFor({ state: "visible" });
+    assert.ok((await reservedAlert.textContent())?.includes("Authorization"));
+    names = editor.getByLabel("Header name");
+    values = editor.getByLabel("Header value");
+    assert.equal(await names.count(), 4);
+    await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-valid-json.png"), fullPage: true });
 
     // Provider Advanced is a focused overlay; collapse it before using the dialog footer.
     await advancedButton.click();
@@ -143,13 +171,37 @@ async function main() {
     await page.waitForFunction(() => window.__auditSavedConfigs.length === 1);
     const saved = await page.evaluate(() => window.__auditSavedConfigs[0]);
     const savedProvider = saved.providers.find((item) => item.route === "deepseek");
-    assert.deepEqual(savedProvider.headers, { "X-Title": "original", "x-title": "duplicate", "X-Client-Name": "audit" });
+    assert.deepEqual(savedProvider.headers, { "x-title": "duplicate", "X-Client-Name": "audit" });
+    assert.equal(Object.prototype.hasOwnProperty.call(savedProvider.headers, "X-Title"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(savedProvider.headers, "Retries"), false);
     assert.equal(Object.prototype.hasOwnProperty.call(savedProvider.headers, "Authorization"), false);
-    assert.equal(failures.length, 0, failures.join("\n"));
-    await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-saved.png"), fullPage: true });
+    assert.equal(saved.defaultProvider, "deepseek");
+    assert.equal(saved.defaultModel, "deepseek-chat");
+    assert.equal(page.url(), startUrl);
 
-    console.log("audit-current: duplicate-case-keys=persisted; non-string-json=silently-skipped; reserved=visible-ignored");
+    // Reopen from the persisted config: only the two actual ordinary HTTP headers should remain.
+    await edit.click();
+    dialog = page.getByRole("dialog", { name: "Edit provider" });
+    await dialog.waitFor({ state: "visible" });
+    await page.waitForTimeout(700);
+    advancedButton = dialog.getByRole("button", { name: "Advanced settings" });
+    await advancedButton.click();
+    advanced = dialog.getByTestId("provider-advanced");
+    editor = advanced.getByTestId("headers-editor");
+    names = editor.getByLabel("Header name");
+    values = editor.getByLabel("Header value");
+    assert.equal(await names.count(), 2);
+    assert.deepEqual(await names.allInputValues(), ["x-title", "X-Client-Name"]);
+    assert.deepEqual(await values.allInputValues(), ["duplicate", "audit"]);
+    assert.equal(await editor.getByRole("alert").count(), 0);
+    await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-reopened.png"), fullPage: true });
+
+    const calls = await page.evaluate(() => window.__auditCalls);
+    assert.equal(calls.filter((call) => call.command === "model_config_save").length, 1);
+    assert.equal(calls.filter((call) => call.command === "model_test_connection").length, 0);
+    assert.equal(failures.length, 0, failures.join("\n"));
+
+    console.log("audit: duplicate-case=persisted-once; invalid-json=atomic-reject; reserved=visible-ignored; reopen=2-headers; saves=1; tests=0");
     await context.close();
     const recorded = await video.path();
     const stable = resolve(OUT_DIR, "models-provider-headers.webm");
