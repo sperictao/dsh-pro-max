@@ -1,5 +1,5 @@
 // Models -> Catalog -> Refresh model catalog UI audit capture.
-// Scope: manually refresh a healthy local catalog snapshot and verify the visible/persisted refresh result.
+// Scope: manually refresh a healthy local catalog snapshot and verify clear pending/success feedback.
 import assert from "node:assert/strict";
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -144,6 +144,7 @@ async function main() {
     await page.getByRole("button", { name: "DSH Pro Max" }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "Models" }).click();
 
+    const catalogRegion = page.locator("#models-catalog");
     const status = page.getByTestId("catalog-status-line");
     const refresh = page.getByRole("button", { name: "Refresh model catalog" });
     await status.waitFor({ state: "visible" });
@@ -151,6 +152,7 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('[data-testid="catalog-status-line"]')?.textContent?.includes("Local snapshot"));
     await page.waitForTimeout(850);
 
+    assert.equal(await catalogRegion.getAttribute("aria-busy"), "false");
     assert.equal(await status.getAttribute("data-catalog-source"), "snapshot");
     assert.equal(await status.getAttribute("data-provider-count"), "2");
     assert.match((await status.textContent()) ?? "", /Local snapshot.*2 providers.*3 models/);
@@ -162,19 +164,23 @@ async function main() {
 
     const pendingButton = page.getByRole("button", { name: "Refreshing catalog…" });
     assert.equal(await pendingButton.isDisabled(), true);
-    const pendingStatus = (await status.textContent())?.trim() ?? "";
-    const successToastDuringRefresh = await page.getByText(/catalog.*refreshed|refresh.*complete/i).count();
-    console.log(`baseline: pendingButton=Refreshing catalog…; status=${JSON.stringify(pendingStatus)}; successFeedback=${successToastDuringRefresh}`);
+    assert.equal(await catalogRegion.getAttribute("aria-busy"), "true");
+    assert.equal((await status.textContent())?.trim(), "Refreshing catalog…");
+    const successToastDuringRefresh = await page.getByText("Refresh model catalog · models.dev · 4 models", { exact: true }).count();
+    assert.equal(successToastDuringRefresh, 0);
+    console.log("after: catalog region is busy and the status line explicitly says Refreshing catalog…");
     await page.screenshot({ path: resolve(OUT_DIR, "models-refresh-catalog-pending.png"), fullPage: true });
 
     await page.waitForFunction(() => window.__auditCatalogRefreshPending === false && window.__auditCatalogRefreshCount === 1);
     await page.waitForFunction(() => document.querySelector('[data-testid="catalog-status-line"]')?.getAttribute("data-catalog-source") === "remote");
     await page.waitForTimeout(850);
 
+    assert.equal(await catalogRegion.getAttribute("aria-busy"), "false");
     assert.equal(await status.getAttribute("data-provider-count"), "3");
     assert.match((await status.textContent()) ?? "", /models\.dev.*3 providers.*4 models/);
-    const successFeedback = await page.getByText(/catalog.*refreshed|refresh.*complete/i).count();
-    console.log(`baseline: refreshedStatus=${JSON.stringify((await status.textContent())?.trim())}; successFeedback=${successFeedback}`);
+    const successToast = page.getByText("Refresh model catalog · models.dev · 4 models", { exact: true });
+    await successToast.waitFor({ state: "visible" });
+    console.log(`after: refreshedStatus=${JSON.stringify((await status.textContent())?.trim())}; successToast=visible`);
     assert.equal(failures.length, 0, failures.join("\n"));
 
     await page.screenshot({ path: resolve(OUT_DIR, "models-refresh-catalog.png"), fullPage: true });
