@@ -19,8 +19,17 @@ const RESERVED_HEADERS = new Set([
   "proxy-authorization",
 ]);
 
+const headerIdentity = (name: string) => name.trim().toLowerCase();
+
 export function isReservedHeader(name: string): boolean {
-  return RESERVED_HEADERS.has(name.trim().toLowerCase());
+  return RESERVED_HEADERS.has(headerIdentity(name));
+}
+
+function upsertEntry(entries: [string, string][], name: string, value: string): [string, string][] {
+  const identity = headerIdentity(name);
+  const index = entries.findIndex(([key]) => headerIdentity(key) === identity);
+  if (index < 0) return [...entries, [name, value]];
+  return entries.map((entry, i) => (i === index ? [name, value] : entry));
 }
 
 export function HeadersEditor({
@@ -45,12 +54,18 @@ export function HeadersEditor({
 
   const commitEntries = (next: [string, string][]) => {
     setEntriesState(next);
-    // UI 可以保留未完成空白行；真正写回 ProviderConfig 时仍只接受有效普通头。
-    const map: Record<string, string> = {};
+    // HTTP header name identity is case-insensitive. Keep draft rows intact while typing, but
+    // normalize the persisted map so case-only duplicates can never reach settings.yaml.
+    // Later rows win, matching the editor's previous exact-key overwrite behavior.
+    const normalized = new Map<string, { name: string; value: string }>();
     for (const [key, value] of next) {
-      if (!key.trim() || isReservedHeader(key)) continue;
-      map[key.trim()] = value;
+      const name = key.trim();
+      if (!name || isReservedHeader(name)) continue;
+      normalized.set(headerIdentity(name), { name, value });
     }
+    const map = Object.fromEntries(
+      [...normalized.values()].map(({ name, value }) => [name, value]),
+    );
     onChange(Object.keys(map).length > 0 ? map : null);
   };
 
@@ -77,16 +92,22 @@ export function HeadersEditor({
       setJsonError(true);
       return;
     }
-    // 同名键合并：JSON 值覆盖现有行；最终仍走 commitEntries，确保 JSON 导入
-    // 与逐行编辑使用同一保留头过滤规则。
-    const merged: Record<string, string> = {};
-    for (const [key, value] of entries) {
-      if (key.trim()) merged[key] = value;
+    const imported = Object.entries(parsed as Record<string, unknown>);
+    // JSON import is atomic: every property must be a named string header. Silently applying
+    // only part of a pasted object makes the visible draft diverge from what the user supplied.
+    if (imported.some(([key, value]) => !key.trim() || typeof value !== "string")) {
+      setJsonError(true);
+      return;
     }
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof value === "string") merged[key.trim()] = value;
+
+    // Header identity is case-insensitive, so JSON/preset imports update an existing row rather
+    // than creating a second case-variant row. Reserved rows remain visible long enough to show
+    // the existing warning, while commitEntries still excludes them from persisted config.
+    let merged = entries;
+    for (const [key, value] of imported as [string, string][]) {
+      merged = upsertEntry(merged, key.trim(), value);
     }
-    commitEntries(Object.entries(merged));
+    commitEntries(merged);
     setJsonOpen(false);
     setJsonDraft("");
     setJsonError(false);
@@ -138,7 +159,7 @@ export function HeadersEditor({
           value=""
           onChange={(event) => {
             const preset = HEADER_PRESETS.find((item) => item.name === event.target.value);
-            if (preset) commitEntries([...entries, [preset.name, preset.value]]);
+            if (preset) commitEntries(upsertEntry(entries, preset.name, preset.value));
           }}
           aria-label={t("Common headers")}
         >
@@ -149,12 +170,18 @@ export function HeadersEditor({
             </option>
           ))}
         </select>
-        <button type="button" className={BTN_SM} onClick={() => setJsonOpen((value) => !value)}>
+        <button
+          type="button"
+          className={BTN_SM}
+          onClick={() => setJsonOpen((value) => !value)}
+          aria-expanded={jsonOpen}
+          aria-controls="provider-headers-json-import"
+        >
           {t("Import JSON")}
         </button>
       </div>
       {jsonOpen && (
-        <div className="flex flex-col gap-1">
+        <div id="provider-headers-json-import" className="flex flex-col gap-1">
           <textarea
             className={`${INPUT} h-20 py-2 font-mono text-xs`}
             value={jsonDraft}
