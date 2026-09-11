@@ -162,13 +162,13 @@ async function main() {
     await dialog.getByLabel("API Key Env Var").fill("DEEPSEEK_API_KEY");
     await page.waitForFunction(() => window.__auditRemoteListCount === 1);
     const modelList = dialog.getByRole("list", { name: "Models from this service" });
-    await modelList.getByRole("checkbox", { name: "deepseek-v4-flash" }).waitFor({ state: "visible" });
-    await modelList.getByRole("checkbox", { name: "deepseek-v4-pro" }).waitFor({ state: "visible" });
+    await modelList.getByRole("checkbox", { name: "deepseek-v4-flash", exact: true }).waitFor({ state: "visible" });
+    await modelList.getByRole("checkbox", { name: "deepseek-v4-pro", exact: true }).waitFor({ state: "visible" });
     await page.waitForTimeout(650);
 
     await fetchButton.click();
     await dialog.getByRole("button", { name: "Loading models…" }).waitFor({ state: "visible" });
-    await modelList.getByRole("checkbox", { name: "deepseek-v4-pro-0813" }).waitFor({ state: "visible" });
+    await modelList.getByRole("checkbox", { name: "deepseek-v4-pro-0813", exact: true }).waitFor({ state: "visible" });
     await dialog.getByRole("button", { name: "Fetch list" }).waitFor({ state: "visible" });
     await page.waitForTimeout(800);
 
