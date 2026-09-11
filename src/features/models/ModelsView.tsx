@@ -268,6 +268,12 @@ export function ModelsView() {
       setCatalogSource("remote");
       setCatalogError(null);
       setCatalogState("ready");
+      if (!background) {
+        toast(
+          `${t("Refresh model catalog")} · models.dev · ${t("{{count}} models", { count: fresh.entries.length })}`,
+          "success",
+        );
+      }
     } catch (error) {
       setCatalogError(String(error));
       if (!background) toast(tErr(String(error)), "error");
@@ -796,29 +802,37 @@ export function ModelsView() {
           )}
         </section>
 
-        {/* —— 目录状态：辅助信息退到页面底部，不与配置主任务抢层级 —— */}
-        <div className="flex items-start justify-between gap-4 text-xs opacity-70" id="models-catalog">
-          <div className="min-w-0">
+        {/* —— 目录状态：辅助信息保持低层级，但手动刷新仍是清晰可操作的动作 —— */}
+        <div
+          className="flex items-start justify-between gap-4 text-xs"
+          id="models-catalog"
+          aria-busy={catalogRefreshing}
+        >
+          <div className="min-w-0 text-muted-foreground">
             <div
+              role="status"
+              aria-live="polite"
               data-testid="catalog-status-line"
               data-catalog-source={catalogSource ?? "none"}
               data-provider-count={catalogProviderCount ?? ""}
             >
-              {catalogState === "ready"
-                ? t("Catalog: {{source}} · {{providers}} providers · {{models}} models · updated {{time}}", {
-                    source:
-                      catalogSource === "snapshot"
-                        ? t("Local snapshot")
-                        : catalogSource === "remote"
-                          ? "models.dev"
-                          : "—",
-                    providers: catalogProviderCount ?? "—",
-                    models: catalog.length,
-                    time: catalogFetchedAt ? new Date(catalogFetchedAt * 1000).toLocaleString() : "—",
-                  })
-                : catalogState === "loading"
-                  ? t("Loading catalog…")
-                  : t("Catalog: unavailable")}
+              {catalogRefreshing
+                ? t("Refreshing catalog…")
+                : catalogState === "ready"
+                  ? t("Catalog: {{source}} · {{providers}} providers · {{models}} models · updated {{time}}", {
+                      source:
+                        catalogSource === "snapshot"
+                          ? t("Local snapshot")
+                          : catalogSource === "remote"
+                            ? "models.dev"
+                            : "—",
+                      providers: catalogProviderCount ?? "—",
+                      models: catalog.length,
+                      time: catalogFetchedAt ? new Date(catalogFetchedAt * 1000).toLocaleString() : "—",
+                    })
+                  : catalogState === "loading"
+                    ? t("Loading catalog…")
+                    : t("Catalog: unavailable")}
             </div>
             {catalogError && (
               <div className="mt-0.5 text-destructive" role="status" data-testid="catalog-error">
