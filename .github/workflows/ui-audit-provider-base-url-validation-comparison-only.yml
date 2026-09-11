@@ -25,7 +25,7 @@ jobs:
       - name: Checkout After (#52)
         uses: actions/checkout@v5
         with:
-          ref: e97c2260b098fd192905e4062eaad9669a12184f
+          ref: 5c5f104f0655e44de6163af8f0465a15112bd27e
           path: after
       - name: Overlay neutral A/B capture
         shell: bash
