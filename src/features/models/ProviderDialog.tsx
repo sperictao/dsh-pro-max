@@ -75,8 +75,12 @@ export function ProviderDialog({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [discardPending, setDiscardPending] = useState(false);
 
-  const patch = (value: Partial<ProviderConfig>) =>
+  // 保存失败属于刚刚那一版草稿。用户继续改任一 Provider 字段后，旧错误
+  // 已经不再描述当前草稿，因此统一从唯一 patch 入口撤销，避免局部字段漏清。
+  const patch = (value: Partial<ProviderConfig>) => {
     setDraft((current) => ({ ...current, ...value }));
+    setSubmitError(null);
+  };
 
   // 编辑态按路由识别既有目录服务；添加态一旦明确选择“自定义”，即使用户
   // 手工输入与目录同名的 route，也不突然切换回预设服务布局。
@@ -346,8 +350,9 @@ export function ProviderDialog({
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
           {submitError && (
             <div
-              className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+              className="sticky top-0 z-10 rounded-md border border-destructive/40 bg-background px-3 py-2 text-xs text-destructive shadow-sm"
               role="alert"
+              data-testid="provider-submit-error"
             >
               {submitError}
             </div>
