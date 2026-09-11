@@ -66,17 +66,20 @@ const catalog: ModelCatalogEntry[] = [
 const renderPanes = (
   remote: string[] = catalog.map((entry) => entry.id),
   onModelsChange = vi.fn(),
+  onKeyDown = vi.fn(),
 ) => {
   render(
-    <ModelPanes
-      provider={provider()}
-      catalog={catalog}
-      remote={remote}
-      fetching={false}
-      fetchError={null}
-      onModelsChange={onModelsChange}
-      onFetch={() => {}}
-    />,
+    <div onKeyDown={onKeyDown}>
+      <ModelPanes
+        provider={provider()}
+        catalog={catalog}
+        remote={remote}
+        fetching={false}
+        fetchError={null}
+        onModelsChange={onModelsChange}
+        onFetch={() => {}}
+      />
+    </div>,
   );
   return onModelsChange;
 };
@@ -126,10 +129,11 @@ describe("ModelPanes Search model ID", () => {
     ]);
   });
 
-  it("clears with Escape, restores the complete list, and resets a virtualized list to the top", async () => {
+  it("clears with Escape without bubbling, restores the complete list, and resets a virtualized list to the top", async () => {
     const user = userEvent.setup();
+    const onKeyDown = vi.fn();
     const remote = Array.from({ length: 80 }, (_, index) => `model-${String(index).padStart(3, "0")}`);
-    renderPanes(remote);
+    renderPanes(remote, vi.fn(), onKeyDown);
 
     const list = screen.getByRole("list", { name: "Models from this service" });
     Object.defineProperty(list, "scrollTop", { value: 70 * 28, writable: true, configurable: true });
@@ -141,8 +145,10 @@ describe("ModelPanes Search model ID", () => {
     expect(list).toHaveAttribute("data-total-count", "1");
     expect(within(list).getByRole("checkbox", { name: "model-079" })).toBeInTheDocument();
 
+    onKeyDown.mockClear();
     await user.type(search, "{Escape}");
 
+    expect(onKeyDown).not.toHaveBeenCalled();
     expect(search).toHaveValue("");
     expect(list).toHaveAttribute("data-total-count", "80");
     expect(within(list).getByRole("checkbox", { name: "model-000" })).toBeInTheDocument();
