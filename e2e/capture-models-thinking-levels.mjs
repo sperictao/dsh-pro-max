@@ -167,7 +167,9 @@ async function main() {
     let saved = await page.evaluate(() => window.__auditSavedConfigs.at(-1));
     let savedModel = saved.providers.find((item) => item.route === "deepseek").models.find((item) => item.id === "deepseek-reasoner");
     assert.deepEqual(savedModel.reasoningEfforts, { high: "reasoner-high" });
-    assert.equal(saved.defaultReasoningEffort, "medium");
+    // The model override now supports only High, so ModelsView intentionally clears the no-longer-valid
+    // global Medium default instead of preserving a default the selected model cannot honor.
+    assert.equal(saved.defaultReasoningEffort, null);
 
     // Reopen, remove the only explicit level, and verify that the data returns to inheritance.
     await providerRow.getByRole("button", { name: "Edit provider" }).click();
@@ -195,14 +197,15 @@ async function main() {
     saved = await page.evaluate(() => window.__auditSavedConfigs.at(-1));
     savedModel = saved.providers.find((item) => item.route === "deepseek").models.find((item) => item.id === "deepseek-reasoner");
     assert.equal(savedModel.reasoningEfforts, null);
-    assert.equal(saved.defaultReasoningEffort, "medium");
+    // Restoring inheritance does not guess the user's former global default; the cleared default stays unset.
+    assert.equal(saved.defaultReasoningEffort, null);
     assert.equal(page.url(), startUrl);
 
     const calls = await page.evaluate(() => window.__auditCalls);
     assert.equal(calls.filter((call) => call.command === "model_config_save").length, 2);
     assert.equal(calls.filter((call) => call.command === "model_test_connection").length, 0);
     assert.equal(failures.length, 0, failures.join("\n"));
-    console.log("audit-current: inherited=all-buttons-off-without-hint; explicit-high=custom-wire; remove-last=inherit-null; saves=2");
+    console.log("audit-current: inherited=all-buttons-off-without-hint; explicit-high=custom-wire; incompatible-global-default=cleared; remove-last=inherit-null; saves=2");
 
     await context.close();
     const recorded = await video.path();
