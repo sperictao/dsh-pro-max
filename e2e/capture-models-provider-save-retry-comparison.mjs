@@ -146,11 +146,24 @@ async function main() {
     await page.waitForTimeout(1800);
     console.log(`${LABEL}: stale-failure-surfaces-after-edit=${await page.getByText("Failed to write settings.yaml", { exact: true }).count()}`);
 
-    await saveButton.click();
-    await page.waitForFunction(() => window.__auditSaveAttempts === 2 && window.__auditSavePending === false);
-    await dialog.waitFor({ state: "detached" });
-    await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).waitFor({ state: "visible" });
-    await page.waitForTimeout(1800);
+    if (LABEL === "before") {
+      // The baseline defect is that Retry looks enabled but the backdrop owns the hit-test.
+      // Record one real pointer attempt and end the Before clip there instead of forcing it.
+      let retryBlocked = false;
+      try {
+        await saveButton.click({ timeout: 1500 });
+      } catch {
+        retryBlocked = true;
+      }
+      console.log(`${LABEL}: retry-click-blocked=${retryBlocked}`);
+      await page.waitForTimeout(1800);
+    } else {
+      await saveButton.click();
+      await page.waitForFunction(() => window.__auditSaveAttempts === 2 && window.__auditSavePending === false);
+      await dialog.waitFor({ state: "detached" });
+      await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).waitFor({ state: "visible" });
+      await page.waitForTimeout(1800);
+    }
 
     await context.close();
     const recorded = await video.path();
