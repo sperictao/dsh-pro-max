@@ -218,8 +218,8 @@ export function ProviderDialog({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {/* Test connection 属于编辑/诊断路径；新增主路径不提前制造第二任务。 */}
-            {isEdit && showComposer && (
+            {/* 已知服务 Add 主路径不提前制造诊断任务；Custom endpoint 与 Edit 保持原测试入口。 */}
+            {showComposer && (isEdit || !knownService) && (
               <button
                 type="button"
                 className={BTN_SM}
