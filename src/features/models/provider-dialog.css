@@ -1,0 +1,7 @@
+/* ProviderDialog is a flex item inside the full-screen backdrop. Without an explicit
+ * zero minimum, long model/advanced content can keep the card at its min-content
+ * height despite max-height, pushing the fixed footer outside the interactive card.
+ * The body already owns scrolling; allow the card itself to shrink to that limit. */
+#provider-dialog > div {
+  min-height: 0;
+}
