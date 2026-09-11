@@ -32,33 +32,37 @@ export function HeadersEditor({
   onChange: (next: Record<string, string> | null) => void;
 }) {
   const { t } = useTranslation();
+  // 编辑行是 UI 草稿，不等同于已经可落盘的 headers。尤其“Add header”必须先
+  // 允许一个空白行存在，等用户填写名称后再归一到 ProviderConfig。
+  const [entries, setEntriesState] = useState<[string, string][]>(() =>
+    Object.entries(headers ?? {}).map(([key, value]) => [key, value ?? ""]),
+  );
   const [jsonOpen, setJsonOpen] = useState(false);
   const [jsonDraft, setJsonDraft] = useState("");
   const [jsonError, setJsonError] = useState(false);
 
-  // partial record → 纯 [key, value] 行；缺值按空串（写入时仍会归一）
-  const entries: [string, string][] = Object.entries(headers ?? {}).map(
-    ([k, v]) => [k, v ?? ""],
-  );
-  const reserved = entries.filter(([k]) => isReservedHeader(k)).map(([k]) => k);
+  const reserved = entries.filter(([key]) => isReservedHeader(key)).map(([key]) => key);
 
-  const setEntries = (next: [string, string][]) => {
-    // 凭据类保留头拒收：不写入落盘（保留头归 dsh Harness / apiKeyEnv 管）
+  const commitEntries = (next: [string, string][]) => {
+    setEntriesState(next);
+    // UI 可以保留未完成空白行；真正写回 ProviderConfig 时仍只接受有效普通头。
     const map: Record<string, string> = {};
-    for (const [k, v] of next) {
-      if (!k.trim() || isReservedHeader(k)) continue;
-      map[k.trim()] = v;
+    for (const [key, value] of next) {
+      if (!key.trim() || isReservedHeader(key)) continue;
+      map[key.trim()] = value;
     }
     onChange(Object.keys(map).length > 0 ? map : null);
   };
 
   const updateAt = (index: number, key: string, value: string) => {
-    const next = entries.map((e, i) => (i === index ? ([key, value] as [string, string]) : e));
-    setEntries(next);
+    const next = entries.map((entry, i) =>
+      i === index ? ([key, value] as [string, string]) : entry,
+    );
+    commitEntries(next);
   };
 
   const removeAt = (index: number) => {
-    setEntries(entries.filter((_, i) => i !== index));
+    commitEntries(entries.filter((_, i) => i !== index));
   };
 
   const applyJson = () => {
@@ -73,14 +77,16 @@ export function HeadersEditor({
       setJsonError(true);
       return;
     }
-    // 同名键合并：JSON 值覆盖现有行；最终仍走 setEntries，确保 JSON 导入
+    // 同名键合并：JSON 值覆盖现有行；最终仍走 commitEntries，确保 JSON 导入
     // 与逐行编辑使用同一保留头过滤规则。
     const merged: Record<string, string> = {};
-    for (const [k, v] of entries) merged[k] = v;
-    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof v === "string") merged[k.trim()] = v;
+    for (const [key, value] of entries) {
+      if (key.trim()) merged[key] = value;
     }
-    setEntries(Object.entries(merged));
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "string") merged[key.trim()] = value;
+    }
+    commitEntries(Object.entries(merged));
     setJsonOpen(false);
     setJsonDraft("");
     setJsonError(false);
@@ -94,18 +100,18 @@ export function HeadersEditor({
         </p>
       )}
       {entries.map(([key, value], i) => (
-        <div key={`${key}-${i}`} className="flex items-center gap-2">
+        <div key={i} className="flex items-center gap-2">
           <input
             className={`${INPUT_MONO} w-48`}
             value={key}
-            onChange={(e) => updateAt(i, e.target.value, value)}
+            onChange={(event) => updateAt(i, event.target.value, value)}
             placeholder="X-Header"
             aria-label={t("Header name")}
           />
           <input
             className={`${INPUT_MONO} flex-1`}
             value={value}
-            onChange={(e) => updateAt(i, key, e.target.value)}
+            onChange={(event) => updateAt(i, key, event.target.value)}
             placeholder="value"
             aria-label={t("Header value")}
           />
@@ -120,26 +126,30 @@ export function HeadersEditor({
         </div>
       ))}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={BTN_SM} onClick={() => setEntries([...entries, ["", ""]])}>
+        <button
+          type="button"
+          className={BTN_SM}
+          onClick={() => setEntriesState([...entries, ["", ""]])}
+        >
           {t("Add header")}
         </button>
         <select
           className="h-6 rounded-md border border-input bg-background px-1 text-xs"
           value=""
-          onChange={(e) => {
-            const preset = HEADER_PRESETS.find((p) => p.name === e.target.value);
-            if (preset) setEntries([...entries, [preset.name, preset.value]]);
+          onChange={(event) => {
+            const preset = HEADER_PRESETS.find((item) => item.name === event.target.value);
+            if (preset) commitEntries([...entries, [preset.name, preset.value]]);
           }}
           aria-label={t("Common headers")}
         >
           <option value="">{t("Common headers")}</option>
-          {HEADER_PRESETS.map((p) => (
-            <option key={p.name} value={p.name}>
-              {p.name}
+          {HEADER_PRESETS.map((preset) => (
+            <option key={preset.name} value={preset.name}>
+              {preset.name}
             </option>
           ))}
         </select>
-        <button type="button" className={BTN_SM} onClick={() => setJsonOpen((v) => !v)}>
+        <button type="button" className={BTN_SM} onClick={() => setJsonOpen((value) => !value)}>
           {t("Import JSON")}
         </button>
       </div>
@@ -148,8 +158,8 @@ export function HeadersEditor({
           <textarea
             className={`${INPUT} h-20 py-2 font-mono text-xs`}
             value={jsonDraft}
-            onChange={(e) => {
-              setJsonDraft(e.target.value);
+            onChange={(event) => {
+              setJsonDraft(event.target.value);
               setJsonError(false);
             }}
             placeholder='{"X-Title": "my-app"}'
