@@ -1,9 +1,8 @@
 // 添加/编辑 AI 服务：参考 PI-Desktop Provider Setup 的渐进披露。
-// 添加时先选服务；已知预设的主路径只暴露显示名 + API Key 环境变量，端点、
-// 路由和协议退到高级设置；自定义服务才直接展示完整连接字段。模型选择保持双栏，
-// 服务级高级配置继续无损映射 dsh llm-pi-ai schema。
+// 添加已知服务时只保留主路径需要的服务、凭据和模型；连接细节退到高级设置。
+// 编辑态继续保留现有字段与测试入口，避免 Add provider 优化扩散到其他功能点。
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as cmd from "@/shared/commands";
 import { BTN, BTN_PRIMARY, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
@@ -40,6 +39,7 @@ export function ProviderDialog({
 }) {
   const { t } = useTranslation();
   const isEdit = state.mode === "edit";
+  const apiKeyInputRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<ProviderConfig>(
     isEdit ? structuredClone(state.provider) : emptyProvider(),
   );
@@ -52,7 +52,8 @@ export function ProviderDialog({
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const patch = (value: Partial<ProviderConfig>) => setDraft((current) => ({ ...current, ...value }));
+  const patch = (value: Partial<ProviderConfig>) =>
+    setDraft((current) => ({ ...current, ...value }));
 
   // 编辑态按路由识别既有目录服务；添加态一旦明确选择“自定义”，即使用户
   // 手工输入与目录同名的 route，也不突然切换回预设服务布局。
@@ -138,6 +139,9 @@ export function ProviderDialog({
       apiKeyEnv: null,
       models: [],
     }));
+
+    // 已知服务的下一步就是凭据；参考 PI-Desktop，选择服务后直接把焦点送到凭据字段。
+    window.setTimeout(() => apiKeyInputRef.current?.focus(), 0);
   };
 
   const setModels = (models: ModelEntry[]) => {
@@ -150,6 +154,8 @@ export function ProviderDialog({
     draft.route.trim().length > 0 &&
     !currentUrlIssue &&
     (knownService || Boolean(draft.baseURL?.trim())) &&
+    // 新增 Provider 至少选择一个模型才是可用配置；编辑态保留原有宽松语义。
+    (isEdit || draft.models.length > 0) &&
     !saving;
 
   const save = async () => {
@@ -212,7 +218,8 @@ export function ProviderDialog({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {showComposer && (
+            {/* Test connection 属于编辑/诊断路径；新增主路径不提前制造第二任务。 */}
+            {isEdit && showComposer && (
               <button
                 type="button"
                 className={BTN_SM}
@@ -234,15 +241,21 @@ export function ProviderDialog({
                 {t("Advanced settings")}
               </button>
             )}
-            <button type="button" className={BTN_SM} onClick={onClose} disabled={saving}>
-              {t("Close")}
-            </button>
+            {/* Add 模式底部已有 Cancel；避免同一关闭动作在上下各出现一次。 */}
+            {isEdit && (
+              <button type="button" className={BTN_SM} onClick={onClose} disabled={saving}>
+                {t("Close")}
+              </button>
+            )}
           </div>
         </div>
 
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-5">
           {submitError && (
-            <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
+            <div
+              className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+              role="alert"
+            >
               {submitError}
             </div>
           )}
@@ -265,7 +278,7 @@ export function ProviderDialog({
               <label className="mb-1 block text-xs opacity-70" htmlFor="preset-search">
                 {t("Service")}
               </label>
-              <PresetPicker onPick={applyPreset} picked={pickedPreset} />
+              <PresetPicker onPick={applyPreset} />
               <p className="mt-1 text-xs opacity-60">
                 {t("Pick a known service to fill fields, or choose custom endpoint.")}
               </p>
@@ -274,25 +287,58 @@ export function ProviderDialog({
 
           {showComposer && (
             <>
-              {/* 已知服务的高频路径保持极简；自定义服务才展示完整连接字段。 */}
+              {/* 已知服务的 Add 主路径只要求凭据；命名和连接细节退到 Advanced。 */}
               <section className="rounded-lg border border-border bg-card p-4">
                 {knownService ? (
-                  <div className="grid grid-cols-2 gap-3">
-                    <label className="flex flex-col gap-1 text-xs opacity-70">
-                      {t("Display Name")}
-                      <input
-                        className={INPUT}
-                        value={draft.displayName ?? ""}
-                        onChange={(event) => {
-                          patch({ displayName: event.target.value || null });
-                          setSubmitError(null);
-                        }}
-                        aria-label={t("Display Name")}
-                      />
-                    </label>
+                  isEdit ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="flex flex-col gap-1 text-xs opacity-70">
+                        {t("Display Name")}
+                        <input
+                          className={INPUT}
+                          value={draft.displayName ?? ""}
+                          onChange={(event) => {
+                            patch({ displayName: event.target.value || null });
+                            setSubmitError(null);
+                          }}
+                          aria-label={t("Display Name")}
+                        />
+                      </label>
+                      <label className="flex flex-col gap-1 text-xs opacity-70">
+                        {t("API Key Env Var")}
+                        <input
+                          ref={apiKeyInputRef}
+                          className={`${INPUT_MONO} font-mono`}
+                          value={draft.apiKeyEnv ?? ""}
+                          onChange={(event) =>
+                            updateConnection({ apiKeyEnv: event.target.value || null })
+                          }
+                          placeholder="MY_PROVIDER_API_KEY"
+                          aria-label={t("API Key Env Var")}
+                        />
+                      </label>
+                      <div className="col-span-2 flex flex-wrap gap-x-2 gap-y-1 rounded-md bg-muted px-3 py-2 text-xs opacity-70">
+                        <span className="font-mono">{draft.route}</span>
+                        <span aria-hidden>·</span>
+                        <span>{hostOf(draft.baseURL) ?? t("Inherits the built-in catalog")}</span>
+                        {draft.api && (
+                          <>
+                            <span aria-hidden>·</span>
+                            <span className="font-mono">{draft.api}</span>
+                          </>
+                        )}
+                      </div>
+                      {presetOfRoute && (
+                        <p className="col-span-2 text-xs opacity-60" data-testid="catalog-route-hint">
+                          {t("Inherits the built-in catalog")}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
                     <label className="flex flex-col gap-1 text-xs opacity-70">
                       {t("API Key Env Var")}
                       <input
+                        ref={apiKeyInputRef}
                         className={`${INPUT_MONO} font-mono`}
                         value={draft.apiKeyEnv ?? ""}
                         onChange={(event) =>
@@ -302,23 +348,7 @@ export function ProviderDialog({
                         aria-label={t("API Key Env Var")}
                       />
                     </label>
-                    <div className="col-span-2 flex flex-wrap gap-x-2 gap-y-1 rounded-md bg-muted px-3 py-2 text-xs opacity-70">
-                      <span className="font-mono">{draft.route}</span>
-                      <span aria-hidden>·</span>
-                      <span>{hostOf(draft.baseURL) ?? t("Inherits the built-in catalog")}</span>
-                      {draft.api && (
-                        <>
-                          <span aria-hidden>·</span>
-                          <span className="font-mono">{draft.api}</span>
-                        </>
-                      )}
-                    </div>
-                    {presetOfRoute && (
-                      <p className="col-span-2 text-xs opacity-60" data-testid="catalog-route-hint">
-                        {t("Inherits the built-in catalog")}
-                      </p>
-                    )}
-                  </div>
+                  )
                 ) : (
                   <div className="grid grid-cols-2 gap-3">
                     <label className="flex flex-col gap-1 text-xs opacity-70">
@@ -364,6 +394,7 @@ export function ProviderDialog({
                     <label className="flex flex-col gap-1 text-xs opacity-70">
                       {t("API Key Env Var")}
                       <input
+                        ref={apiKeyInputRef}
                         className={`${INPUT_MONO} font-mono`}
                         value={draft.apiKeyEnv ?? ""}
                         onChange={(event) =>
@@ -404,11 +435,28 @@ export function ProviderDialog({
               />
 
               {advancedOpen && (
-                <section className="rounded-lg border border-border bg-card p-4" data-testid="provider-advanced">
+                <section
+                  className="rounded-lg border border-border bg-card p-4"
+                  data-testid="provider-advanced"
+                >
                   <div className="flex flex-col gap-4">
                     {/* 已知预设把底层连接字段放进高级区；仍允许专家覆盖。 */}
                     {knownService && (
                       <div className="grid grid-cols-3 gap-3">
+                        {!isEdit && (
+                          <label className="col-span-3 flex flex-col gap-1 text-xs opacity-70">
+                            {t("Display Name")}
+                            <input
+                              className={INPUT}
+                              value={draft.displayName ?? ""}
+                              onChange={(event) => {
+                                patch({ displayName: event.target.value || null });
+                                setSubmitError(null);
+                              }}
+                              aria-label={t("Display Name")}
+                            />
+                          </label>
+                        )}
                         <label className="flex flex-col gap-1 text-xs opacity-70">
                           {t("Route key")}
                           <input
@@ -531,13 +579,7 @@ export function ProviderDialog({
 
 // ============ 服务预设选择器（可搜索 + 键盘导航）============
 
-function PresetPicker({
-  onPick,
-  picked,
-}: {
-  onPick: (preset: ModelPreset | null) => void;
-  picked: ModelPreset | null;
-}) {
+function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -559,95 +601,93 @@ function PresetPicker({
     onPick(preset);
     setOpen(false);
     setHighlighted(-1);
-    setQuery("");
+    // 选择完成后让输入框继续表达“当前服务”，而不是退回空白 placeholder。
+    setQuery(preset?.name ?? t("Custom endpoint"));
   };
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="relative">
-        <input
-          id="preset-search"
-          className={INPUT}
-          role="combobox"
-          aria-expanded={open}
-          value={query}
-          placeholder={t("Choose a service or custom endpoint")}
-          onFocus={() => setOpen(true)}
-          onChange={(event) => {
-            setQuery(event.target.value);
+    <div className="relative">
+      <input
+        id="preset-search"
+        className={INPUT}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded={open}
+        value={query}
+        placeholder={t("Choose a service or custom endpoint")}
+        onFocus={(event) => {
+          setOpen(true);
+          if (query) event.currentTarget.select();
+        }}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          setOpen(true);
+          setHighlighted(-1);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
             setOpen(true);
-            setHighlighted(-1);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              setOpen(true);
-              setHighlighted((value) => Math.min(value + 1, matched.length - 1));
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              setHighlighted((value) => Math.max(value - 1, -1));
-            } else if (event.key === "Enter" && open) {
-              event.preventDefault();
-              if (highlighted >= 0 && matched[highlighted]) pick(matched[highlighted]);
-              else if (highlighted === -1) pick(null);
-            } else if (event.key === "Escape") {
-              setOpen(false);
-            }
-          }}
-          aria-label={t("Service")}
-          data-testid="preset-input"
-        />
-        {open && (
-          <ul
-            role="listbox"
-            aria-label={t("Choose a service or custom endpoint")}
-            className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-background py-1 shadow-lg"
-          >
-            <li>
+            setHighlighted((value) => Math.min(value + 1, matched.length - 1));
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setHighlighted((value) => Math.max(value - 1, -1));
+          } else if (event.key === "Enter" && open) {
+            event.preventDefault();
+            if (highlighted >= 0 && matched[highlighted]) pick(matched[highlighted]);
+            else if (highlighted === -1) pick(null);
+          } else if (event.key === "Escape") {
+            setOpen(false);
+          }
+        }}
+        aria-label={t("Service")}
+        data-testid="preset-input"
+      />
+      {open && (
+        <ul
+          role="listbox"
+          aria-label={t("Choose a service or custom endpoint")}
+          className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-background py-1 shadow-lg"
+        >
+          <li>
+            <button
+              type="button"
+              role="option"
+              aria-selected={highlighted === -1}
+              className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent ${highlighted === -1 ? "bg-accent" : ""}`}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                pick(null);
+              }}
+              onMouseEnter={() => setHighlighted(-1)}
+            >
+              <span>{t("Custom endpoint")}</span>
+              <span className="text-xs opacity-60">{t("Wire Protocol")}</span>
+            </button>
+          </li>
+          {matched.map((preset, index) => (
+            <li key={preset.id}>
               <button
                 type="button"
                 role="option"
-                aria-selected={highlighted === -1}
-                className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent ${highlighted === -1 ? "bg-accent" : ""}`}
+                aria-selected={index === highlighted}
+                aria-label={`${preset.name} ${preset.id}`}
+                className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent ${index === highlighted ? "bg-accent" : ""}`}
                 onMouseDown={(event) => {
                   event.preventDefault();
-                  pick(null);
+                  pick(preset);
                 }}
-                onMouseEnter={() => setHighlighted(-1)}
+                onMouseEnter={() => setHighlighted(index)}
               >
-                <span>{t("Custom endpoint")}</span>
-                <span className="text-xs opacity-60">{t("Wire Protocol")}</span>
+                <span className="min-w-0 truncate">{preset.name}</span>
+                <span className="shrink-0 font-mono text-xs opacity-60">{preset.id}</span>
               </button>
             </li>
-            {matched.map((preset, index) => (
-              <li key={preset.id}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={index === highlighted}
-                  aria-label={`${preset.name} ${preset.id}`}
-                  className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-accent ${index === highlighted ? "bg-accent" : ""}`}
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    pick(preset);
-                  }}
-                  onMouseEnter={() => setHighlighted(index)}
-                >
-                  <span className="min-w-0 truncate">{preset.name}</span>
-                  <span className="shrink-0 font-mono text-xs opacity-60">{preset.id}</span>
-                </button>
-              </li>
-            ))}
-            {matched.length === 0 && (
-              <li className="px-3 py-2 text-xs opacity-60">{t("No matching models")}</li>
-            )}
-          </ul>
-        )}
-      </div>
-      {picked && (
-        <p className="text-xs opacity-60" data-testid="picked-preset">
-          {picked.name} · {hostOf(picked.baseUrl) ?? picked.baseUrl}
-        </p>
+          ))}
+          {matched.length === 0 && (
+            <li className="px-3 py-2 text-xs opacity-60">{t("Nothing found")}</li>
+          )}
+        </ul>
       )}
     </div>
   );
