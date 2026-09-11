@@ -104,9 +104,9 @@ export function ModelPanes({
     }
     const q = query.trim().toLowerCase();
     const rows = [...pool.values()];
-    const visible = q
-      ? rows.filter((e) => e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q))
-      : rows;
+    // 搜索控件明确承诺 Search model ID，因此只按 ID 做大小写不敏感包含匹配；
+    // display name 继续只作为展示元数据，避免出现“看似按 ID 搜索、实际命中名称”的隐藏语义。
+    const visible = q ? rows.filter((e) => e.id.toLowerCase().includes(q)) : rows;
     return visible;
   }, [remote, catalog, family, query, provider.models, index, preset]);
 
@@ -135,6 +135,7 @@ export function ModelPanes({
     };
   }, [candidates.length, candidateScrollTop]);
   const renderedCandidates = candidates.slice(candidateWindow.start, candidateWindow.end);
+  const isSearching = query.trim().length > 0;
 
   const visibleSelected = candidates.filter((e) => selectedIds.has(modelIdKey(e.id)));
   const allChecked = visibleSelected.length > 0 && visibleSelected.length === candidates.length;
@@ -191,19 +192,35 @@ export function ModelPanes({
     <div className="grid grid-cols-2 gap-4" data-testid="model-panes">
       {/* —— 左栏：候选 —— */}
       <div className="flex flex-col gap-2 rounded-md border border-border p-3">
-        <div className="flex items-center justify-between">
-          <label className="flex items-center gap-2 text-sm font-medium">
-            <input
-              type="checkbox"
-              checked={allChecked}
-              ref={(el) => {
-                if (el) el.indeterminate = someChecked;
-              }}
-              onChange={toggleAll}
-              aria-label={t("Select all")}
-            />
-            {t("Models from this service")}
-          </label>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                disabled={candidates.length === 0}
+                ref={(el) => {
+                  if (el) el.indeterminate = someChecked;
+                }}
+                onChange={toggleAll}
+                aria-label={
+                  isSearching
+                    ? `${t("Select all")} · ${t("{{count}} models", { count: candidates.length })}`
+                    : t("Select all")
+                }
+              />
+              {t("Models from this service")}
+            </label>
+            {isSearching && (
+              <span
+                className="shrink-0 rounded bg-muted px-1.5 text-xs opacity-70"
+                role="status"
+                aria-live="polite"
+              >
+                {t("{{count}} models", { count: candidates.length })}
+              </span>
+            )}
+          </div>
           <button
             type="button"
             className={BTN_SM}
@@ -215,12 +232,21 @@ export function ModelPanes({
           </button>
         </div>
         <input
+          type="search"
           className={INPUT}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
             setCandidateScrollTop(0);
             if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && query) {
+              e.preventDefault();
+              setQuery("");
+              setCandidateScrollTop(0);
+              if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
+            }
           }}
           placeholder={t("Search model ID…")}
           aria-label={t("Search model ID…")}
@@ -284,7 +310,7 @@ export function ModelPanes({
           {candidateWindow.bottom > 0 && (
             <li aria-hidden="true" role="presentation" style={{ height: candidateWindow.bottom }} />
           )}
-          {candidates.length === 0 && query.trim() && (
+          {candidates.length === 0 && isSearching && (
             <li className="px-1 py-2 text-xs opacity-60">{t("No matching models")}</li>
           )}
         </ul>
