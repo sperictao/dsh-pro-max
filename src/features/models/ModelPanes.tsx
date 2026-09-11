@@ -171,6 +171,7 @@ export function ModelPanes({
     }
     setCustomError(false);
     setCustomId("");
+    setExpanded(id);
     onModelsChange([...provider.models, emptyModelEntry(id)]);
   };
 
