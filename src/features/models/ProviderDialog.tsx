@@ -6,7 +6,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as cmd from "@/shared/commands";
-import { BTN, BTN_PRIMARY, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
+import { BTN, BTN_DANGER, BTN_PRIMARY, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 import { HeadersEditor } from "./HeadersEditor";
@@ -53,6 +53,15 @@ export function ProviderDialog({
   const isEdit = state.mode === "edit";
   const displayNameInputRef = useRef<HTMLInputElement>(null);
   const apiKeyInputRef = useRef<HTMLInputElement>(null);
+  // Dialog 关闭后把焦点还给原触发控件；无需让 ModelsView 为每个入口维护第二份状态。
+  const openerRef = useRef<HTMLElement | null>(
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  const closeOriginRef = useRef<HTMLElement | null>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const keepEditingButtonRef = useRef<HTMLButtonElement>(null);
   const [draft, setDraft] = useState<ProviderConfig>(
     isEdit ? structuredClone(state.provider) : emptyProvider(),
   );
@@ -64,6 +73,7 @@ export function ProviderDialog({
   const [testResult, setTestResult] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [discardPending, setDiscardPending] = useState(false);
 
   const patch = (value: Partial<ProviderConfig>) =>
     setDraft((current) => ({ ...current, ...value }));
@@ -78,6 +88,8 @@ export function ProviderDialog({
   const knownService = effectivePreset != null;
   const showComposer = isEdit || serviceChosen;
   const editChanged = !isEdit || comparableProvider(draft) !== comparableProvider(state.provider);
+  // Add 尚未选服务时只有临时搜索文本，不算配置工作；一旦选定服务就保护这段进度。
+  const hasUnsavedChanges = isEdit ? editChanged : serviceChosen;
 
   const updateConnection = (value: Partial<ProviderConfig>) => {
     patch(value);
@@ -192,6 +204,38 @@ export function ProviderDialog({
     editChanged &&
     !saving;
 
+  const finishClose = () => {
+    const opener = openerRef.current;
+    onClose();
+    window.setTimeout(() => {
+      if (opener?.isConnected) opener.focus();
+    }, 0);
+  };
+
+  const requestClose = () => {
+    if (saving) return;
+    if (!hasUnsavedChanges) {
+      finishClose();
+      return;
+    }
+    closeOriginRef.current =
+      typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setDiscardPending(true);
+    // 风险动作出现时先把焦点放在安全的“Cancel”上，而不是 destructive action。
+    window.setTimeout(() => keepEditingButtonRef.current?.focus(), 0);
+  };
+
+  const keepEditing = () => {
+    const origin = closeOriginRef.current;
+    setDiscardPending(false);
+    window.setTimeout(() => {
+      if (origin?.isConnected) origin.focus();
+      else cancelButtonRef.current?.focus();
+    }, 0);
+  };
+
   const save = async () => {
     if (!canSave) {
       if (currentUrlIssue) setUrlError(currentUrlIssue);
@@ -226,12 +270,15 @@ export function ProviderDialog({
       id="provider-dialog"
       onKeyDown={(event) => {
         if (event.key === "Escape" && !saving) {
-          if (advancedOpen) setAdvancedOpen(false);
-          else onClose();
+          event.preventDefault();
+          event.stopPropagation();
+          if (discardPending) keepEditing();
+          else if (advancedOpen) setAdvancedOpen(false);
+          else requestClose();
         }
       }}
       onClick={(event) => {
-        if (event.target === event.currentTarget && !saving) onClose();
+        if (event.target === event.currentTarget && !saving) requestClose();
       }}
     >
       <div
@@ -384,7 +431,7 @@ export function ProviderDialog({
                       <input
                         className={`${INPUT_MONO} font-mono`}
                         value={draft.route}
-                        onChange={(event) => updateConnection({ route: event.target.value })}
+                        onChange={(event) => updateConnection({ route: event.target.value })
                         placeholder="my-gateway"
                         aria-label={t("Route key")}
                         data-testid="route-input"
@@ -523,7 +570,7 @@ export function ProviderDialog({
                           >
                             <option value="">{t("Not set")}</option>
                             {API_OPTIONS.map((value) => (
-                              <option key={value} value={value}>
+                              <option key={value}>
                                 {value}
                               </option>
                             ))}
@@ -585,19 +632,52 @@ export function ProviderDialog({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 py-3">
-          <button type="button" className={BTN} onClick={onClose} disabled={saving}>
-            {t("Cancel")}
-          </button>
-          <button
-            type="button"
-            className={BTN_PRIMARY}
-            id="btn-save-provider"
-            disabled={!canSave}
-            onClick={() => void save()}
-          >
-            {saving ? t("Saving…") : t("Save provider")}
-          </button>
+        <div
+          className={`flex shrink-0 items-center gap-3 border-t border-border px-5 py-3 ${
+            discardPending ? "justify-between" : "justify-end"
+          }`}
+        >
+          {discardPending ? (
+            <>
+              <div className="min-w-0 text-sm" role="alert" data-testid="provider-discard-confirm">
+                <div className="font-medium">{t("You have unsaved changes")}</div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  ref={keepEditingButtonRef}
+                  type="button"
+                  className={BTN}
+                  onClick={keepEditing}
+                >
+                  {t("Cancel")}
+                </button>
+                <button type="button" className={BTN_DANGER} onClick={finishClose}>
+                  {t("Discard")}
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <button
+                ref={cancelButtonRef}
+                type="button"
+                className={BTN}
+                onClick={requestClose}
+                disabled={saving}
+              >
+                {t("Cancel")}
+              </button>
+              <button
+                type="button"
+                className={BTN_PRIMARY}
+                id="btn-save-provider"
+                disabled={!canSave}
+                onClick={() => void save()}
+              >
+                {saving ? t("Saving…") : t("Save provider")}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
