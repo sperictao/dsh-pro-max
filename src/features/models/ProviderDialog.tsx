@@ -697,7 +697,7 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
           id={listboxId}
           role="listbox"
           aria-label={t("Choose a service or custom endpoint")}
-          className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-background py-1 shadow-lg"
+          className="mt-1 max-h-64 overflow-y-auto rounded-lg border border-border bg-background py-1 shadow-lg"
         >
           <li>
             <button
