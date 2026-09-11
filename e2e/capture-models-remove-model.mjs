@@ -145,7 +145,11 @@ async function main() {
 
     const removeText = (await remove.textContent())?.trim() ?? "";
     const removeTitle = await remove.getAttribute("title");
-    console.log(`before: removeText=${JSON.stringify(removeText)}; removeTitle=${JSON.stringify(removeTitle)}; modelCount=${await settings.locator("[data-model-id]").count()}`);
+    const removeClass = await remove.getAttribute("class") ?? "";
+    const destructive = removeClass.includes("text-destructive");
+    assert.equal(removeTitle, "Remove model");
+    assert.equal(destructive, true);
+    console.log(`before: removeText=${JSON.stringify(removeText)}; removeTitle=${JSON.stringify(removeTitle)}; destructive=${destructive}; modelCount=${await settings.locator("[data-model-id]").count()}`);
 
     await remove.click();
     await row.waitFor({ state: "detached" });
