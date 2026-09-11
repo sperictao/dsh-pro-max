@@ -186,7 +186,7 @@ export function ModelPanes({
   };
 
   const patchModel = (id: string, patch: Partial<ModelEntry>) => {
-    onModelsChange(provider.models.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+    onModelsChange(provider.models.map((m) => (m.id === id ? { ...m, ...patch } : m));
   };
 
   return (
@@ -432,6 +432,19 @@ function ModelAdvancedPanel({
   const view = reasoningView(model);
   const levels = view.kind === "levels" ? view.levels : new Map<string, string | null>();
   const enabledLevels = EFFORT_OPTIONS.filter((l) => levels.has(l));
+  const publishedReasoningLevels = EFFORT_OPTIONS.filter((level) =>
+    catalogEntry?.reasoningLevels?.includes(level),
+  );
+  // 与 modelReasoningCapability 保持同一继承语义：目录明确支持 reasoning 但未给出
+  // 档位时，仍使用 low / medium / high 的兼容默认。按钮继续只表示“显式覆盖”，
+  // 不把继承档位伪装成已按下的 override。
+  const inheritedReasoningLevels =
+    catalogEntry?.reasoning === true
+      ? publishedReasoningLevels.length > 0
+        ? publishedReasoningLevels
+        : (["low", "medium", "high"] as const)
+      : [];
+  const thinkingInheritId = `thinking-levels-inherit-${model.id.replace(/[^A-Za-z0-9_-]/g, "-")}`;
   const iview = inputView(model);
   const publishedCapabilities = new Set(catalogEntry?.capabilities ?? []);
   const publishedVision =
@@ -510,7 +523,12 @@ function ModelAdvancedPanel({
       </div>
       <div className="flex flex-col gap-1">
         <span className="text-xs opacity-70">{t("Thinking levels")}</span>
-        <div className="flex flex-wrap gap-1" role="group" aria-label={t("Thinking levels")}>
+        <div
+          className="flex flex-wrap gap-1"
+          role="group"
+          aria-label={t("Thinking levels")}
+          aria-describedby={view.kind === "inherit" ? thinkingInheritId : undefined}
+        >
           {EFFORT_OPTIONS.map((level) => {
             const on = levels.has(level);
             return (
@@ -527,6 +545,17 @@ function ModelAdvancedPanel({
             );
           })}
         </div>
+        {view.kind === "inherit" && (
+          <p
+            id={thinkingInheritId}
+            data-testid="thinking-levels-inherit"
+            className="text-xs opacity-60"
+          >
+            {t("Follow catalog")}
+            {inheritedReasoningLevels.length > 0 &&
+              ` · ${inheritedReasoningLevels.map(effortLabel).join(", ")}`}
+          </p>
+        )}
         {enabledLevels.filter((l) => l !== "off").length > 0 && (
           <div className="flex flex-wrap gap-2">
             {enabledLevels
