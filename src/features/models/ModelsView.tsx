@@ -291,11 +291,16 @@ export function ModelsView() {
   /**
    * 模型域唯一写入口：校验完整 ModelConfig 后原子覆盖本域。
    * UI 不保留“待保存副本”，成功即刷新内存事实；失败保持旧配置。
+   * reportError=false 仅用于拥有自己的持久 inline error 的 ProviderDialog。
    */
-  const persist = async (next: ModelConfig, route: string | null = null) => {
+  const persist = async (
+    next: ModelConfig,
+    route: string | null = null,
+    reportError = true,
+  ) => {
     const validation = configValidationError(next);
     if (validation) {
-      toast(t(validation), "error");
+      if (reportError) toast(t(validation), "error");
       throw new Error(validation);
     }
     if (route) setBusyRoute(route);
@@ -311,7 +316,7 @@ export function ModelsView() {
       setConfig(next);
       setEnvStatus(status);
     } catch (error) {
-      toast(tErr(String(error)), "error");
+      if (reportError) toast(tErr(String(error)), "error");
       throw error;
     } finally {
       if (route) setBusyRoute(null);
@@ -370,7 +375,9 @@ export function ModelsView() {
       ),
       catalog,
     );
-    await persist(next, provider.route);
+    // ProviderDialog owns a persistent contextual error and retry path; avoid duplicating
+    // the same save failure as a transient page-level toast.
+    await persist(next, provider.route, false);
     setDialog(null);
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
