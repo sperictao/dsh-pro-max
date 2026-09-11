@@ -419,7 +419,7 @@ describe("ModelsView provider studio", () => {
     expect(within(confirmation).getByText("Remove Spero AI?")).toBeInTheDocument();
     expect(within(confirmation).getByText("Default model: Second · m2")).toBeInTheDocument();
     expect(within(confirmation).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
-    await user.click(within(confirmation).getByRole("button", { name: "Remove", exact: true }));
+    await user.click(within(confirmation).getByRole("button", { name: "Remove" }));
 
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
     const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
