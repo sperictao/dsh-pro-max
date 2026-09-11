@@ -110,7 +110,8 @@ async function main() {
     const dialog = page.getByRole("dialog", { name: "Edit provider" });
     await dialog.waitFor({ state: "visible" });
     await page.waitForTimeout(700);
-    await dialog.getByRole("button", { name: "Advanced settings" }).click();
+    const advancedButton = dialog.getByRole("button", { name: "Advanced settings" });
+    await advancedButton.click();
     const advanced = dialog.getByTestId("provider-advanced");
     const editor = advanced.getByTestId("headers-editor");
     await editor.waitFor({ state: "visible" });
@@ -132,6 +133,9 @@ async function main() {
     await editor.getByRole("alert").waitFor({ state: "visible" });
     await page.screenshot({ path: resolve(OUT_DIR, "models-provider-headers-json.png"), fullPage: true });
 
+    // Provider Advanced is a focused overlay; collapse it before using the dialog footer.
+    await advancedButton.click();
+    await advanced.waitFor({ state: "detached" });
     const save = dialog.getByRole("button", { name: "Save provider" });
     assert.equal(await save.isEnabled(), true);
     await save.click();
