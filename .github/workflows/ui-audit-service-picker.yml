@@ -34,10 +34,34 @@ jobs:
         run: |
           FFMPEG="$(find "$HOME/.cache/ms-playwright" -path '*/ffmpeg-*/ffmpeg-linux' -type f | head -n 1)"
           test -n "$FFMPEG"
+          FRAMES=.artifacts/e2e/models-service-picker/gif-frames
+          mkdir -p "$FRAMES"
           "$FFMPEG" -y \
             -i .artifacts/e2e/models-service-picker/models-service-picker.webm \
-            -vf "fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer" \
-            .artifacts/e2e/models-service-picker/models-service-picker.gif
+            -vf "fps=10,scale=960:-1:flags=lanczos" \
+            "$FRAMES/frame-%04d.png"
+          python3 -m pip install --quiet --user --break-system-packages pillow
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+
+          root = Path('.artifacts/e2e/models-service-picker')
+          paths = sorted((root / 'gif-frames').glob('frame-*.png'))
+          if not paths:
+              raise SystemExit('No GIF frames generated')
+          frames = [Image.open(path).convert('RGB') for path in paths]
+          frames[0].save(
+              root / 'models-service-picker.gif',
+              save_all=True,
+              append_images=frames[1:],
+              duration=100,
+              loop=0,
+              optimize=True,
+          )
+          for frame in frames:
+              frame.close()
+          PY
+          rm -rf "$FRAMES"
       - uses: actions/upload-artifact@v4
         with:
           name: ui-audit-models-service-picker
