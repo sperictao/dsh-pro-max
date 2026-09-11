@@ -146,24 +146,52 @@ async function main() {
     await page.waitForTimeout(1800);
     console.log(`${LABEL}: stale-failure-surfaces-after-edit=${await page.getByText("Failed to write settings.yaml", { exact: true }).count()}`);
 
-    if (LABEL === "before") {
-      // The baseline defect is that Retry looks enabled but the backdrop owns the hit-test.
-      // Record one real pointer attempt and end the Before clip there instead of forcing it.
-      let retryBlocked = false;
-      try {
-        await saveButton.click({ timeout: 1500 });
-      } catch {
-        retryBlocked = true;
-      }
-      console.log(`${LABEL}: retry-click-blocked=${retryBlocked}`);
-      await page.waitForTimeout(1800);
-    } else {
-      await saveButton.click();
+    const geometry = await page.evaluate(() => {
+      const overlay = document.querySelector("#provider-dialog");
+      const card = overlay?.firstElementChild;
+      const body = card?.children?.[1];
+      const footer = card?.children?.[2];
+      const button = document.querySelector("#btn-save-provider");
+      const toRect = (element) => {
+        if (!(element instanceof Element)) return null;
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+      };
+      const buttonRect = button instanceof Element ? button.getBoundingClientRect() : null;
+      const cx = buttonRect ? buttonRect.left + buttonRect.width / 2 : 0;
+      const cy = buttonRect ? buttonRect.top + buttonRect.height / 2 : 0;
+      const hit = buttonRect ? document.elementFromPoint(cx, cy) : null;
+      const cardStyle = card instanceof Element ? getComputedStyle(card) : null;
+      const bodyStyle = body instanceof Element ? getComputedStyle(body) : null;
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        overlay: toRect(overlay),
+        card: toRect(card),
+        body: toRect(body),
+        footer: toRect(footer),
+        button: toRect(button),
+        cardStyle: cardStyle ? { height: cardStyle.height, maxHeight: cardStyle.maxHeight, overflow: cardStyle.overflow, display: cardStyle.display } : null,
+        bodyStyle: bodyStyle ? { height: bodyStyle.height, minHeight: bodyStyle.minHeight, overflowY: bodyStyle.overflowY, flex: bodyStyle.flex } : null,
+        bodyScroll: body instanceof HTMLElement ? { clientHeight: body.clientHeight, scrollHeight: body.scrollHeight, scrollTop: body.scrollTop } : null,
+        hit: hit ? { tag: hit.tagName, id: hit.id, className: typeof hit.className === "string" ? hit.className : "" } : null,
+      };
+    });
+    console.log(`${LABEL}: geometry=${JSON.stringify(geometry)}`);
+
+    let retryBlocked = false;
+    try {
+      await saveButton.click({ timeout: 1500 });
+    } catch {
+      retryBlocked = true;
+    }
+    console.log(`${LABEL}: retry-click-blocked=${retryBlocked}`);
+
+    if (!retryBlocked) {
       await page.waitForFunction(() => window.__auditSaveAttempts === 2 && window.__auditSavePending === false);
       await dialog.waitFor({ state: "detached" });
       await page.getByText("Model configuration saved — changes take effect immediately", { exact: true }).waitFor({ state: "visible" });
-      await page.waitForTimeout(1800);
     }
+    await page.waitForTimeout(1800);
 
     await context.close();
     const recorded = await video.path();
