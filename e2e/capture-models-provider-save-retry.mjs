@@ -147,8 +147,8 @@ async function main() {
 
   try {
     const context = await browser.newContext({
-      viewport: { width: 1440, height: 900 },
-      recordVideo: { dir: OUT_DIR, size: { width: 1440, height: 900 } },
+      viewport: { width: 1440, height: 700 },
+      recordVideo: { dir: OUT_DIR, size: { width: 1440, height: 700 } },
     });
     const page = await context.newPage();
     const failures = [];
