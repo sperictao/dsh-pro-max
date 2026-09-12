@@ -17,6 +17,7 @@ import type {
   MarketDiagnostics,
   ModelCatalogFile,
   ModelConfig,
+  ModelCredentialInfo,
   PluginReleaseNotes,
   PluginUpdateInfo,
   UpdateInfo,
@@ -65,7 +66,7 @@ export const syncTrayDshActions = (running: boolean, busy: boolean) =>
 
 // ============ 插件市场 ============
 export const marketFetch = () => invokeTyped<MarketCatalog>("market_fetch");
-// 本地快照直读（首屏秒显，不涉及网络）；缺失/损坏/旧格式返回 null
+// 本地快照直读（首屏秒显，不涉及网络）；缺失/损坏为 null
 export const marketSnapshot = () => invokeTyped<MarketCatalog | null>("market_snapshot");
 export const marketInstalled = () => invokeTyped<InstalledPlugin[]>("market_installed");
 // 成功返回安装回执（落进 profile 的 name+spec）；无法唯一定位落点（github: 重装）时为 null。
@@ -105,7 +106,15 @@ export const modelConfigSave = (config: ModelConfig) => invokeTyped<void>("model
 // models.dev 全量目录：load 读本地快照（缺失/损坏为 null），refresh 拉取并落快照
 export const modelCatalogLoad = () => invokeTyped<ModelCatalogFile | null>("model_catalog_load");
 export const modelCatalogRefresh = () => invokeTyped<ModelCatalogFile>("model_catalog_refresh");
-// launcher 进程环境中的密钥引用状态；只返回 env name -> available，不返回 secret。
+// DSH credential plane：读取只返回 configured/source/writable，secret 从不回传前端。
+// set 是唯一携带明文 secret 的单向 IPC；unset 删除 managed credential reference。
+export const modelCredentialDescribe = (names: string[]) =>
+  invokeTyped<Record<string, ModelCredentialInfo>>("model_credential_describe", { names });
+export const modelCredentialSet = (name: string, value: string) =>
+  invokeTyped<ModelCredentialInfo>("model_credential_set", { name, value });
+export const modelCredentialUnset = (name: string) =>
+  invokeTyped<ModelCredentialInfo>("model_credential_unset", { name });
+// 旧 Models UI 仍暂时使用 launcher 进程环境状态；下一步 UI cutover 后删除。
 export const modelEnvStatus = (names: string[]) =>
   invokeTyped<Record<string, boolean>>("model_env_status", { names });
 export type ProviderModelsCacheEntry = { models: string[]; fetchedAt: number };

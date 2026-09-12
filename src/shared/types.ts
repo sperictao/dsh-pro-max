@@ -1,5 +1,5 @@
 // shared/types：IPC 载荷与领域视图类型。
-// 契约类型由 ts-rs 从 Rust serde 结构生成（./bindings 下的 18 个文件，
+// 契约类型由 ts-rs 从 Rust serde 结构生成（./bindings 下的文件，
 // 唯一事实来源是 src-tauri 侧结构体；手改即破，重跑 cargo test export_bindings
 // 再生成）。名称差异经 re-export 别名一次适配，消费方 import 路径不变。
 
@@ -13,6 +13,7 @@ export type { UpdaterHelpPaths } from "./bindings/UpdaterHelpPaths";
 export type { UpdateInfo } from "./bindings/UpdateInfo";
 export type { ProviderConfig } from "./bindings/ProviderConfig";
 export type { ModelConfig } from "./bindings/ModelConfig";
+export type { ModelCredentialInfo } from "./bindings/ModelCredentialInfo";
 export type { ModelEntry } from "./bindings/ModelEntry";
 export type { ReasoningEfforts } from "./bindings/ReasoningEfforts";
 export type { ImportCandidate } from "./bindings/ImportCandidate";
