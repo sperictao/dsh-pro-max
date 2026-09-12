@@ -115,7 +115,9 @@
 .select-card.selected .select-card-check { display: inline-flex; }
 
 /* 模式卡预览：迷你 UI 骨架（标题条 + 文本行 + 主按钮药丸）。
-   亮/暗固定色——预览的是模式本身，不随主题族 */
+   ★ 有意例外（DESIGN.md「Intentional exceptions」）：下方亮/暗固定灰阶
+   刻意硬编码——预览的是模式本身而非某个主题族，不随主题切换；
+   勿改成语义 token */
 .mode-preview {
   display: flex;
   width: 120px;
