@@ -39,9 +39,10 @@ libc = "0.2"
 paste = "1.0.15"
 ts-rs = { version = "10.1.0", features = ["serde-compat", "no-serde-warnings", "serde-json-impl"] }
 
-# dsh web Windows 侧按命令行模式匹配停进程
+# dsh web Windows 侧按命令行模式匹配停进程；凭据离线写入用 MoveFileExW
+# 原子替换 `.credentials.yaml`（与 dsh atomic-write 的 replace-existing 语义一致）。
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
+windows = { version = "0.61", features = ["Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
