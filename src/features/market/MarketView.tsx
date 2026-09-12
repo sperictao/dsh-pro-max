@@ -412,7 +412,7 @@ function DiscoverPane() {
           等结果落定：成功则替换为在线目录，失败则横幅如实说明 */}
       {catalog?.fromSnapshot && !catalogBusy && (
         <p
-          className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
+          className="mb-4 rounded-lg border border-(--status-warn)/40 bg-(--status-warn)/10 px-3 py-2 text-xs text-(--status-warn)"
           id="market-snapshot-banner"
         >
           {t("Network unavailable — showing the local catalog snapshot from {{time}}.", {
@@ -666,18 +666,11 @@ function FilterBtn({
 }
 
 /// 状态胶囊（圆点 + 词）：安装事实（卡片右上角）与启停状态（状态条）共用
-/// 同一视觉语言——绿点主色底 / 灰点灰底
+/// .status-badge 共享徽章——ok 变体语义绿（dot 绿 + 淡底描边），默认灰
 function StateBadge({ tone, label }: { tone: "ok" | "muted"; label: string }) {
   return (
-    <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] font-medium ${
-        tone === "ok" ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-muted text-muted-foreground"
-      }`}
-    >
-      <span
-        className={`h-1.5 w-1.5 rounded-full ${tone === "ok" ? "bg-emerald-500" : "bg-muted-foreground"}`}
-        aria-hidden="true"
-      />
+    <span className={`status-badge shrink-0${tone === "ok" ? " ok" : ""}`}>
+      <span className="dot" aria-hidden="true" />
       {label}
     </span>
   );
@@ -824,7 +817,7 @@ function MarketCard({
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="text-xs opacity-70">{t("Install this plugin?")}</span>
         {terminalWarning && (
-          <span className="text-[11px] text-amber-700 dark:text-amber-400">
+          <span className="text-[11px] text-(--status-warn)">
             {t("Looks like a terminal/CLI plugin — it will run shell commands in your environment.")}
           </span>
         )}
@@ -833,7 +826,7 @@ function MarketCard({
       <span className="text-xs">{t("Installing…")}</span>
     ) : state === "installFailed" ? (
       <span
-        className="min-w-0 flex-1 truncate text-xs text-red-600 dark:text-red-400"
+        className="min-w-0 flex-1 truncate text-xs text-destructive"
         title={installError?.message}
       >
         {t("Install failed: {{error}}", { error: installError?.message ?? "" })}
@@ -850,11 +843,11 @@ function MarketCard({
         {current && (
           <span className="font-mono">
             v{current}
-            {outdated && <span className="ml-1 text-emerald-600 dark:text-emerald-400">→ v{latest}</span>}
+            {outdated && <span className="ml-1 text-(--status-ok)">→ v{latest}</span>}
           </span>
         )}
         {outdated && info?.compatible === false && info?.requiresDsh && (
-          <span className="shrink-0 text-red-600 dark:text-red-400">
+          <span className="shrink-0 text-destructive">
             {t("dsh {{version}} required", { version: info.requiresDsh })}
           </span>
         )}
@@ -862,7 +855,7 @@ function MarketCard({
     ) : compat?.compatible === false && compat.requiresDsh ? (
       // 发现期兼容门禁（G4）：目录卡片在安装前就明示 dsh 版本要求（安装/更新
       // 期的 fail-closed 门禁另有判定，这里只是把"点了才发现"提前）
-      <span className="shrink-0 text-xs text-red-600 dark:text-red-400">
+      <span className="shrink-0 text-xs text-destructive">
         {t("dsh {{version}} required", { version: compat.requiresDsh })}
       </span>
     ) : null;
@@ -990,10 +983,10 @@ function MarketCard({
   if (plugin?.stars != null) metaParts.push(<span key="stars">★ {plugin.stars.toLocaleString()}</span>);
 
   return (
-    // group 供收藏星标悬浮显隐；已装卡以 emerald 描边与未装区分
+    // group 供收藏星标悬浮显隐；已装卡以语义绿描边与未装区分
     <article
       className={`group flex flex-col gap-1.5 rounded-lg border p-4 ${
-        installed ? "border-emerald-500/30 dark:border-emerald-500/40" : "border-border"
+        installed ? "border-(--status-ok)/35" : "border-border"
       }`}
     >
       <div className="flex items-start justify-between gap-2">
@@ -1010,7 +1003,7 @@ function MarketCard({
             <span className="truncate text-sm font-semibold">{name}</span>
           )}
           {plugin?.deprecated && (
-            <span className="shrink-0 rounded bg-red-500/15 px-1.5 py-0.5 text-[11px] text-red-600 dark:text-red-400">
+            <span className="shrink-0 rounded bg-destructive/15 px-1.5 py-0.5 text-[11px] text-destructive">
               {t("Deprecated")}
             </span>
           )}
@@ -1024,7 +1017,7 @@ function MarketCard({
             <button
               type="button"
               className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
-                favorited ? "text-amber-500" : "text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                favorited ? "text-(--status-warn)" : "text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
               }`}
               onClick={onToggleFavorite}
               aria-pressed={favorited}
@@ -1061,7 +1054,7 @@ function MarketCard({
         <div className="flex flex-col gap-0.5">
           {description && <p className="line-clamp-2 text-xs opacity-70">{description}</p>}
           {plugin?.deprecated && plugin.replacement && (
-            <p className="text-xs text-amber-700 dark:text-amber-400">
+            <p className="text-xs text-(--status-warn)">
               {t("Deprecated — consider {{replacement}} instead.", { replacement: plugin.replacement })}
             </p>
           )}
@@ -1095,7 +1088,7 @@ function InstallLogView({ log, failed }: { log: { specifier: string; lines: stri
   const [first, ...rest] = log.lines;
   return (
     <div
-      className={`rounded border px-2.5 py-2 ${failed ? "border-red-500/40 bg-red-500/5" : "border-border bg-muted/40"}`}
+      className={`rounded border px-2.5 py-2 ${failed ? "border-destructive/40 bg-destructive/5" : "border-border bg-muted/40"}`}
       aria-busy={!failed}
     >
       <p className="truncate font-mono text-[11px] opacity-60">
@@ -1146,7 +1139,7 @@ function BuildApprovalDialog() {
             <li key={p}>{p}</li>
           ))}
         </ul>
-        <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+        <p className="mt-3 text-xs text-(--status-warn)">
           {t(
             "Install scripts run arbitrary code as your user. pnpm blocks them by default; approving writes your choice to {{path}} and retries the install.",
             { path: pending.workspaceYaml },
@@ -1229,7 +1222,7 @@ function ReleaseAgeConfirmDialog() {
                 plugin: pending.name,
               })}
         </p>
-        <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+        <p className="mt-3 text-xs text-(--status-warn)">
           {t(
             "A normal update would be silently held back by pnpm and stay on the current version. Updating anyway pins this exact version, and pnpm records the exception in minimumReleaseAgeExclude.",
           )}
@@ -1342,7 +1335,7 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         {invalid && (
-          <p className="mt-2 text-xs text-red-600 dark:text-red-400" id="custom-install-invalid">
+          <p className="mt-2 text-xs text-destructive" id="custom-install-invalid">
             {t(
               "Unsupported address — use an npm package (pkg@1.2.3), a GitHub repo (github:owner/repo), or a GitHub URL.",
             )}
@@ -1353,7 +1346,7 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
         {(phase === "busy" || phase === "failed") && installLog?.specifier === submitted && (
           <div className="mt-3">
             {phase === "failed" && installError && (
-              <p className="mb-2 text-xs text-red-600 dark:text-red-400" id="custom-install-failed">
+              <p className="mb-2 text-xs text-destructive" id="custom-install-failed">
                 {t("Install failed: {{error}}", { error: installError.message })}
               </p>
             )}
@@ -1380,10 +1373,7 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
         )}
         {phase === "done" && (
           <p className="mt-3 flex min-w-0 items-center gap-1.5" id="custom-install-done">
-            <span className="inline-flex shrink-0 items-center gap-1.5 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
-              {t("Installed")}
-            </span>
+            <StateBadge tone="ok" label={t("Installed")} />
             <span className="truncate font-mono text-xs opacity-70">{submitted}</span>
           </p>
         )}
@@ -1548,7 +1538,7 @@ function DiagnosticsPane() {
 
       {busy && <p className="text-sm opacity-60">{t("Working…")}</p>}
       {error && (
-        <p className="text-xs text-red-600 dark:text-red-400" title={error}>
+        <p className="text-xs text-destructive" title={error}>
           {t("Diagnostics failed: {{error}}", { error: tErr(error) })}
         </p>
       )}
@@ -1564,7 +1554,7 @@ function DiagnosticsPane() {
           )}
           {diag.duplicates.length > 0 && (
             <section className="mt-4">
-              <h3 className="text-sm font-semibold text-red-600 dark:text-red-400">{t("Duplicate entry ids")}</h3>
+              <h3 className="text-sm font-semibold text-destructive">{t("Duplicate entry ids")}</h3>
               <p className="mt-1 text-xs opacity-60">{t("The next dsh boot will fail until these are resolved.")}</p>
               <ul className="mt-2 space-y-1">
                 {diag.duplicates.map((d) => (
@@ -1579,7 +1569,7 @@ function DiagnosticsPane() {
           )}
           {diag.orphans.length > 0 && (
             <section className="mt-4">
-              <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-400">{t("Orphan patch rows")}</h3>
+              <h3 className="text-sm font-semibold text-(--status-warn)">{t("Orphan patch rows")}</h3>
               <ul className="mt-2 space-y-1">
                 {diag.orphans.map((o) => (
                   <li key={o} className="rounded border border-border px-3 py-2 text-xs">

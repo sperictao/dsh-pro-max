@@ -72,6 +72,13 @@
 .status-badge.failed .dot { background-color: var(--destructive); }
 .status-badge.starting .dot,
 .status-badge.stopping .dot { background-color: var(--status-warn); }
+/* ok 变体：市场页安装/启用事实徽章（绿点 + 语义绿文字，同色淡底描边） */
+.status-badge.ok {
+  color: var(--status-ok);
+  border-color: color-mix(in srgb, var(--status-ok) 35%, transparent);
+  background-color: color-mix(in srgb, var(--status-ok) 10%, transparent);
+}
+.status-badge.ok .dot { background-color: var(--status-ok); }
 
 /* 选择卡（语言/模式/主题族通用）：默认边框，选中走 primary */
 .select-card {
