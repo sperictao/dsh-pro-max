@@ -1,0 +1,12 @@
+file:///home/runner/work/dsh-pro-max/dsh-pro-max/scripts/tmp-model-credential-cutover.mjs:8
+  if (first < 0) throw new Error(`${path}: source snippet not found`)
+                       ^
+
+Error: src/shared/i18n/zh-CN.ts: source snippet not found
+    at replaceOnce (file:///home/runner/work/dsh-pro-max/dsh-pro-max/scripts/tmp-model-credential-cutover.mjs:8:24)
+    at file:///home/runner/work/dsh-pro-max/dsh-pro-max/scripts/tmp-model-credential-cutover.mjs:675:1
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
+
+Node.js v22.23.2
