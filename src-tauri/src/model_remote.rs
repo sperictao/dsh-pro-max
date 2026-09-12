@@ -1,8 +1,8 @@
 //! Provider 模型发现请求适配。
 //!
 //! `dsh::models` 负责 settings.yaml 模型域；这里承接带自定义 headers 的
-//! `/models` HTTP 探测以及凭据环境变量可用性检查。后者只返回布尔值，绝不
-//! 把 secret 内容跨 IPC 暴露给前端。
+//! `/models` HTTP 探测与最小推理测试。凭据值只在 Rust 内解析或作为一次性
+//! write-only 请求参数进入，绝不从 IPC 返回前端。
 
 use crate::i18n::keyf;
 use serde::{Deserialize, Serialize};
@@ -141,12 +141,6 @@ fn remember_provider_models(
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
-}
-
-fn env_value_available(name: &str) -> bool {
-    std::env::var(name)
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
 }
 
 fn request_api_key(api_key: Option<&str>, api_key_env: Option<&str>) -> Result<Option<String>, String> {
@@ -371,24 +365,6 @@ fn test_provider_connection(
     ))
 }
 
-/// 批量检查密钥环境变量是否在 launcher 当前进程环境中存在且非空。
-/// 返回值仅包含调用方传入的变量名与布尔状态，不读取/返回 secret 内容。
-#[tauri::command]
-pub fn model_env_status(names: Vec<String>) -> BTreeMap<String, bool> {
-    names
-        .into_iter()
-        .filter_map(|raw| {
-            let name = raw.trim().to_string();
-            if name.is_empty() {
-                None
-            } else {
-                let available = env_value_available(&name);
-                Some((name, available))
-            }
-        })
-        .collect()
-}
-
 #[tauri::command]
 pub async fn model_remote_cache_get(
     base_url: String,
@@ -445,13 +421,17 @@ pub async fn model_remote_list_with_headers(
             api_key.as_deref(),
             headers.as_ref(),
         )?;
-        remember_provider_models(
-            &base_url,
-            api.as_deref(),
-            api_key_env.as_deref(),
-            headers.as_ref(),
-            &models,
-        );
+        // A write-only unsaved key is intentionally outside the persistent cache identity.
+        // Do not let a probe that the user may discard overwrite the saved credential's cache.
+        if non_empty(api_key.as_deref()).is_none() {
+            remember_provider_models(
+                &base_url,
+                api.as_deref(),
+                api_key_env.as_deref(),
+                headers.as_ref(),
+                &models,
+            );
+        }
         Ok(models)
     })
     .await
@@ -569,15 +549,4 @@ mod tests {
         assert_eq!(c, d);
     }
 
-    #[test]
-    fn env_status_trims_dedupes_and_does_not_expose_values() {
-        let missing = "__DSH_PRO_MAX_READINESS_TEST_MISSING_8E4D3A2F__";
-        let status = model_env_status(vec![
-            "".to_string(),
-            format!("  {missing}  "),
-            missing.to_string(),
-        ]);
-        assert_eq!(status.len(), 1);
-        assert_eq!(status.get(missing), Some(&false));
-    }
 }

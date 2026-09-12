@@ -154,13 +154,20 @@ export function ProviderDialog({
   const discoveryActive =
     showComposer &&
     !currentUrlIssue &&
+    !apiKeyError &&
     Boolean(draft.baseURL?.trim()) &&
     (!knownService || hasRequestCredential);
   const discovery = useProviderModels(discoveryActive, draft, keyValue || null);
   const testTarget = providerConnectionTarget(draft);
   const launcherCanTest = !knownService || hasRequestCredential;
   const canTest =
-    showComposer && launcherCanTest && !currentUrlIssue && Boolean(testTarget) && !saving && !testing;
+    showComposer &&
+    launcherCanTest &&
+    !currentUrlIssue &&
+    !apiKeyError &&
+    Boolean(testTarget) &&
+    !saving &&
+    !testing;
 
   const onBaseURLBlur = () => {
     const raw = draft.baseURL ?? "";
