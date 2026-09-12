@@ -454,7 +454,7 @@ describe("ModelsView provider studio", () => {
     const view = render(createElement(ModelsView));
     await waitFor(() => expect(screen.getByText("Spero AI")).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "Remove provider" }));
-    await user.click(screen.getByRole("button", { name: "Remove", exact: true }));
+    await user.click(screen.getByRole("button", { name: /^Remove$/ }));
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
     expect(cmd.modelCredentialDescribe).not.toHaveBeenCalled();
     expect(cmd.modelCredentialUnset).not.toHaveBeenCalled();
@@ -474,7 +474,7 @@ describe("ModelsView provider studio", () => {
     render(createElement(ModelsView));
     await waitFor(() => expect(screen.getByText("Spero AI")).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "Remove provider" }));
-    await user.click(screen.getByRole("button", { name: "Remove", exact: true }));
+    await user.click(screen.getByRole("button", { name: /^Remove$/ }));
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
     expect(cmd.modelCredentialDescribe).toHaveBeenCalledWith(["SPERO_AI_API_KEY"]);
     expect(cmd.modelCredentialUnset).not.toHaveBeenCalled();
@@ -491,13 +491,13 @@ describe("ModelsView provider studio", () => {
 
     await user.click(screen.getByRole("button", { name: "Remove provider" }));
     const confirmation = screen.getByTestId("provider-remove-confirm-0");
-    await user.click(within(confirmation).getByRole("button", { name: "Remove", exact: true }));
+    await user.click(within(confirmation).getByRole("button", { name: /^Remove$/ }));
     await waitFor(() => expect(cmd.modelCredentialUnset).toHaveBeenCalledTimes(1));
     expect(cmd.modelConfigSave).not.toHaveBeenCalled();
     expect(screen.getByTestId("provider-remove-confirm-0")).toBeInTheDocument();
     expect(useAppStore.getState().toasts.at(-1)?.message).toContain("Credential store busy");
 
-    await user.click(within(screen.getByTestId("provider-remove-confirm-0")).getByRole("button", { name: "Remove", exact: true }));
+    await user.click(within(screen.getByTestId("provider-remove-confirm-0")).getByRole("button", { name: /^Remove$/ }));
     await waitFor(() => expect(cmd.modelCredentialUnset).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
     expect(screen.queryByText("Spero AI")).not.toBeInTheDocument();
