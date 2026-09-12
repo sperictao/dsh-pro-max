@@ -35,6 +35,10 @@ export const INPUT =
 
 export const INPUT_MONO = `${INPUT} font-mono`;
 
+// 区块卡表面（SettingsCard / DshCard 主卡 / 模式行卡 / 模型页区块 / 市场卡同一事实）；
+// 需要覆盖边框色时后置 border-* 任意值类（编译序在具名 border-border 之后，天然生效）
+export const PANEL = "rounded-xl border border-border bg-card text-card-foreground";
+
 export const SELECT =
   "h-9 w-full rounded-md border border-input bg-background px-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 

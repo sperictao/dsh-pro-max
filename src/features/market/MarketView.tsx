@@ -16,6 +16,7 @@ import {
   BTN_SM,
   INPUT,
   INPUT_MONO,
+  PANEL,
   TOGGLE_LABELED,
 } from "@/shared/lib/ui";
 import { githubRepoId } from "@/shared/lib/specifier";
@@ -984,11 +985,9 @@ function MarketCard({
   if (plugin?.stars != null) metaParts.push(<span key="stars">★ {plugin.stars.toLocaleString()}</span>);
 
   return (
-    // group 供收藏星标悬浮显隐；已装卡以语义绿描边与未装区分
+    // group 供收藏星标悬浮显隐；已装卡以语义绿描边与未装区分（同卡面，仅边框色覆盖）
     <article
-      className={`group flex flex-col gap-1.5 rounded-lg border p-4 ${
-        installed ? "border-(--status-ok)/35" : "border-border"
-      }`}
+      className={`group flex flex-col gap-1.5 p-4 ${installed ? `${PANEL} border-(--status-ok)/35` : PANEL}`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">

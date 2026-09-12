@@ -12,7 +12,7 @@ import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
 import { tErr } from "@/shared/i18n/error";
 import * as cmd from "@/shared/commands";
-import { BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
+import { BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, PANEL, TOGGLE } from "@/shared/lib/ui";
 import type { DshAccessMode, DshStepEvent } from "@/shared/types";
 import { StatusBall } from "./StatusBall";
 import {
@@ -393,7 +393,7 @@ export function DshCard() {
       {/* 访问模式行卡：只选模式不执行启停，应用见下方一键按钮；紧跟球区说明小字。
           两行制：模式名即 toggle 语义标签（可访问名），说明小字讲切换行为 */}
       <label
-        className={`flex items-center justify-between gap-4 rounded-lg border border-border p-3${modeLocked ? "" : " cursor-pointer"}`}
+        className={`flex items-center justify-between gap-4 ${PANEL} p-3${modeLocked ? "" : " cursor-pointer"}`}
         id="dsh-remote-access-row"
       >
         <span className="flex flex-col gap-0.5">
@@ -416,7 +416,7 @@ export function DshCard() {
         />
       </label>
 
-      <div className="rounded-xl border border-border bg-card text-card-foreground flex flex-col gap-3 p-4">
+      <div className={`${PANEL} flex flex-col gap-3 p-4`}>
         {activeUrl && (
           <AddressRow
             url={activeUrl}
