@@ -196,7 +196,10 @@ async function main() {
         },
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(
+          names.map((name) => [name, { configured: true, source: "file", writable: true }]),
+        ),
+        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
         model_remote_cache_get: () => null,
         model_test_connection: () => null,
         model_remote_list_with_headers: ({ baseUrl }) =>
@@ -365,6 +368,7 @@ async function main() {
         apiKeyEnv: "SPERO_AI_API_KEY",
         headers: null,
         model: "glm-5.2",
+        apiKey: null,
       });
 
       await row.getByRole("button", { name: "Fetch list" }).click();
@@ -389,7 +393,7 @@ async function main() {
       await expectVisible(dialog.getByTestId("model-panes"));
       await dialog.getByLabel("Display Name").fill("E2E Gateway");
       await dialog.getByLabel("Route key").fill("e2e-gateway");
-      await dialog.getByLabel("API Key Env Var").fill("E2E_API_KEY");
+      await dialog.getByLabel("API Key").fill("sk-e2e-test");
       await dialog.getByLabel("Wire Protocol").selectOption("openai-responses");
 
       const discoveryBefore = await commandCount("model_remote_list_with_headers");
@@ -429,7 +433,8 @@ async function main() {
       const testCall = (await commandCalls("model_test_connection")).at(-1);
       assert.equal(testCall.args.baseUrl, "https://e2e.example.com/v1");
       assert.equal(testCall.args.api, "openai-responses");
-      assert.equal(testCall.args.apiKeyEnv, "E2E_API_KEY");
+      assert.equal(testCall.args.apiKeyEnv, "E2E_GATEWAY_API_KEY");
+      assert.equal(testCall.args.apiKey, "sk-e2e-test");
       assert.equal(testCall.args.model, "e2e-model-000");
 
       const savesBefore = await savedConfigCount();
@@ -443,7 +448,9 @@ async function main() {
       assert.ok(added, "saved custom provider missing");
       assert.equal(added.models.length, 75, "Select all must persist the full filtered candidate set");
       assert.equal(added.models[74].id, "e2e-model-074");
-      assert.equal(added.apiKeyEnv, "E2E_API_KEY");
+      assert.equal(added.apiKeyEnv, "E2E_GATEWAY_API_KEY");
+      const credentialSet = (await commandCalls("model_credential_set")).at(-1);
+      assert.deepEqual(credentialSet.args, { name: "E2E_GATEWAY_API_KEY", value: "sk-e2e-test" });
     });
 
     await step("models: default switch clears invalid reasoning and delete falls back", async () => {
@@ -495,7 +502,8 @@ async function main() {
         "model_config_load",
         "model_catalog_load",
         "model_catalog_refresh",
-        "model_env_status",
+        "model_credential_describe",
+        "model_credential_set",
         "model_remote_cache_get",
         "model_test_connection",
         "model_remote_list_with_headers",
