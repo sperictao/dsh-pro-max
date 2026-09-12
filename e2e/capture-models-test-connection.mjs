@@ -108,7 +108,7 @@ async function main() {
         },
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: ({ baseUrl }) => new Promise((resolve) => setTimeout(() => resolve(baseUrl.includes("gateway.acme.test") ? ["acme-chat-pro", "acme-chat-fast"] : []), 450)),
         model_test_connection: () => new Promise((resolve) => setTimeout(() => resolve(null), 1100)),
@@ -155,7 +155,7 @@ async function main() {
     const baseURL = dialog.getByLabel("Base URL");
     await baseURL.fill("https://gateway.acme.test/v1/chat/completions");
     await baseURL.press("Tab");
-    await dialog.getByLabel("API Key Env Var").fill("ACME_API_KEY");
+    await dialog.getByLabel("API Key").fill("sk-acme-test");
     await dialog.getByLabel("Wire Protocol").selectOption("openai-completions");
 
     const modelList = dialog.getByRole("list", { name: "Models from this service" });
@@ -205,9 +205,10 @@ async function main() {
     assert.deepEqual(testCalls[0].args, {
       baseUrl: "https://gateway.acme.test/v1",
       api: "openai-completions",
-      apiKeyEnv: "ACME_API_KEY",
+      apiKeyEnv: "ACME_GATEWAY_API_KEY",
       headers: null,
       model: "acme-chat-pro",
+      apiKey: "sk-acme-test",
     });
     assert.equal(calls.filter((call) => call.command === "model_config_save").length, 0, "Test connection must not save model configuration");
     assert.equal(calls.filter((call) => call.command === "model_remote_list_with_headers").length >= 1, true);
