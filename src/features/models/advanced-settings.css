@@ -1,6 +1,10 @@
 /* Advanced settings is a secondary task. Keep the main provider composer visible as
    context, but isolate expert-only fields in a focused overlay instead of extending
-   the already scrollable model-selection form below the fold. */
+   the already scrollable model-selection form below the fold.
+
+   z ladder: regular modals sit at z-50 (ui.ts MODAL_OVERLAY); this overlay and its
+   close button need to stack above the dialog that hosts them, hence 70 / 80.
+   The scrim (100vmax box-shadow) mirrors the regular modal scrim bg-black/50. */
 #provider-dialog:has([data-testid="provider-advanced"]) > div {
   pointer-events: none;
 }
@@ -18,7 +22,7 @@
   padding-top: 3.5rem;
   background: var(--card);
   box-shadow:
-    0 0 0 100vmax rgb(0 0 0 / 0.42),
+    0 0 0 100vmax rgb(0 0 0 / 0.5),
     0 24px 60px rgb(0 0 0 / 0.24);
 }
 

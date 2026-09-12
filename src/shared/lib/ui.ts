@@ -39,6 +39,14 @@ export const INPUT_MONO = `${INPUT} font-mono`;
 // 需要覆盖边框色时后置 border-* 任意值类（编译序在具名 border-border 之后，天然生效）
 export const PANEL = "rounded-xl border border-border bg-card text-card-foreground";
 
+// 模态对话框单一配方：遮罩统一 z-50（同层按 DOM 序叠放，后渲染者在上，Toaster
+// 在 App 树末位故 toast 恒浮其上）；面板为浮起卡面 bg-card。z 阶梯中仅有的例外
+// 是 ProviderDialog 高级设置叠层（z-70 面板 / z-80 关闭键，见 advanced-settings.css
+// 与 DESIGN.md）
+export const MODAL_OVERLAY =
+  "fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6";
+export const MODAL_PANEL = "rounded-xl border border-border bg-card shadow-lg";
+
 export const SELECT =
   "h-9 w-full rounded-md border border-input bg-background px-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 

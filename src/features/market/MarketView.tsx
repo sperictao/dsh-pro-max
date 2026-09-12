@@ -16,6 +16,8 @@ import {
   BTN_SM,
   INPUT,
   INPUT_MONO,
+  MODAL_OVERLAY,
+  MODAL_PANEL,
   PANEL,
   TOGGLE_LABELED,
 } from "@/shared/lib/ui";
@@ -1121,7 +1123,7 @@ function BuildApprovalDialog() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      className={MODAL_OVERLAY}
       role="dialog"
       aria-modal="true"
       id="build-approval-dialog"
@@ -1129,7 +1131,7 @@ function BuildApprovalDialog() {
         if (e.key === "Escape" && !busy) dismiss();
       }}
     >
-      <div className="w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-lg" aria-busy={busy}>
+      <div className={`w-full max-w-md ${MODAL_PANEL} p-5`} aria-busy={busy}>
         <h3 className="text-sm font-semibold">{t("Allow build scripts?")}</h3>
         <p className="mt-2 text-xs opacity-70">
           {t("{{plugin}} needs to run install scripts from these dependencies:", { plugin: pending.label })}
@@ -1193,7 +1195,7 @@ function ReleaseAgeConfirmDialog() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      className={MODAL_OVERLAY}
       role="dialog"
       aria-modal="true"
       id="release-age-dialog"
@@ -1201,7 +1203,7 @@ function ReleaseAgeConfirmDialog() {
         if (e.key === "Escape" && !busy) dismiss();
       }}
     >
-      <div className="w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-lg">
+      <div className={`w-full max-w-md ${MODAL_PANEL} p-5`}>
         <h3 className="text-sm font-semibold">{t("Install a freshly published version?")}</h3>
         <div className="mt-2 rounded bg-muted px-3 py-2 font-mono text-xs">
           {pending.installedVersion ? (
@@ -1242,7 +1244,7 @@ function ReleaseAgeConfirmDialog() {
 
 /// 自定义安装对话框：目录之外的长尾来源（npm 包 / GitHub 仓库）复用目录安装
 /// 同一闸门、审计、构建脚本审批与流式日志管线（installMarketPlugin 全局单飞，
-/// z-40 让审批对话框与 toast 覆于其上）。地址在提交前归一（normalizeCustomSpecifier），
+/// 同为 z-50，审批对话框与 toast 依 DOM 序浮于其上）。地址在提交前归一（normalizeCustomSpecifier），
 /// 安装按钮贴输入框右侧，进度明细复用卡片同款 InstallLogView。终态从 store
 /// 推导而非只看本次调用返回：needsApproval 时 installing 已被清空、审批放行
 /// 后的重装又由 approveMarketBuilds 独立跑完（不经本对话框），store 态是
@@ -1298,7 +1300,7 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-6"
+      className={MODAL_OVERLAY}
       role="dialog"
       aria-modal="true"
       id="custom-install-dialog"
@@ -1306,7 +1308,7 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
         if (e.key === "Escape" && !busy) close();
       }}
     >
-      <div className="w-full max-w-lg rounded-lg border border-border bg-background p-5 shadow-lg" aria-busy={busy}>
+      <div className={`w-full max-w-lg ${MODAL_PANEL} p-5`} aria-busy={busy}>
         <h3 className="text-sm font-semibold">{t("Install a custom plugin")}</h3>
         <p className="mt-2 text-xs opacity-70">
           {t(
@@ -1404,7 +1406,7 @@ function UpdateNotesDialog() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      className={MODAL_OVERLAY}
       role="dialog"
       aria-modal="true"
       id="update-notes-dialog"
@@ -1412,7 +1414,7 @@ function UpdateNotesDialog() {
         if (e.key === "Escape" && !busy) dismiss();
       }}
     >
-      <div className="w-full max-w-md rounded-lg border border-border bg-background p-5 shadow-lg">
+      <div className={`w-full max-w-md ${MODAL_PANEL} p-5`}>
         <h3 className="text-sm font-semibold">{t("Update notes")}</h3>
         <div className="mt-2 rounded bg-muted px-3 py-2 font-mono text-xs">
           {info?.installedVersion ? (

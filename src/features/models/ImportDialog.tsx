@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { BTN, BTN_PRIMARY, BTN_SM, INPUT } from "@/shared/lib/ui";
+import { BTN, BTN_PRIMARY, BTN_SM, INPUT, MODAL_OVERLAY, MODAL_PANEL } from "@/shared/lib/ui";
 import * as cmd from "@/shared/commands";
 import type { ImportGroup, ImportRunResult } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
@@ -105,7 +105,7 @@ export function ImportDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      className={MODAL_OVERLAY}
       role="dialog"
       aria-modal="true"
       aria-label={t("Import provider configuration")}
@@ -117,7 +117,7 @@ export function ImportDialog({
         if (e.target === e.currentTarget && !running) onClose();
       }}
     >
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col gap-3 overflow-y-auto rounded-lg border border-border bg-background p-5 shadow-lg">
+      <div className={`flex max-h-[85vh] w-full max-w-2xl flex-col gap-3 overflow-y-auto ${MODAL_PANEL} p-5`}>
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">{t("Import provider configuration")}</h3>
           <button type="button" className={BTN_SM} onClick={onClose} aria-label={t("Close")}>

@@ -19,7 +19,8 @@ max-w-3xl 单列居中。本文件描述该次美化后的现状。）
 ## Color & Components
 
 - 按钮（`src/shared/lib/ui.ts` 共享配方）：`BTN_PRIMARY`（实心主色，禁用落 muted 灰）、`BTN_DESTRUCTIVE`（实心 destructive，整体半透明禁用；首页 Stop 在用）、`BTN_DANGER`/`BTN_OUTLINE`（实心危险/描边次操作；首页 Restart 与市场页在用）、`BTN`/`BTN_SM`（小描边）、`BTN_DANGER_SM`。
-- 卡片：区块卡 `rounded-xl border border-border bg-card p-4`；行内盒 `rounded-lg border`；胶囊 `rounded-full border px-2.5 py-0.5 text-xs`；地址芯片 `rounded-full bg-primary/15 font-mono text-xs text-primary`。
+- 卡片：区块卡 `rounded-xl border border-border bg-card p-4`（`ui.ts` 的 `PANEL`）；行内盒 `rounded-lg border`；胶囊 `rounded-full border px-2.5 py-0.5 text-xs`；地址芯片 `rounded-full bg-primary/15 font-mono text-xs text-primary`。
+- 模态：遮罩/面板单一配方 `MODAL_OVERLAY`/`MODAL_PANEL`（`z-50` + `bg-black/50` + 面板 `rounded-xl border-border bg-card`）；同层多模态按 DOM 序叠放（后渲染者在上），Toaster 位于 App 树末位故 toast 恒浮于对话框上。z 阶梯唯一例外：ProviderDialog 高级设置叠层面板 `z-70`、关闭键 `z-80`（`advanced-settings.css`，scrim 同步 `rgb(0 0 0 / 0.5)`）。
 - 导航：`header-btn`（顶栏）/ `nav-item`（设置侧栏 w-52）；active 态 `bg-accent`。
 - 时间轴 `.timeline-node[data-state]`：done 绿✓ / pending 虚线圈 / running 黄脉冲 / failed 红✕ + problem/solution 盒（卡内 `border-t` 分隔，标题「Setup Progress」）。
 - Toggle：原生 checkbox + `TOGGLE` 配方（label 包裹）。
