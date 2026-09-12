@@ -347,7 +347,7 @@
 }
 
 /* 首页一键三键放大档：仅作用于 .dsh-actions-row 内的按钮，
-   覆盖 BTN_PRIMARY/BTN_DESTRUCTIVE/BTN_OUTLINE 共享配方的 h-9 px-4 text-sm，
+   覆盖 BTN_PRIMARY/BTN_DANGER/BTN_OUTLINE 共享配方的 h-9 px-4 与字号，
    不影响市场/设置页同配方按钮 */
 .dsh-actions-row > button {
   height: 2.75rem;

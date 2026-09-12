@@ -12,7 +12,7 @@ import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
 import { tErr } from "@/shared/i18n/error";
 import * as cmd from "@/shared/commands";
-import { BTN_DESTRUCTIVE, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
+import { BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, TOGGLE } from "@/shared/lib/ui";
 import type { DshAccessMode, DshStepEvent } from "@/shared/types";
 import { StatusBall } from "./StatusBall";
 import {
@@ -436,7 +436,7 @@ export function DshCard() {
             {startBusy ? t("Starting...") : t("One-click start dsh web")}
           </button>
           <button
-            className={BTN_DESTRUCTIVE}
+            className={BTN_DANGER}
             disabled={busy || !status?.dshRunning}
             onClick={() => void stopDshWeb()}
           >
