@@ -12,7 +12,7 @@ import { BTN, BTN_DANGER_SM, BTN_PRIMARY, BTN_SM, INPUT, SELECT } from "@/shared
 import type { ModelCatalogEntry, ModelConfig, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
-import type { CredentialWrite } from "./credentials";
+import { deriveCredentialRef, type CredentialWrite } from "./credentials";
 import { ImportDialog } from "./ImportDialog";
 import {
   launcherRemoteProbeAllowed,
@@ -60,6 +60,17 @@ function configValidationError(config: ModelConfig): string | null {
 async function resolveProviderEnvStatus(providers: ProviderConfig[]): Promise<Record<string, boolean>> {
   const names = providerEnvNames(providers);
   return names.length > 0 ? cmd.modelEnvStatus(names) : {};
+}
+
+/** Match DSH Models ownership: only this page's derived, configured, writable key is ours to remove. */
+async function removeOwnedProviderCredential(provider: ProviderConfig): Promise<void> {
+  const ref = provider.apiKeyEnv?.trim();
+  if (!ref || ref !== deriveCredentialRef(provider.route.trim())) return;
+  const described = await cmd.modelCredentialDescribe([ref]);
+  const credential = described[ref];
+  if (credential?.configured === true && credential.writable) {
+    await cmd.modelCredentialUnset(ref);
+  }
 }
 
 /** 默认模型变化时同步清理已经不被新模型支持的全局 reasoning level。 */
@@ -443,6 +454,15 @@ export function ModelsView() {
       : null;
     setDeletingRoute(route);
     try {
+      if (removed) {
+        try {
+          // Credential first: if settings removal later fails, retry is safe because unset is idempotent.
+          await removeOwnedProviderCredential(removed);
+        } catch (error) {
+          toast(`${t("Remove provider")}: ${tErr(String(error))}`, "error");
+          throw error;
+        }
+      }
       await persist(next, route);
       disarmDelete();
       const defaultFeedback = removedWasDefault

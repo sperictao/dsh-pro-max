@@ -59,6 +59,30 @@ beforeEach(() => {
 });
 
 describe("ProviderDialog Edit provider", () => {
+  it("keeps an existing credential reference when edit saves with a blank write-only key", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ProviderDialog
+        state={{ mode: "edit", index: 0, provider }}
+        catalog={catalog}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Edit provider" });
+    expect(within(dialog).getByLabelText("API Key")).toHaveValue("");
+    const displayName = within(dialog).getByRole("textbox", { name: "Display Name" });
+    await user.clear(displayName);
+    await user.type(displayName, "DeepSeek Production");
+    await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+    const [saved, originalRoute, credential] = onSubmit.mock.calls[0];
+    expect(originalRoute).toBe("deepseek");
+    expect(saved.apiKeyEnv).toBe("DEEPSEEK_API_KEY");
+    expect(credential).toBeNull();
+  });
+
   it("keeps the primary path focused and only enables save for real changes", async () => {
     const user = userEvent.setup();
     const onSubmit = vi

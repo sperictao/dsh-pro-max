@@ -98,6 +98,10 @@ beforeEach(() => {
   vi.spyOn(cmd, "modelRemoteCacheGet").mockResolvedValue(null);
   vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
   vi.spyOn(cmd, "modelCredentialSet").mockResolvedValue({ configured: true, source: "file", writable: true });
+  vi.spyOn(cmd, "modelCredentialDescribe").mockImplementation(async (names) =>
+    Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+  );
+  vi.spyOn(cmd, "modelCredentialUnset").mockResolvedValue({ configured: false, source: null, writable: true });
   vi.spyOn(cmd, "modelEnvStatus").mockImplementation(async (names) =>
     Object.fromEntries(names.map((name) => [name, true])),
   );
@@ -197,11 +201,13 @@ describe("ModelsView provider studio", () => {
     const firstSaved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
     expect(firstSaved.providers).toHaveLength(1);
     expect(firstSaved.providers[0].apiKeyEnv).toBe("DEEPSEEK_API_KEY");
+    expect(JSON.stringify(firstSaved)).not.toContain("sk-deepseek-test");
     expect(firstSaved.defaultProvider).toBeNull();
     const saved = vi.mocked(cmd.modelConfigSave).mock.calls.at(-1)![0];
     expect(saved.providers[0].route).toMatch(/deepseek/i);
     expect(saved.defaultProvider).toBe(saved.providers[0].route);
     expect(saved.defaultModel).toBe("deepseek-v4-pro");
+    expect(JSON.stringify(saved)).not.toContain("sk-deepseek-test");
   });
 
   it("shows full connection fields only after choosing a custom endpoint", async () => {
@@ -426,6 +432,11 @@ describe("ModelsView provider studio", () => {
     await user.click(within(confirmation).getByRole("button", { name: "Remove" }));
 
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
+    expect(cmd.modelCredentialDescribe).toHaveBeenCalledWith(["SPERO_AI_API_KEY"]);
+    expect(cmd.modelCredentialUnset).toHaveBeenCalledWith("SPERO_AI_API_KEY");
+    expect(vi.mocked(cmd.modelCredentialUnset).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(cmd.modelConfigSave).mock.invocationCallOrder[0],
+    );
     const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
     expect(saved.providers.map((provider) => provider.route)).toEqual(["empty-ai", "second-ai"]);
     expect(saved.defaultProvider).toBe("second-ai");
@@ -434,6 +445,62 @@ describe("ModelsView provider studio", () => {
     expect(useAppStore.getState().toasts.at(-1)?.message).toBe(
       "Remove provider: Spero AI · Default model: Second · m2",
     );
+  });
+
+  it("preserves custom and read-only launch credential references when removing providers", async () => {
+    const user = userEvent.setup();
+    const custom = { ...config.providers[0], apiKeyEnv: "SHARED_API_KEY" };
+    loadWith({ ...config, defaultProvider: null, defaultModel: null, providers: [custom] });
+    const view = render(createElement(ModelsView));
+    await waitFor(() => expect(screen.getByText("Spero AI")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Remove provider" }));
+    await user.click(screen.getByRole("button", { name: "Remove", exact: true }));
+    await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
+    expect(cmd.modelCredentialDescribe).not.toHaveBeenCalled();
+    expect(cmd.modelCredentialUnset).not.toHaveBeenCalled();
+
+    view.unmount();
+    vi.clearAllMocks();
+    vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
+    vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(catalog);
+    vi.spyOn(cmd, "modelRemoteCacheGet").mockResolvedValue(null);
+    vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
+    vi.spyOn(cmd, "modelCredentialDescribe").mockResolvedValue({
+      SPERO_AI_API_KEY: { configured: true, source: "env", writable: false },
+    });
+    vi.spyOn(cmd, "modelCredentialUnset").mockResolvedValue({ configured: true, source: "env", writable: false });
+    vi.spyOn(cmd, "modelEnvStatus").mockResolvedValue({ SPERO_AI_API_KEY: true });
+    loadWith({ ...config, providers: [config.providers[0]] });
+    render(createElement(ModelsView));
+    await waitFor(() => expect(screen.getByText("Spero AI")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Remove provider" }));
+    await user.click(screen.getByRole("button", { name: "Remove", exact: true }));
+    await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
+    expect(cmd.modelCredentialDescribe).toHaveBeenCalledWith(["SPERO_AI_API_KEY"]);
+    expect(cmd.modelCredentialUnset).not.toHaveBeenCalled();
+  });
+
+  it("keeps provider deletion retryable when owned credential cleanup fails", async () => {
+    loadWith({ ...config, providers: [config.providers[0]] });
+    vi.mocked(cmd.modelCredentialUnset)
+      .mockRejectedValueOnce("Credential store busy")
+      .mockResolvedValue({ configured: false, source: null, writable: true });
+    const user = userEvent.setup();
+    render(createElement(ModelsView));
+    await waitFor(() => expect(screen.getByText("Spero AI")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Remove provider" }));
+    const confirmation = screen.getByTestId("provider-remove-confirm-0");
+    await user.click(within(confirmation).getByRole("button", { name: "Remove", exact: true }));
+    await waitFor(() => expect(cmd.modelCredentialUnset).toHaveBeenCalledTimes(1));
+    expect(cmd.modelConfigSave).not.toHaveBeenCalled();
+    expect(screen.getByTestId("provider-remove-confirm-0")).toBeInTheDocument();
+    expect(useAppStore.getState().toasts.at(-1)?.message).toContain("Credential store busy");
+
+    await user.click(within(screen.getByTestId("provider-remove-confirm-0")).getByRole("button", { name: "Remove", exact: true }));
+    await waitFor(() => expect(cmd.modelCredentialUnset).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
+    expect(screen.queryByText("Spero AI")).not.toBeInTheDocument();
   });
 
   it("keeps a failed provider save inside the dialog with an actionable inline error", async () => {

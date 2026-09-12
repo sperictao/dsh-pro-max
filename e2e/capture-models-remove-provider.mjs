@@ -124,6 +124,8 @@ async function main() {
       const callbacks = new Map();
       let currentModelConfig = structuredClone(modelConfig);
       window.__auditSavedConfigs = [];
+      window.__auditCredentialUnsets = [];
+      window.__auditOperationOrder = [];
       window.__auditSavePending = false;
       const handlers = {
         get_resolved_language: () => "en",
@@ -139,6 +141,7 @@ async function main() {
           setTimeout(() => {
             currentModelConfig = structuredClone(config);
             window.__auditSavedConfigs.push(structuredClone(config));
+            window.__auditOperationOrder.push("settings-save");
             window.__auditSavePending = false;
             resolve(null);
           }, 1400);
@@ -146,6 +149,11 @@ async function main() {
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
         model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+        model_credential_unset: ({ name }) => {
+          window.__auditCredentialUnsets.push(name);
+          window.__auditOperationOrder.push(`credential-unset:${name}`);
+          return { configured: false, source: null, writable: true };
+        },
         model_remote_cache_get: () => null,
         model_test_connection: () => null,
         model_remote_list: () => ["mock-model"],
@@ -222,7 +230,14 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('[data-testid="default-model-summary"]')?.textContent?.includes("DeepSeek · deepseek-chat"));
     await page.waitForTimeout(850);
 
-    const saved = await page.evaluate(() => window.__auditSavedConfigs.at(-1));
+    const lifecycle = await page.evaluate(() => ({
+      saved: window.__auditSavedConfigs.at(-1),
+      unsets: window.__auditCredentialUnsets,
+      order: window.__auditOperationOrder,
+    }));
+    const saved = lifecycle.saved;
+    assert.deepEqual(lifecycle.unsets, ["SPERO_AI_API_KEY"]);
+    assert.deepEqual(lifecycle.order.slice(0, 2), ["credential-unset:SPERO_AI_API_KEY", "settings-save"]);
     assert.deepEqual(saved.providers.map((provider) => provider.route), ["deepseek"]);
     assert.equal(saved.defaultProvider, "deepseek");
     assert.equal(saved.defaultModel, "deepseek-chat");
