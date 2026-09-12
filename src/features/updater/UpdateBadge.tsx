@@ -1,5 +1,5 @@
 // 更新徽标：检测到更新时出现在 header 软件名右侧的圆形箭头按钮
-// （绿色随亮暗模式——参照 cc-switch 的 green-600/green-400，见 style.css .update-badge）。
+// （绿色取状态语义 --status-ok，见 style.css .update-badge）。
 // 常态：1.4px 细实体环 + 细箭头（有效描边均 ≈1.4px）；点击立即安装。
 // 下载中：环加粗为 2.8px 进度环（12 点顺时针填充），箭头切换为百分比数值；
 // installing/restarting 视为满环（100）。

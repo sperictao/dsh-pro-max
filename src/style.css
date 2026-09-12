@@ -299,13 +299,21 @@
   height: 88px;
 }
 /* 光晕双层：近距高亮晕（清晰描边感）+ 远距柔光（保留悬浮深度）；
-   --icon-tint 为呼吸谷点的图标染色（状态色向白 30% 混合），峰点回到纯白 */
+   --icon-tint 为呼吸谷点的图标染色（状态色向白 30% 混合），峰点回到纯白。
+   渐变以 color-mix 从语义 token 派生亮/暗两端：ok/warn 走固定语义色，
+   错误随族走 --destructive（与状态文字同源，族切换后绿/黄/红角色不变）；
+   stopped 中性灰无语义变量对应（灰=停用的视觉惯例，不随主题族），有意例外 */
 .status-indicator-icon.running {
-  --icon-tint: #c2eecd;
-  background: radial-gradient(circle at 35% 30%, #78f59c 0%, #34c759 58%, #168d34 100%);
+  --icon-tint: color-mix(in oklab, var(--status-ok) 30%, white);
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in oklab, var(--status-ok) 65%, white) 0%,
+    var(--status-ok) 58%,
+    color-mix(in oklab, var(--status-ok) 72%, black) 100%
+  );
   box-shadow:
-    0 0 36px rgba(52, 199, 89, 0.55),
-    0 14px 44px rgba(52, 199, 89, 0.32);
+    0 0 36px color-mix(in srgb, var(--status-ok) 55%, transparent),
+    0 14px 44px color-mix(in srgb, var(--status-ok) 32%, transparent);
 }
 .status-indicator-icon.stopped {
   --icon-tint: #dddee0;
@@ -315,18 +323,28 @@
     0 14px 44px rgba(99, 99, 102, 0.26);
 }
 .status-indicator-icon.starting {
-  --icon-tint: #fff0b3;
-  background: radial-gradient(circle at 35% 30%, #ffe88a 0%, #ffcc00 58%, #ff9500 100%);
+  --icon-tint: color-mix(in oklab, var(--status-warn) 30%, white);
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in oklab, var(--status-warn) 65%, white) 0%,
+    var(--status-warn) 58%,
+    color-mix(in oklab, var(--status-warn) 72%, black) 100%
+  );
   box-shadow:
-    0 0 36px rgba(255, 149, 0, 0.55),
-    0 14px 44px rgba(255, 149, 0, 0.32);
+    0 0 36px color-mix(in srgb, var(--status-warn) 55%, transparent),
+    0 14px 44px color-mix(in srgb, var(--status-warn) 32%, transparent);
 }
 .status-indicator-icon.failed {
-  --icon-tint: #ffc4c1;
-  background: radial-gradient(circle at 35% 30%, #ff8d86 0%, #ff3b30 58%, #c82920 100%);
+  --icon-tint: color-mix(in oklab, var(--destructive) 30%, white);
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in oklab, var(--destructive) 65%, white) 0%,
+    var(--destructive) 58%,
+    color-mix(in oklab, var(--destructive) 72%, black) 100%
+  );
   box-shadow:
-    0 0 36px rgba(255, 59, 48, 0.55),
-    0 14px 44px rgba(255, 59, 48, 0.32);
+    0 0 36px color-mix(in srgb, var(--destructive) 55%, transparent),
+    0 14px 44px color-mix(in srgb, var(--destructive) 32%, transparent);
 }
 .status-indicator-text {
   font-size: 24px;
@@ -459,12 +477,10 @@
   to { transform: rotate(360deg); }
 }
 
-/* 更新徽标（header 软件名右侧）：幽灵圆形按钮，绿色随亮暗模式
-   （参照 cc-switch：light green-600 / dark green-400 + 同色淡底 hover） */
-.update-badge { color: #16a34a; }
-.update-badge:hover { background-color: rgb(22 163 74 / 0.08); }
-[data-theme$="-dark"] .update-badge { color: #4ade80; }
-[data-theme$="-dark"] .update-badge:hover { background-color: rgb(74 222 128 / 0.12); }
+/* 更新徽标（header 软件名右侧）：幽灵圆形按钮，绿色取状态语义 --status-ok
+   （亮暗共用一值，无需暗色特例）；hover 淡底为同色透明叠色 */
+.update-badge { color: var(--status-ok); }
+.update-badge:hover { background-color: color-mix(in srgb, var(--status-ok) 8%, transparent); }
 
 /* 收藏星标切换回弹：外层 span 以 favorited 为 key 重挂载重播 */
 .star-pop { animation: star-pop 0.3s ease; }
