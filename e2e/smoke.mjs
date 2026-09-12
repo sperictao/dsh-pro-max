@@ -433,7 +433,7 @@ async function main() {
       const testCall = (await commandCalls("model_test_connection")).at(-1);
       assert.equal(testCall.args.baseUrl, "https://e2e.example.com/v1");
       assert.equal(testCall.args.api, "openai-responses");
-      assert.equal(testCall.args.apiKeyEnv, "E2E_GATEWAY_API_KEY");
+      assert.equal(testCall.args.apiKeyEnv, null);
       assert.equal(testCall.args.apiKey, "sk-e2e-test");
       assert.equal(testCall.args.model, "e2e-model-000");
 
