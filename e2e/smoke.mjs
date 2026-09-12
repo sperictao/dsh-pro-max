@@ -504,7 +504,6 @@ async function main() {
         "model_catalog_refresh",
         "model_credential_describe",
         "model_credential_set",
-        "model_remote_cache_get",
         "model_test_connection",
         "model_remote_list_with_headers",
         "model_config_save",
