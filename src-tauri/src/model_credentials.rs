@@ -674,6 +674,63 @@ mod tests {
     }
 
     #[test]
+    fn managed_credential_lifecycle_set_replace_and_unset() {
+        let dir = temp_dir("credentials-lifecycle");
+        let path = dir.join(CREDENTIALS_FILENAME);
+        let name = "DSH_PRO_MAX_LIFECYCLE_KEY";
+
+        let initial = offline_describe_one(name, &path).expect("initial describe");
+        assert!(!initial.configured);
+        assert!(initial.writable);
+
+        mutate_credential_ref_at(&path, name, Some("secret-one")).expect("set first");
+        let stored = offline_describe_one(name, &path).expect("stored describe");
+        assert!(stored.configured);
+        assert_eq!(stored.source.as_deref(), Some("file"));
+        assert!(stored.writable);
+
+        mutate_credential_ref_at(&path, name, Some("secret-two")).expect("replace");
+        assert_eq!(
+            file_ref_value(&path, name).expect("read replacement").as_deref(),
+            Some("secret-two")
+        );
+
+        mutate_credential_ref_at(&path, name, None).expect("unset");
+        let removed = offline_describe_one(name, &path).expect("removed describe");
+        assert!(!removed.configured);
+        assert!(removed.writable);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn launch_environment_is_read_only_and_shadows_managed_file() {
+        let dir = temp_dir("credentials-env-shadow");
+        let path = dir.join(CREDENTIALS_FILENAME);
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let name = format!("DSH_PRO_MAX_LIFECYCLE_ENV_{stamp}");
+        mutate_credential_ref_at(&path, &name, Some("managed-secret")).expect("seed managed");
+        std::env::set_var(&name, "launch-secret");
+
+        let described = offline_describe_one(&name, &path).expect("describe env");
+        assert!(described.configured);
+        assert_eq!(described.source.as_deref(), Some("env"));
+        assert!(!described.writable);
+        let error = mutate_credential_ref_at(&path, &name, Some("replacement"))
+            .expect_err("launch env must reject writes");
+        assert!(error.contains("read-only"));
+        assert_eq!(
+            file_ref_value(&path, &name).expect("managed remains").as_deref(),
+            Some("managed-secret")
+        );
+
+        std::env::remove_var(&name);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn flat_pre_release_document_is_upgraded_on_write() {
         let dir = temp_dir("credentials-flat");
         let path = dir.join(CREDENTIALS_FILENAME);

@@ -1,5 +1,5 @@
 // Add provider UI audit capture.
-// Scope: Models -> Add provider -> pick DeepSeek -> set API key env -> select model -> save -> verify persisted provider.
+// Scope: Models -> Add provider -> pick DeepSeek -> set write-only API key -> select model -> save -> verify persisted provider.
 import assert from "node:assert/strict";
 import { mkdirSync, renameSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -80,6 +80,7 @@ async function main() {
       let nextId = 1;
       const callbacks = new Map();
       window.__auditSavedConfigs = [];
+      window.__auditCredentialWrites = [];
       let currentModelConfig = structuredClone(modelConfig);
       const handlers = {
         get_resolved_language: () => "en",
@@ -98,7 +99,10 @@ async function main() {
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
         model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
-        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_set: ({ name, value }) => {
+          window.__auditCredentialWrites.push({ name, value });
+          return { configured: true, source: "file", writable: true };
+        },
         model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: () => new Promise((resolve) => setTimeout(() => resolve(["deepseek-v4-pro", "deepseek-chat"]), 450)),
@@ -154,7 +158,7 @@ async function main() {
     await page.waitForTimeout(900);
 
     const envInput = dialog.getByLabel("API Key");
-    await envInput.fill("DEEPSEEK_API_KEY");
+    await envInput.fill("sk-deepseek-lifecycle");
     assert.equal(await saveButton.isDisabled(), true);
     await page.waitForTimeout(1100);
 
@@ -172,7 +176,13 @@ async function main() {
     await page.getByText("DeepSeek").first().waitFor({ state: "visible" });
     await page.waitForTimeout(1400);
 
-    const saved = await page.evaluate(() => window.__auditSavedConfigs[0]);
+    const lifecycle = await page.evaluate(() => ({
+      saved: window.__auditSavedConfigs[0],
+      writes: window.__auditCredentialWrites,
+    }));
+    const saved = lifecycle.saved;
+    assert.deepEqual(lifecycle.writes, [{ name: "DEEPSEEK_API_KEY", value: "sk-deepseek-lifecycle" }]);
+    assert.equal(JSON.stringify(saved).includes("sk-deepseek-lifecycle"), false);
     assert.equal(saved.providers.length, 2);
     const added = saved.providers.find((provider) => provider.route === "deepseek");
     assert.ok(added, "DeepSeek provider was not saved");

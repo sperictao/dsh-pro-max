@@ -111,7 +111,12 @@ fn dotenv_value(path: &Path, name: &str) -> Option<String> {
     None
 }
 
-pub(crate) fn resolve(raw: &str) -> Result<Option<String>, String> {
+fn resolve_from_sources(
+    raw: &str,
+    credentials: &Path,
+    project_env: Option<&Path>,
+    user_env: &Path,
+) -> Result<Option<String>, String> {
     let name = raw.trim();
     if !valid_ref(name) {
         return Err(
@@ -123,19 +128,29 @@ pub(crate) fn resolve(raw: &str) -> Result<Option<String>, String> {
             return Ok(Some(value));
         }
     }
-    let home = dsh_dir()?;
-    if let Some(value) = file_value(&home.join(".credentials.yaml"), name)? {
+    if let Some(value) = file_value(credentials, name)? {
         return Ok(Some(value));
     }
-    if let Ok(cwd) = std::env::current_dir() {
-        if let Some(value) = dotenv_value(&cwd.join(".env"), name) {
+    if let Some(path) = project_env {
+        if let Some(value) = dotenv_value(path, name) {
             return Ok(Some(value));
         }
     }
-    if let Some(value) = dotenv_value(&home.join(".env"), name) {
+    if let Some(value) = dotenv_value(user_env, name) {
         return Ok(Some(value));
     }
     Ok(None)
+}
+
+pub(crate) fn resolve(raw: &str) -> Result<Option<String>, String> {
+    let home = dsh_dir()?;
+    let project_env = std::env::current_dir().ok().map(|cwd| cwd.join(".env"));
+    resolve_from_sources(
+        raw,
+        &home.join(".credentials.yaml"),
+        project_env.as_deref(),
+        &home.join(".env"),
+    )
 }
 
 #[cfg(test)]
@@ -176,6 +191,62 @@ mod tests {
             Some("secret-value")
         );
         assert_eq!(file_value(&file, "OTHER_KEY").expect("read"), None);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn managed_updates_reach_the_next_resolution_and_preserve_precedence() {
+        let dir = temp_dir("lifecycle");
+        let credentials = dir.join(".credentials.yaml");
+        let project_env = dir.join("project.env");
+        let user_env = dir.join("user.env");
+        let name = "DSH_PRO_MAX_RESOLVER_LIFECYCLE_KEY";
+        fs::write(&project_env, format!("{name}=project-secret\n")).expect("project env");
+        fs::write(&user_env, format!("{name}=user-secret\n")).expect("user env");
+
+        let write_managed = |value: &str| {
+            fs::write(
+                &credentials,
+                format!("version: 1\nrefs:\n  {name}: {value}\n"),
+            )
+            .expect("managed credentials");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&credentials, fs::Permissions::from_mode(0o600))
+                    .expect("chmod");
+            }
+        };
+
+        write_managed("managed-one");
+        assert_eq!(
+            resolve_from_sources(name, &credentials, Some(&project_env), &user_env)
+                .expect("first resolve")
+                .as_deref(),
+            Some("managed-one")
+        );
+        write_managed("managed-two");
+        assert_eq!(
+            resolve_from_sources(name, &credentials, Some(&project_env), &user_env)
+                .expect("hot resolve")
+                .as_deref(),
+            Some("managed-two")
+        );
+
+        fs::remove_file(&credentials).expect("remove managed");
+        assert_eq!(
+            resolve_from_sources(name, &credentials, Some(&project_env), &user_env)
+                .expect("project fallback")
+                .as_deref(),
+            Some("project-secret")
+        );
+        fs::remove_file(&project_env).expect("remove project env");
+        assert_eq!(
+            resolve_from_sources(name, &credentials, Some(&project_env), &user_env)
+                .expect("user fallback")
+                .as_deref(),
+            Some("user-secret")
+        );
         let _ = fs::remove_dir_all(dir);
     }
 
