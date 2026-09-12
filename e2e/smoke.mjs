@@ -200,6 +200,7 @@ async function main() {
           names.map((name) => [name, { configured: true, source: "file", writable: true }]),
         ),
         model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_test_connection: () => null,
         model_remote_list_with_headers: ({ baseUrl }) =>
@@ -504,6 +505,7 @@ async function main() {
         "model_catalog_refresh",
         "model_credential_describe",
         "model_credential_set",
+        "model_credential_unset",
         "model_test_connection",
         "model_remote_list_with_headers",
         "model_config_save",
