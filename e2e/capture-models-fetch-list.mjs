@@ -97,7 +97,9 @@ async function main() {
         model_config_save: ({ config }) => { currentModelConfig = structuredClone(config); window.__auditSavedConfigs.push(structuredClone(config)); return null; },
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: ({ baseUrl }) => new Promise((resolve) => {
           remoteListCount += 1;
@@ -158,7 +160,7 @@ async function main() {
     assert.equal(await page.evaluate(() => window.__auditRemoteListCount), 0, "No remote discovery should start before credentials are supplied");
     console.log("after: preCredentialEnabled=false; remoteCalls=0; misleadingHint=false; unrelatedCatalogModel=false");
 
-    await dialog.getByLabel("API Key Env Var").fill("DEEPSEEK_API_KEY");
+    await dialog.getByLabel("API Key").fill("DEEPSEEK_API_KEY");
     await page.waitForFunction(() => window.__auditRemoteListCount === 1);
     await modelList.getByRole("checkbox", { name: "deepseek-v4-flash", exact: true }).waitFor({ state: "visible" });
     await modelList.getByRole("checkbox", { name: "deepseek-v4-pro", exact: true }).waitFor({ state: "visible" });

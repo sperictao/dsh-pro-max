@@ -109,6 +109,8 @@ async function main() {
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
         model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: ({ baseUrl }) => new Promise((resolve) => setTimeout(() => resolve(baseUrl.includes("gateway.acme.test") ? ["acme-chat-pro", "acme-chat-fast"] : []), 450)),
         model_test_connection: () => new Promise((resolve) => setTimeout(() => resolve(null), 1100)),
@@ -205,7 +207,7 @@ async function main() {
     assert.deepEqual(testCalls[0].args, {
       baseUrl: "https://gateway.acme.test/v1",
       api: "openai-completions",
-      apiKeyEnv: "ACME_GATEWAY_API_KEY",
+      apiKeyEnv: null,
       headers: null,
       model: "acme-chat-pro",
       apiKey: "sk-acme-test",

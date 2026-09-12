@@ -170,7 +170,9 @@ async function main() {
           ...structuredClone(modelCatalog),
           fetchedAt: Math.floor(Date.now() / 1000),
         }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: ({ baseUrl }) =>
           new Promise((resolve, reject) => {
