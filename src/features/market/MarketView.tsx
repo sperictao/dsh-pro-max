@@ -18,6 +18,8 @@ import {
   INPUT_MONO,
   MODAL_OVERLAY,
   MODAL_PANEL,
+  MUTED,
+  MUTED_STRONG,
   PANEL,
   TOGGLE_LABELED,
 } from "@/shared/lib/ui";
@@ -814,14 +816,14 @@ function MarketCard({
 
   const statusLeft: ReactNode =
     state === "managed" ? (
-      <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] opacity-50">{t("managed by launcher")}</span>
+      <span className={`rounded bg-muted px-1.5 py-0.5 ${MUTED}`}>{t("managed by launcher")}</span>
     ) : state === "manual" ? (
-      <span className="text-xs opacity-50">{t("Manual install only")}</span>
+      <span className={MUTED}>{t("Manual install only")}</span>
     ) : state === "confirm" ? (
       <span className="flex min-w-0 flex-col gap-0.5">
         <span className="text-xs opacity-70">{t("Install this plugin?")}</span>
         {terminalWarning && (
-          <span className="text-[11px] text-(--status-warn)">
+          <span className="text-xs text-(--status-warn)">
             {t("Looks like a terminal/CLI plugin — it will run shell commands in your environment.")}
           </span>
         )}
@@ -961,7 +963,7 @@ function MarketCard({
       </>
     ) : state === "installed" ? (
       <>
-        {current && latest !== null && <span className="text-xs opacity-50">{t("Up to date")}</span>}
+        {current && latest !== null && <span className={MUTED}>{t("Up to date")}</span>}
         {/* 无更新时提供重装：与 Update 同一回调（onUpdate 重跑安装：npm 形态
             name@latest、GitHub 仓库形态原仓重装到 HEAD，见 updateSpecifierFor），
             覆盖终端手动 add 被拦构建脚本留下的半成品（依赖已写入但构建未跑）；
@@ -1005,7 +1007,7 @@ function MarketCard({
             <span className="truncate text-sm font-semibold">{name}</span>
           )}
           {plugin?.deprecated && (
-            <span className="shrink-0 rounded bg-destructive/15 px-1.5 py-0.5 text-[11px] text-destructive">
+            <span className="shrink-0 rounded bg-destructive/15 px-1.5 py-0.5 text-xs text-destructive">
               {t("Deprecated")}
             </span>
           )}
@@ -1093,13 +1095,13 @@ function InstallLogView({ log, failed }: { log: { specifier: string; lines: stri
       className={`rounded border px-2.5 py-2 ${failed ? "border-destructive/40 bg-destructive/5" : "border-border bg-muted/40"}`}
       aria-busy={!failed}
     >
-      <p className="truncate font-mono text-[11px] opacity-60">
+      <p className={`truncate font-mono ${MUTED}`}>
         {first ?? `\$ dsh plugin --profile web add ${log.specifier}`}
       </p>
       <pre
         ref={boxRef}
         aria-live="polite"
-        className="install-log max-h-28 overflow-y-auto whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed"
+        className="install-log max-h-28 overflow-y-auto whitespace-pre-wrap break-all font-mono text-xs leading-relaxed"
       >
         {rest.length > 0 ? rest.join("\n") : failed ? "" : "…"}
       </pre>
@@ -1147,7 +1149,7 @@ function BuildApprovalDialog() {
             { path: pending.workspaceYaml },
           )}
         </p>
-        <p className="mt-2 text-xs opacity-50">
+        <p className={`mt-2 ${MUTED}`}>
           {t("If you cancel, no scripts run — the packages stay downloaded and you can approve them later.")}
         </p>
         <div className="mt-4 flex justify-end gap-2">
@@ -1208,7 +1210,7 @@ function ReleaseAgeConfirmDialog() {
         <div className="mt-2 rounded bg-muted px-3 py-2 font-mono text-xs">
           {pending.installedVersion ? (
             <>
-              {pending.installedVersion} <span className="opacity-50">→</span> {pending.latestVersion}
+              {pending.installedVersion} <span className="opacity-60">→</span> {pending.latestVersion}
             </>
           ) : (
             pending.latestVersion
@@ -1419,7 +1421,7 @@ function UpdateNotesDialog() {
         <div className="mt-2 rounded bg-muted px-3 py-2 font-mono text-xs">
           {info?.installedVersion ? (
             <>
-              {info.installedVersion} <span className="opacity-50">→</span> {info.latestVersion ?? "?"}
+              {info.installedVersion} <span className="opacity-60">→</span> {info.latestVersion ?? "?"}
             </>
           ) : (
             (info?.latestVersion ?? pending.name)
@@ -1432,7 +1434,7 @@ function UpdateNotesDialog() {
             <p className="text-xs font-medium">
               {pending.notes.release.name ?? pending.notes.release.tag ?? pending.name}
             </p>
-            <pre className="mt-1 whitespace-pre-wrap break-words text-xs opacity-80">
+            <pre className={`mt-1 whitespace-pre-wrap break-words ${MUTED_STRONG}`}>
               {pending.notes.release.body}
             </pre>
           </div>
@@ -1548,7 +1550,7 @@ function DiagnosticsPane() {
         <>
           <p className="text-sm">
             {t("{{count}} entries", { count: diag.entries })}
-            <span className="mx-1.5 opacity-40">·</span>
+            <span className="mx-1.5 opacity-60">·</span>
             {t("{{count}} disabled", { count: diag.disabled })}
           </p>
           {diag.duplicates.length === 0 && diag.orphans.length === 0 && (

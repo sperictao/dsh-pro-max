@@ -47,6 +47,11 @@ export const MODAL_OVERLAY =
   "fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6";
 export const MODAL_PANEL = "rounded-xl border border-border bg-card shadow-lg";
 
+// 辅助文字刻度（DESIGN「辅助 text-xs opacity-60」唯一配方）：默认 60，强调 70；
+// 50/80 不再使用，业务 TSX 禁止 text-[9px]/text-[11px] 等随意字号
+export const MUTED = "text-xs opacity-60";
+export const MUTED_STRONG = "text-xs opacity-70";
+
 export const SELECT =
   "h-9 w-full rounded-md border border-input bg-background px-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
 

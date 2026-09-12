@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
-import { BTN, BTN_DANGER_SM, BTN_PRIMARY, BTN_SM, INPUT, PANEL, SELECT } from "@/shared/lib/ui";
+import { BTN, BTN_DANGER_SM, BTN_PRIMARY, BTN_SM, INPUT, MUTED, PANEL, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelConfig, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
@@ -729,7 +729,7 @@ export function ModelsView() {
                               {`${t("Remove")} ${provider.displayName ?? provider.route}?`}
                             </div>
                             {isDefault && (
-                              <div className="mt-0.5 text-[11px] opacity-60">
+                              <div className={`mt-0.5 ${MUTED}`}>
                                 {`${t("Default model")}: ${
                                   fallbackProvider && removalPreview?.defaultModel
                                     ? `${fallbackProvider.displayName ?? fallbackProvider.route} · ${removalPreview.defaultModel}`

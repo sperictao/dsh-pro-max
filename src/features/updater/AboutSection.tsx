@@ -7,7 +7,7 @@ import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { fmtTs } from "@/shared/lib/format";
 import { openRepo } from "@/shared/lib/links";
-import { BTN } from "@/shared/lib/ui";
+import { BTN, MUTED } from "@/shared/lib/ui";
 import { tErr } from "@/shared/i18n/error";
 
 export function AboutSection() {
@@ -134,7 +134,7 @@ export function AboutSection() {
         </div>
         {notes && <div className="text-xs whitespace-pre-wrap opacity-70">{notes}</div>}
         {updateLastCheckAt !== null && (
-          <div className="text-xs opacity-50">
+          <div className={MUTED}>
             {t("Last checked {{at}}", { at: fmtTs(Math.floor(updateLastCheckAt / 1000)) })}
           </div>
         )}

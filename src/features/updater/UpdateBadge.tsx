@@ -61,7 +61,7 @@ export function UpdateBadge() {
       </svg>
       {downloading ? (
         // 下载中：箭头切换为百分比数值
-        <span className="text-[9px] leading-none font-semibold tabular-nums">{Math.round(clamped)}</span>
+        <span className="text-xs leading-none font-semibold tabular-nums">{Math.round(clamped)}</span>
       ) : (
         /* lucide ArrowUp（无圆圈本体）；15px + strokeWidth 2.2 → 有效描边 ≈1.4px，与常态细环一致 */
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" data-arrow>
