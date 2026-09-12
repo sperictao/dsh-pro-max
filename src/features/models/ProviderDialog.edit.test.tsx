@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import type { ModelCatalogEntry, ProviderConfig } from "@/shared/types";
 import { ProviderDialog } from "./ProviderDialog";
+import type { CredentialWrite } from "./credentials";
 
 const provider: ProviderConfig = {
   route: "deepseek",
@@ -60,7 +61,14 @@ beforeEach(() => {
 describe("ProviderDialog Edit provider", () => {
   it("keeps the primary path focused and only enables save for real changes", async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn<(next: ProviderConfig, originalRoute: string | null) => Promise<void>>()
+    const onSubmit = vi
+      .fn<
+        (
+          next: ProviderConfig,
+          originalRoute: string | null,
+          credential: CredentialWrite | null,
+        ) => Promise<void>
+      >()
       .mockResolvedValue(undefined);
 
     render(
