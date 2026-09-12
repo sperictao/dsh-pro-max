@@ -94,6 +94,7 @@ describe("ProviderDialog Add provider", () => {
     await waitFor(() =>
       expect(within(models).getByRole("checkbox", { name: /^deepseek-chat$/ })).toBeInTheDocument(),
     );
+    await waitFor(() => expect(fetchList).toBeEnabled());
 
     await user.click(within(models).getByRole("checkbox", { name: /^deepseek-v4-pro$/ }));
     expect(save).toBeEnabled();

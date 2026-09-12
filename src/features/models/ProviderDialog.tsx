@@ -585,6 +585,7 @@ export function ProviderDialog({
                 }
                 onModelsChange={setModels}
                 onFetch={discovery.reload}
+                canFetch={discovery.canReload}
               />
 
               {advancedOpen && (

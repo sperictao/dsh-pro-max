@@ -35,6 +35,7 @@ export function ModelPanes({
   fetchError,
   onModelsChange,
   onFetch,
+  canFetch,
 }: {
   provider: ProviderConfig;
   catalog: ModelCatalogEntry[];
@@ -43,6 +44,7 @@ export function ModelPanes({
   fetchError: string | null;
   onModelsChange: (models: ModelEntry[]) => void;
   onFetch: () => void;
+  canFetch?: boolean;
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -61,10 +63,13 @@ export function ModelPanes({
   const preset = MODEL_PRESETS.find((entry) => entry.id === provider.route.trim()) ?? null;
   // 与 useProviderModels 的 active/canDiscover 边界保持一致：已知服务在 Add/Edit
   // 没有显式凭据时不会发匿名探测，自定义端点仍允许无鉴权服务。
+  // ProviderDialog owns credential-aware discovery, including a transient write-only API key.
+  // Standalone callers keep the legacy provider-only readiness fallback.
   const connectionReadyForFetch =
-    Boolean(provider.baseURL?.trim()) &&
-    validateBaseUrl(provider.baseURL ?? "") == null &&
-    (!preset || Boolean(provider.apiKeyEnv?.trim()));
+    canFetch ??
+    (Boolean(provider.baseURL?.trim()) &&
+      validateBaseUrl(provider.baseURL ?? "") == null &&
+      (!preset || Boolean(provider.apiKeyEnv?.trim())));
 
   // 候选池：live 结果优先；已知服务尚未 live 拉取时只回落该服务自己的内置目录，
   // 不再把同协议家族的其它 Provider 模型冒充成“Models from this service”。
