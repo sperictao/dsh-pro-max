@@ -8,7 +8,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
-import { BTN, BTN_DANGER_SM, BTN_PRIMARY, BTN_SM, INPUT, MUTED, PANEL, SELECT } from "@/shared/lib/ui";
+import {
+  BTN,
+  BTN_DANGER_SM,
+  BTN_PRIMARY,
+  BTN_SM,
+  INPUT,
+  MUTED,
+  PANEL,
+  ROW_ICON_BUTTON,
+  SELECT,
+} from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelConfig, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
@@ -37,8 +47,6 @@ const EMPTY_CONFIG: ModelConfig = {
   providers: [],
 };
 
-const ROW_ICON_BUTTON =
-  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50";
 const ROW_ICON_DANGER =
   `${ROW_ICON_BUTTON} text-destructive hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive`;
 

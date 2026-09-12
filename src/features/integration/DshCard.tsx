@@ -367,7 +367,7 @@ export function DshCard() {
               版本够但缺插件不再强制降级 dsh，由下方状态行引导走一键启动安装插件 */}
           {status && !status.dshCompatible && (
             <button
-              className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground whitespace-nowrap transition-colors outline-none hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+              className={BTN_PRIMARY}
               disabled={busy}
               onClick={() => void repair()}
             >
@@ -377,7 +377,7 @@ export function DshCard() {
           {/* 卸载授权插件：摆脱 rc 钉版插件的纯本地入口；远程授权链路随之失效 */}
           {status?.pluginsInstalled && (
             <button
-              className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-border px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+              className={BTN_OUTLINE}
               disabled={busy}
               onClick={() => void removePlugins()}
             >
