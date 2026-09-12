@@ -103,6 +103,7 @@ describe("ProviderDialog Base URL validation recovery", () => {
       "MY_GATEWAY_KEY",
       null,
       "my-model",
+      null,
     );
 
     await user.click(within(dialog).getByRole("button", { name: "Save provider" }));

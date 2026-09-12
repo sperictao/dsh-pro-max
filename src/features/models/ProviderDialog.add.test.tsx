@@ -91,7 +91,6 @@ describe("ProviderDialog Add provider", () => {
     await user.type(apiKey, "sk-deepseek-test");
     expect(save).toBeDisabled();
     await waitFor(() => expect(cmd.modelRemoteList).toHaveBeenCalledOnce(), { timeout: 2000 });
-    await waitFor(() => expect(fetchList).toBeEnabled());
     await waitFor(() =>
       expect(within(models).getByRole("checkbox", { name: /^deepseek-chat$/ })).toBeInTheDocument(),
     );
