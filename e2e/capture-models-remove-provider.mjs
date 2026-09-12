@@ -145,7 +145,7 @@ async function main() {
         }),
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
         model_remote_cache_get: () => null,
         model_test_connection: () => null,
         model_remote_list: () => ["mock-model"],
