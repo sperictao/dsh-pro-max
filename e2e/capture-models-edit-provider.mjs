@@ -95,7 +95,9 @@ async function main() {
         }),
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: ({ baseUrl }) => baseUrl?.includes("deepseek") ? ["deepseek-chat", "deepseek-reasoner"] : ["glm-5.2"],
         model_test_connection: () => null,
@@ -151,12 +153,12 @@ async function main() {
     await page.screenshot({ path: resolve(OUT_DIR, "models-edit-provider-open.png"), fullPage: true });
 
     const displayName = dialog.getByRole("textbox", { name: "Display Name" });
-    const apiKeyEnv = dialog.getByRole("textbox", { name: "API Key Env Var" });
+    const apiKey = dialog.getByLabel("API Key");
     assert.equal(await displayName.inputValue(), "DeepSeek");
-    assert.equal(await apiKeyEnv.inputValue(), "DEEPSEEK_API_KEY");
+    assert.equal(await apiKey.inputValue(), "", "existing secrets must stay write-only");
     await displayName.fill("DeepSeek Production");
     assert.equal(await saveButton.isEnabled(), true);
-    await apiKeyEnv.fill("DEEPSEEK_PROD_API_KEY");
+    await apiKey.fill("sk-deepseek-prod");
     assert.equal(await saveButton.isEnabled(), true);
     await page.waitForTimeout(500);
     await page.screenshot({ path: resolve(OUT_DIR, "models-edit-provider-edited.png"), fullPage: true });
@@ -176,7 +178,7 @@ async function main() {
     const edited = saved.providers.find((provider) => provider.route === "deepseek");
     assert.ok(edited);
     assert.equal(edited.displayName, "DeepSeek Production");
-    assert.equal(edited.apiKeyEnv, "DEEPSEEK_PROD_API_KEY");
+    assert.equal(edited.apiKeyEnv, "DEEPSEEK_API_KEY");
     assert.equal(edited.baseURL, "https://api.deepseek.com/v1");
     assert.equal(edited.api, "openai-completions");
     assert.deepEqual(edited.models.map((model) => model.id), ["deepseek-chat", "deepseek-reasoner"]);

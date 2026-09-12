@@ -12,6 +12,7 @@ import { BTN, BTN_DANGER_SM, BTN_PRIMARY, BTN_SM, INPUT, SELECT } from "@/shared
 import type { ModelCatalogEntry, ModelConfig, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
+import type { CredentialWrite } from "./credentials";
 import { ImportDialog } from "./ImportDialog";
 import {
   launcherRemoteProbeAllowed,
@@ -355,29 +356,50 @@ export function ModelsView() {
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
 
-  const submitProvider = async (provider: ProviderConfig, originalRoute: string | null) => {
+  const submitProvider = async (
+    provider: ProviderConfig,
+    originalRoute: string | null,
+    credential: CredentialWrite | null,
+  ) => {
     const current = config ?? EMPTY_CONFIG;
-    let status = envStatus;
-    const envName = provider.apiKeyEnv?.trim();
-    if (envName && status?.[envName] === undefined) {
-      try {
-        status = { ...(status ?? {}), ...(await cmd.modelEnvStatus([envName])) };
-      } catch {
-        status = status ?? {};
+    // If settings committed but credential storage failed, the dialog stays open. On retry
+    // the committed provider is already in state, so only the credential stage is repeated.
+    const committed = current.providers.find((item) => item.route === provider.route);
+    const configAlreadyCommitted = committed != null && JSON.stringify(committed) === JSON.stringify(provider);
+    let next = current;
+    if (!configAlreadyCommitted) {
+      next = withValidDefaultReasoning(
+        upsertProvider(
+          current,
+          provider,
+          originalRoute,
+          credential == null && providerReadiness(provider, envStatus).ready,
+        ),
+        catalog,
+      );
+      await persist(next, provider.route, false);
+    }
+
+    let status = envStatus ?? {};
+    if (credential) {
+      const stored = await cmd.modelCredentialSet(credential.ref, credential.value);
+      status = { ...status, [credential.ref]: stored.configured };
+      setEnvStatus(status);
+    }
+
+    // A newly stored credential can make the first provider Ready only after the
+    // settings write. Materialize the default in a second settings write only then.
+    if (!next.defaultProvider?.trim() && providerReadiness(provider, status).ready) {
+      const withDefault = withValidDefaultReasoning(
+        upsertProvider(next, provider, null, true),
+        catalog,
+      );
+      if (JSON.stringify(withDefault) !== JSON.stringify(next)) {
+        await persist(withDefault, provider.route, false);
+        next = withDefault;
       }
     }
-    const next = withValidDefaultReasoning(
-      upsertProvider(
-        current,
-        provider,
-        originalRoute,
-        providerReadiness(provider, status).ready,
-      ),
-      catalog,
-    );
-    // ProviderDialog owns a persistent contextual error and retry path; avoid duplicating
-    // the same save failure as a transient page-level toast.
-    await persist(next, provider.route, false);
+
     setDialog(null);
     toast(t("Model configuration saved — changes take effect immediately"), "success");
   };
@@ -878,7 +900,7 @@ export function ModelsView() {
           <p>{t("Changes take effect immediately after saving (hot reload).")}</p>
           <p>
             {t(
-              "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.",
+              "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored in the DSH credential store, never in settings.yaml.",
             )}
           </p>
         </div>
@@ -987,13 +1009,13 @@ function ReadinessBadge({
       : readiness.kind === "provider-auth"
         ? `${t("Ready")} · pi-ai`
         : readiness.kind === "missing-env"
-          ? `${readiness.envName}: ${t("Not set")}`
+          ? t("API key is not configured")
           : readiness.kind === "anonymous"
             ? `${t("Ready")} · ${t("Custom endpoint")}`
             : t("Ready");
   const title =
     readiness.kind === "missing-env"
-      ? t("Environment variable is not set in the environment where dsh-pro-max was launched")
+      ? t("API key is not configured")
       : readiness.kind === "provider-auth"
         ? "pi-ai"
         : readiness.kind === "anonymous"

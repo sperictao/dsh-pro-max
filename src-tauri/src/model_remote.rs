@@ -1,8 +1,8 @@
 //! Provider 模型发现请求适配。
 //!
 //! `dsh::models` 负责 settings.yaml 模型域；这里承接带自定义 headers 的
-//! `/models` HTTP 探测以及凭据环境变量可用性检查。后者只返回布尔值，绝不
-//! 把 secret 内容跨 IPC 暴露给前端。
+//! `/models` HTTP 探测与最小推理测试。凭据值只在 Rust 内解析或作为一次性
+//! write-only 请求参数进入，绝不从 IPC 返回前端。
 
 use crate::i18n::keyf;
 use serde::{Deserialize, Serialize};
@@ -143,23 +143,16 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn env_value_available(name: &str) -> bool {
-    std::env::var(name)
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false)
-}
-
-fn required_env_value(name: &str) -> Result<String, String> {
-    match std::env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ => {
-            crate::logging::warn("模型服务缺密钥环境变量", name);
-            Err(keyf(
-                "Environment variable is not set in the environment where dsh-pro-max was launched",
-                &[],
-            ))
+fn request_api_key(api_key: Option<&str>, api_key_env: Option<&str>) -> Result<Option<String>, String> {
+    if let Some(value) = non_empty(api_key) {
+        if !value.bytes().all(|byte| (0x21..=0x7e).contains(&byte)) {
+            return Err(keyf("API key contains invalid characters", &[]));
         }
+        return Ok(Some(value.to_string()));
     }
+    let Some(reference) = non_empty(api_key_env) else { return Ok(None) };
+    let value = crate::model_credential_resolver::resolve(reference)?;
+    value.map(Some).ok_or_else(|| keyf("API key is not configured", &[]))
 }
 
 fn remote_models_url(base_url: &str, api: Option<&str>) -> Result<String, String> {
@@ -222,15 +215,12 @@ fn fetch_remote_models(
     base_url: &str,
     api: Option<&str>,
     api_key_env: Option<&str>,
+    api_key: Option<&str>,
     headers: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<String>, String> {
-    // apiKeyEnv 未配置 = 明确允许匿名模型发现；一旦配置则环境变量必须存在且
-    // 非空，不静默回退匿名访问，避免把凭据配置错误伪装成可用状态。
-    let key = if let Some(env_name) = non_empty(api_key_env) {
-        Some(required_env_value(env_name)?)
-    } else {
-        None
-    };
+    // Transient write-only key wins for an unsaved draft; otherwise resolve the stored
+    // reference using the same precedence as DSH credentials-local.
+    let key = request_api_key(api_key, api_key_env)?;
 
     let url = remote_models_url(base_url, api)?;
     let client = reqwest::blocking::Client::builder()
@@ -327,14 +317,11 @@ fn test_provider_connection(
     base_url: &str,
     api: &str,
     api_key_env: Option<&str>,
+    api_key: Option<&str>,
     headers: Option<&BTreeMap<String, String>>,
     model: &str,
 ) -> Result<(), String> {
-    let key = if let Some(env_name) = non_empty(api_key_env) {
-        Some(required_env_value(env_name)?)
-    } else {
-        None
-    };
+    let key = request_api_key(api_key, api_key_env)?;
     let url = provider_inference_url(base_url, api)?;
     let body = provider_test_body(api, model)?;
     let client = reqwest::blocking::Client::builder()
@@ -378,24 +365,6 @@ fn test_provider_connection(
     ))
 }
 
-/// 批量检查密钥环境变量是否在 launcher 当前进程环境中存在且非空。
-/// 返回值仅包含调用方传入的变量名与布尔状态，不读取/返回 secret 内容。
-#[tauri::command]
-pub fn model_env_status(names: Vec<String>) -> BTreeMap<String, bool> {
-    names
-        .into_iter()
-        .filter_map(|raw| {
-            let name = raw.trim().to_string();
-            if name.is_empty() {
-                None
-            } else {
-                let available = env_value_available(&name);
-                Some((name, available))
-            }
-        })
-        .collect()
-}
-
 #[tauri::command]
 pub async fn model_remote_cache_get(
     base_url: String,
@@ -421,12 +390,14 @@ pub async fn model_test_connection(
     api_key_env: Option<String>,
     headers: Option<BTreeMap<String, String>>,
     model: String,
+    api_key: Option<String>,
 ) -> Result<(), String> {
     crate::dsh::ipc_blocking(move || {
         test_provider_connection(
             &base_url,
             &api,
             api_key_env.as_deref(),
+            api_key.as_deref(),
             headers.as_ref(),
             &model,
         )
@@ -440,21 +411,27 @@ pub async fn model_remote_list_with_headers(
     api: Option<String>,
     api_key_env: Option<String>,
     headers: Option<BTreeMap<String, String>>,
+    api_key: Option<String>,
 ) -> Result<Vec<String>, String> {
     crate::dsh::ipc_blocking(move || {
         let models = fetch_remote_models(
             &base_url,
             api.as_deref(),
             api_key_env.as_deref(),
+            api_key.as_deref(),
             headers.as_ref(),
         )?;
-        remember_provider_models(
-            &base_url,
-            api.as_deref(),
-            api_key_env.as_deref(),
-            headers.as_ref(),
-            &models,
-        );
+        // A write-only unsaved key is intentionally outside the persistent cache identity.
+        // Do not let a probe that the user may discard overwrite the saved credential's cache.
+        if non_empty(api_key.as_deref()).is_none() {
+            remember_provider_models(
+                &base_url,
+                api.as_deref(),
+                api_key_env.as_deref(),
+                headers.as_ref(),
+                &models,
+            );
+        }
         Ok(models)
     })
     .await
@@ -529,6 +506,13 @@ mod tests {
     }
 
     #[test]
+    fn transient_api_key_is_validated_without_becoming_cache_identity() {
+        assert_eq!(request_api_key(Some("sk-test_123"), None).unwrap().as_deref(), Some("sk-test_123"));
+        assert!(request_api_key(Some("bad key"), None).is_err());
+        assert_eq!(request_api_key(None, None).unwrap(), None);
+    }
+
+    #[test]
     fn provider_cache_key_tracks_connection_fingerprint_without_secret_values() {
         let mut headers = BTreeMap::new();
         headers.insert("X-Tenant".to_string(), "desktop".to_string());
@@ -565,15 +549,4 @@ mod tests {
         assert_eq!(c, d);
     }
 
-    #[test]
-    fn env_status_trims_dedupes_and_does_not_expose_values() {
-        let missing = "__DSH_PRO_MAX_READINESS_TEST_MISSING_8E4D3A2F__";
-        let status = model_env_status(vec![
-            "".to_string(),
-            format!("  {missing}  "),
-            missing.to_string(),
-        ]);
-        assert_eq!(status.len(), 1);
-        assert_eq!(status.get(missing), Some(&false));
-    }
 }

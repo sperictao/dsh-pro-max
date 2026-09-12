@@ -169,7 +169,9 @@ async function main() {
         },
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: () => ["deepseek-chat"],
         model_test_connection: (args) =>
@@ -250,8 +252,8 @@ async function main() {
       fullPage: true,
     });
 
-    const apiKey = dialog.getByRole("textbox", { name: "API Key Env Var" });
-    await apiKey.fill("DEEPSEEK_ROTATED_KEY");
+    const apiKey = dialog.getByLabel("API Key");
+    await apiKey.fill("sk-deepseek-rotated");
     assert.equal(await dialog.getByTestId("provider-test-result").count(), 0, "repair should retire the old 401 result");
     assert.equal(await dialog.getByRole("button", { name: "Test connection" }).isEnabled(), true);
     await page.waitForTimeout(700);
@@ -272,7 +274,9 @@ async function main() {
     const calls = await page.evaluate(() => window.__auditTestCalls);
     assert.equal(calls.length, 2);
     assert.equal(calls[0].apiKeyEnv, "DEEPSEEK_API_KEY");
-    assert.equal(calls[1].apiKeyEnv, "DEEPSEEK_ROTATED_KEY");
+    assert.equal(calls[1].apiKeyEnv, "DEEPSEEK_API_KEY");
+    assert.equal(calls[0].apiKey, null);
+    assert.equal(calls[1].apiKey, "sk-deepseek-rotated");
     assert.equal(calls[0].baseUrl, "https://api.deepseek.com/v1");
     assert.equal(calls[1].baseUrl, "https://api.deepseek.com/v1");
     assert.equal(calls[0].api, "openai-completions");

@@ -114,9 +114,12 @@ export const modelCredentialSet = (name: string, value: string) =>
   invokeTyped<ModelCredentialInfo>("model_credential_set", { name, value });
 export const modelCredentialUnset = (name: string) =>
   invokeTyped<ModelCredentialInfo>("model_credential_unset", { name });
-// 旧 Models UI 仍暂时使用 launcher 进程环境状态；下一步 UI cutover 后删除。
-export const modelEnvStatus = (names: string[]) =>
-  invokeTyped<Record<string, boolean>>("model_env_status", { names });
+// Compatibility adapter for existing readiness call sites: the booleans now come from
+// DSH credential describe, not from the Launcher process environment.
+export const modelEnvStatus = async (names: string[]) => {
+  const described = await modelCredentialDescribe(names);
+  return Object.fromEntries(names.map((name) => [name, described[name]?.configured === true]));
+};
 export type ProviderModelsCacheEntry = { models: string[]; fetchedAt: number };
 // Provider 模型发现缓存：按连接指纹读取，只返回模型 ID 与时间戳。
 export const modelRemoteCacheGet = (
@@ -138,8 +141,9 @@ export const modelTestConnection = (
   apiKeyEnv: string | null,
   headers: Record<string, string | undefined> | null,
   model: string,
+  apiKey: string | null = null,
 ) =>
-  invokeTyped<void>("model_test_connection", { baseUrl: baseURL, api, apiKeyEnv, headers, model });
+  invokeTyped<void>("model_test_connection", { baseUrl: baseURL, api, apiKeyEnv, headers, model, apiKey });
 // 上游模型列表仅负责模型发现；密钥经环境变量名解析，普通 Provider headers 一并发送，
 // 凭据类保留头由 Rust 层再次过滤，不能覆盖 apiKeyEnv 认证。
 export const modelRemoteList = (
@@ -147,9 +151,10 @@ export const modelRemoteList = (
   api: string | null,
   apiKeyEnv: string | null,
   headers: Record<string, string | undefined> | null = null,
+  apiKey: string | null = null,
 ) =>
-  // Tauri 按 camelCase 形参名取参：base_url → baseUrl（baseURL 永不命中）
-  invokeTyped<string[]>("model_remote_list_with_headers", { baseUrl: baseURL, api, apiKeyEnv, headers });
+  // apiKey is transient write-only UI state; persisted requests resolve apiKeyEnv in Rust.
+  invokeTyped<string[]>("model_remote_list_with_headers", { baseUrl: baseURL, api, apiKeyEnv, headers, apiKey });
 // 配置导入：扫描本机其他工具的 provider 声明（缺失来源静默为空组），按 key 导入
 export const modelConfigImportScan = () => invokeTyped<ImportGroup[]>("model_config_import_scan");
 export const modelConfigImportRun = (keys: string[]) =>

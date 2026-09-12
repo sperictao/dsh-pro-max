@@ -46,7 +46,7 @@ describe("ProviderDialog service picker", () => {
 
     await user.keyboard("{Enter}");
     expect(service).toHaveValue("deepseek");
-    expect(within(dialog).queryByLabelText("API Key Env Var")).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("API Key")).not.toBeInTheDocument();
     expect(within(dialog).getByRole("listbox")).toBeInTheDocument();
 
     await user.keyboard("{ArrowDown}");
@@ -55,7 +55,7 @@ describe("ProviderDialog service picker", () => {
 
     await user.keyboard("{Enter}");
     expect(service).toHaveValue("DeepSeek");
-    const apiKey = within(dialog).getByLabelText("API Key Env Var");
+    const apiKey = within(dialog).getByLabelText("API Key");
     await waitFor(() => expect(apiKey).toHaveFocus());
   });
 

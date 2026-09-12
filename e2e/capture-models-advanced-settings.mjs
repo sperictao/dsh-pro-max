@@ -97,7 +97,9 @@ async function main() {
         },
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: () => new Promise((resolve) => setTimeout(() => resolve(["deepseek-v4-pro", "deepseek-chat"]), 450)),
         model_test_connection: () => null,
@@ -137,8 +139,8 @@ async function main() {
     await service.fill("deepseek");
     const picker = dialog.getByRole("listbox", { name: "Choose a service or custom endpoint" });
     await picker.getByRole("option", { name: /DeepSeek deepseek/i }).click();
-    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "API Key Env Var");
-    await dialog.getByLabel("API Key Env Var").fill("DEEPSEEK_API_KEY");
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "API Key");
+    await dialog.getByLabel("API Key").fill("DEEPSEEK_API_KEY");
 
     const modelList = dialog.getByRole("list", { name: "Models from this service" });
     const modelCheckbox = modelList.getByRole("checkbox", { name: "deepseek-v4-pro" });

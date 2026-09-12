@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import type { ModelCatalogEntry, ProviderConfig } from "@/shared/types";
 import { ProviderDialog } from "./ProviderDialog";
+import type { CredentialWrite } from "./credentials";
 
 const provider: ProviderConfig = {
   route: "deepseek",
@@ -60,7 +61,14 @@ beforeEach(() => {
 describe("ProviderDialog Edit provider", () => {
   it("keeps the primary path focused and only enables save for real changes", async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn<(next: ProviderConfig, originalRoute: string | null) => Promise<void>>()
+    const onSubmit = vi
+      .fn<
+        (
+          next: ProviderConfig,
+          originalRoute: string | null,
+          credential: CredentialWrite | null,
+        ) => Promise<void>
+      >()
       .mockResolvedValue(undefined);
 
     render(
@@ -83,7 +91,7 @@ describe("ProviderDialog Edit provider", () => {
     expect(within(dialog).queryByText(/deepseek · api\.deepseek\.com · openai-completions/i)).not.toBeInTheDocument();
 
     const displayName = within(dialog).getByRole("textbox", { name: "Display Name" });
-    const apiKey = within(dialog).getByRole("textbox", { name: "API Key Env Var" });
+    const apiKey = within(dialog).getByLabelText("API Key");
 
     await user.clear(displayName);
     await user.type(displayName, "DeepSeek Production");
@@ -93,17 +101,18 @@ describe("ProviderDialog Edit provider", () => {
     await user.type(displayName, "DeepSeek");
     expect(save).toBeDisabled();
 
-    await user.clear(apiKey);
-    await user.type(apiKey, "DEEPSEEK_PROD_API_KEY");
+    expect(apiKey).toHaveValue("");
+    await user.type(apiKey, "sk-deepseek-prod");
     expect(save).toBeEnabled();
 
     await user.click(save);
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
-    const [saved, originalRoute] = onSubmit.mock.calls[0];
+    const [saved, originalRoute, credential] = onSubmit.mock.calls[0];
     expect(originalRoute).toBe("deepseek");
     expect(saved.route).toBe("deepseek");
     expect(saved.displayName).toBe("DeepSeek");
-    expect(saved.apiKeyEnv).toBe("DEEPSEEK_PROD_API_KEY");
+    expect(saved.apiKeyEnv).toBe("DEEPSEEK_API_KEY");
+    expect(credential).toEqual({ ref: "DEEPSEEK_API_KEY", value: "sk-deepseek-prod" });
     expect(saved.baseURL).toBe("https://api.deepseek.com/v1");
     expect(saved.api).toBe("openai-completions");
     expect(saved.models.map((model) => model.id)).toEqual(["deepseek-chat", "deepseek-reasoner"]);

@@ -97,6 +97,7 @@ beforeEach(() => {
   vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(catalog);
   vi.spyOn(cmd, "modelRemoteCacheGet").mockResolvedValue(null);
   vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
+  vi.spyOn(cmd, "modelCredentialSet").mockResolvedValue({ configured: true, source: "file", writable: true });
   vi.spyOn(cmd, "modelEnvStatus").mockImplementation(async (names) =>
     Object.fromEntries(names.map((name) => [name, true])),
   );
@@ -182,18 +183,22 @@ describe("ModelsView provider studio", () => {
     const picker = within(dialog).getByRole("listbox", { name: "Choose a service or custom endpoint" });
     await user.click(within(picker).getAllByRole("option").find((item) => /deepseek/i.test(item.getAttribute("aria-label") ?? item.textContent ?? ""))!);
 
-    expect(within(dialog).getByLabelText("API Key Env Var")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("API Key")).toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Route key")).not.toBeInTheDocument();
-    await user.type(within(dialog).getByLabelText("API Key Env Var"), "DEEPSEEK_API_KEY");
+    await user.type(within(dialog).getByLabelText("API Key"), "sk-deepseek-test");
 
     const leftList = within(dialog).getByRole("list", { name: "Models from this service" });
     await user.click(within(leftList).getByRole("checkbox", { name: "deepseek-v4-pro" }));
     await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(cmd.modelConfigSave).toHaveBeenCalledOnce();
-    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
-    expect(saved.providers).toHaveLength(1);
+    expect(cmd.modelCredentialSet).toHaveBeenCalledWith("DEEPSEEK_API_KEY", "sk-deepseek-test");
+    expect(cmd.modelConfigSave).toHaveBeenCalledTimes(2);
+    const firstSaved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
+    expect(firstSaved.providers).toHaveLength(1);
+    expect(firstSaved.providers[0].apiKeyEnv).toBe("DEEPSEEK_API_KEY");
+    expect(firstSaved.defaultProvider).toBeNull();
+    const saved = vi.mocked(cmd.modelConfigSave).mock.calls.at(-1)![0];
     expect(saved.providers[0].route).toMatch(/deepseek/i);
     expect(saved.defaultProvider).toBe(saved.providers[0].route);
     expect(saved.defaultModel).toBe("deepseek-v4-pro");
@@ -220,7 +225,7 @@ describe("ModelsView provider studio", () => {
     expect(within(dialog).getByLabelText("Wire Protocol")).toBeInTheDocument();
   });
 
-  it("fetches provider models inside the edit dialog and invalidates stale discovery when the credential reference changes", async () => {
+  it("fetches provider models inside the edit dialog and invalidates stale discovery when the write-only key changes", async () => {
     loadWith();
     const remote = vi
       .spyOn(cmd, "modelRemoteList")
@@ -237,13 +242,12 @@ describe("ModelsView provider studio", () => {
     expect(remote.mock.calls[0][3]).toEqual({ "X-Title": "my-app" });
     expect(within(dialog).getByRole("list", { name: "Models from this service" })).toHaveTextContent("kimi-k2");
 
-    await user.clear(within(dialog).getByLabelText("API Key Env Var"));
-    await user.type(within(dialog).getByLabelText("API Key Env Var"), "NEW_KEY");
+    await user.type(within(dialog).getByLabelText("API Key"), "sk-new-key");
     expect(within(dialog).getByRole("list", { name: "Models from this service" })).not.toHaveTextContent("kimi-k2");
-    await user.click(within(dialog).getByRole("button", { name: "Fetch list" }));
-    await waitFor(() => expect(remote).toHaveBeenCalledTimes(2));
-    expect(remote.mock.calls[1][2]).toBe("NEW_KEY");
+    await waitFor(() => expect(remote).toHaveBeenCalledTimes(2), { timeout: 2000 });
+    expect(remote.mock.calls[1][2]).toBe("SPERO_AI_API_KEY");
     expect(remote.mock.calls[1][3]).toEqual({ "X-Title": "my-app" });
+    expect(remote.mock.calls[1][4]).toBe("sk-new-key");
   });
 
   it("probes a configured provider directly from its row", async () => {
@@ -300,7 +304,7 @@ describe("ModelsView provider studio", () => {
     expect(within(listbox).getByRole("option", { name: /OpenAI · gpt-test/ })).toBeInTheDocument();
   });
 
-  it("excludes a provider with a missing env from defaults while allowing an anonymous custom provider", async () => {
+  it("excludes a provider with a missing credential from defaults while allowing an anonymous custom provider", async () => {
     loadWith({
       defaultProvider: "openai",
       defaultModel: "gpt-test",
@@ -337,7 +341,7 @@ describe("ModelsView provider studio", () => {
     render(createElement(ModelsView));
 
     await waitFor(() => expect(screen.getByTestId("provider-readiness-0")).toHaveAttribute("data-readiness", "missing-env"));
-    expect(screen.getByTestId("provider-readiness-0")).toHaveTextContent("MISSING_OPENAI_KEY: Not set");
+    expect(screen.getByTestId("provider-readiness-0")).toHaveTextContent("API key is not configured");
     expect(screen.getByTestId("provider-readiness-1")).toHaveAttribute("data-readiness", "anonymous");
     expect(screen.getByTestId("default-provider-readiness")).toHaveAttribute("data-readiness", "missing-env");
 

@@ -98,7 +98,9 @@ async function main() {
         },
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: ({ baseUrl }) => new Promise((resolve) => setTimeout(() => resolve(baseUrl.includes("gateway.acme.test") ? ["acme-chat-pro", "acme-chat-fast"] : []), 450)),
         model_test_connection: () => null,
@@ -155,7 +157,7 @@ async function main() {
     await baseURL.fill("https://gateway.acme.test/v1/chat/completions");
     await baseURL.press("Tab");
     assert.equal(await baseURL.inputValue(), "https://gateway.acme.test/v1", "operation URL should normalize to service root");
-    await dialog.getByLabel("API Key Env Var").fill("ACME_API_KEY");
+    await dialog.getByLabel("API Key").fill("ACME_API_KEY");
     await dialog.getByLabel("Wire Protocol").selectOption("openai-completions");
     await page.waitForTimeout(1500);
 
@@ -182,7 +184,7 @@ async function main() {
     assert.equal(added.displayName, "Acme Gateway");
     assert.equal(added.baseURL, "https://gateway.acme.test/v1");
     assert.equal(added.api, "openai-completions");
-    assert.equal(added.apiKeyEnv, "ACME_API_KEY");
+    assert.equal(added.apiKeyEnv, "ACME_GATEWAY_API_KEY");
     assert.deepEqual(added.models.map((model) => model.id), ["acme-chat-pro"]);
     assert.equal(saved.defaultProvider, "spero-ai");
     assert.equal(saved.defaultModel, "glm-5.2");

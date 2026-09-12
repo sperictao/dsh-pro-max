@@ -133,7 +133,9 @@ async function main() {
         model_config_save: () => { throw new Error("Service picker audit must not save model configuration"); },
         model_catalog_load: () => structuredClone(modelCatalog),
         model_catalog_refresh: () => ({ ...structuredClone(modelCatalog), fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: () => [],
         model_test_connection: () => { throw new Error("Service picker audit must not test the connection"); },
@@ -208,7 +210,7 @@ async function main() {
 
     await service.press("Enter");
     assert.equal(await service.inputValue(), "deepseek");
-    assert.equal(await dialog.getByLabel("API Key Env Var").count(), 0);
+    assert.equal(await dialog.getByLabel("API Key").count(), 0);
     assert.equal(await dialog.getByRole("listbox").count(), 1);
 
     await service.press("ArrowDown");
@@ -230,7 +232,7 @@ async function main() {
     const reopenedDeepseek = picker.getByRole("option", { name: /DeepSeek deepseek/i });
     assert.equal(await reopenedDeepseek.getAttribute("aria-selected"), "true");
     await service.press("Enter");
-    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "API Key Env Var");
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "API Key");
     assert.equal(await service.inputValue(), "DeepSeek");
     assert.equal(await dialog.getByRole("listbox").count(), 0);
     assert.equal(await dialog.isVisible(), true);

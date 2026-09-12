@@ -12,6 +12,7 @@ mod dsh;
 mod i18n;
 mod logging;
 mod model_credentials;
+mod model_credential_resolver;
 mod model_remote;
 mod tray;
 mod updater;
@@ -253,7 +254,6 @@ pub fn run() {
             model_credentials::model_credential_describe,
             model_credentials::model_credential_set,
             model_credentials::model_credential_unset,
-            model_remote::model_env_status,
             model_remote::model_remote_cache_get,
             model_remote::model_test_connection,
             model_remote::model_remote_list_with_headers,

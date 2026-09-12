@@ -97,7 +97,9 @@ async function main() {
         },
         model_catalog_load: () => modelCatalog,
         model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_env_status: ({ names }) => Object.fromEntries(names.map((name) => [name, true])),
+        model_credential_describe: ({ names }) => Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
+        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
         model_remote_cache_get: () => null,
         model_remote_list_with_headers: () => new Promise((resolve) => setTimeout(() => resolve(["deepseek-v4-pro", "deepseek-chat"]), 450)),
         model_test_connection: () => null,
@@ -145,13 +147,13 @@ async function main() {
     const deepseek = picker.getByRole("option", { name: /DeepSeek deepseek/i });
     await deepseek.click();
 
-    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "API Key Env Var");
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "API Key");
     assert.equal(await service.inputValue(), "DeepSeek");
     assert.equal(await dialog.getByLabel("Display Name").count(), 0);
     assert.equal(await saveButton.isDisabled(), true);
     await page.waitForTimeout(900);
 
-    const envInput = dialog.getByLabel("API Key Env Var");
+    const envInput = dialog.getByLabel("API Key");
     await envInput.fill("DEEPSEEK_API_KEY");
     assert.equal(await saveButton.isDisabled(), true);
     await page.waitForTimeout(1100);
