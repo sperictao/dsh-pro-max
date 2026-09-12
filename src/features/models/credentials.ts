@@ -16,7 +16,7 @@ export function credentialRefFor(provider: Pick<ProviderConfig, "route" | "apiKe
 
 function isQuoted(value: string): boolean {
   const first = value[0];
-  if (first !== '"' && first !== "'" && first !== "\`") return false;
+  if (first !== '"' && first !== "'" && first !== "`") return false;
   return value.length > 1 && value.endsWith(first);
 }
 
