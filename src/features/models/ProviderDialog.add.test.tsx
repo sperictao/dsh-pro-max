@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import type { ModelCatalogEntry, ProviderConfig } from "@/shared/types";
 import { ProviderDialog } from "./ProviderDialog";
+import type { CredentialWrite } from "./credentials";
 
 const catalog: ModelCatalogEntry[] = [
   {
@@ -41,7 +42,14 @@ beforeEach(() => {
 describe("ProviderDialog Add provider", () => {
   it("keeps the chosen service visible, gates Fetch list until credentials, and requires a model before save", async () => {
     const user = userEvent.setup();
-    const onSubmit = vi.fn<(provider: ProviderConfig, originalRoute: string | null) => Promise<void>>()
+    const onSubmit = vi
+      .fn<
+        (
+          provider: ProviderConfig,
+          originalRoute: string | null,
+          credential: CredentialWrite | null,
+        ) => Promise<void>
+      >()
       .mockResolvedValue(undefined);
 
     render(
