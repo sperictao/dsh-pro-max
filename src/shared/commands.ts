@@ -158,8 +158,7 @@ export const modelConfigImportRun = (keys: string[]) =>
 // ============ 更新 ============
 export const getUpdaterConfigHealth = () => invokeTyped<UpdaterConfigHealth>("get_updater_config_health");
 export const getUpdaterHelpPaths = () => invokeTyped<UpdaterHelpPaths>("get_updater_help_paths");
-export const checkUpdate = (expectedVersion: string | null) =>
-  invokeTyped<UpdateInfo>("check_update", { expectedVersion });
+export const checkUpdate = () => invokeTyped<UpdateInfo>("check_update");
 export const installUpdate = (expectedVersion: string | null) =>
   invokeTyped<string>("install_update", { expectedVersion });
 
