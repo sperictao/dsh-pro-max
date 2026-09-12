@@ -1,0 +1,33 @@
+name: Temporary fix transient Fetch readiness
+
+on:
+  push:
+    branches:
+      - feat/models-credential-cutover
+    paths:
+      - scripts/tmp-fix-transient-fetch-readiness.mjs
+      - .github/workflows/tmp-fix-transient-fetch-readiness.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/models-credential-cutover
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Fix transient Fetch readiness
+        run: node scripts/tmp-fix-transient-fetch-readiness.mjs
+      - name: Commit self-cleaning product fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 1
+          git commit -m "Fix transient credential Fetch readiness"
+          git push origin HEAD:feat/models-credential-cutover
