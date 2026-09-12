@@ -1,0 +1,42 @@
+name: Temporary lifecycle test selector fix
+
+on:
+  push:
+    branches:
+      - fix/credential-lifecycle-removal
+    paths:
+      - .github/workflows/tmp-fix-lifecycle-test-selectors.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: fix/credential-lifecycle-removal
+      - name: Fix Testing Library role selectors
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/features/models/ModelsView.test.tsx')
+          s = p.read_text()
+          old = 'getByRole("button", { name: "Remove", exact: true })'
+          new = 'getByRole("button", { name: /^Remove$/ })'
+          count = s.count(old)
+          if count != 4:
+              raise SystemExit(f'expected 4 selector matches, found {count}')
+          p.write_text(s.replace(old, new))
+          PY
+          rm .github/workflows/tmp-fix-lifecycle-test-selectors.yml
+      - name: Commit self-cleaning fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/features/models/ModelsView.test.tsx .github/workflows/tmp-fix-lifecycle-test-selectors.yml
+          git commit -m "Fix credential lifecycle test selectors"
+          git push origin HEAD:fix/credential-lifecycle-removal
