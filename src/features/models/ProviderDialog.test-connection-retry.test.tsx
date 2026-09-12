@@ -76,9 +76,8 @@ describe("ProviderDialog Test connection recovery", () => {
     expect(await within(dialog).findByText(/HTTP 401 Unauthorized: invalid API key/)).toBeVisible();
     expect(within(dialog).getByTestId("provider-test-result")).toBeVisible();
 
-    const apiKey = within(dialog).getByRole("textbox", { name: "API Key Env Var" });
-    await user.clear(apiKey);
-    await user.type(apiKey, "DEEPSEEK_PROD_API_KEY");
+    const apiKey = within(dialog).getByLabelText("API Key");
+    await user.type(apiKey, "sk-deepseek-prod");
 
     expect(within(dialog).queryByText(/HTTP 401 Unauthorized: invalid API key/)).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
@@ -91,13 +90,15 @@ describe("ProviderDialog Test connection recovery", () => {
       "DEEPSEEK_API_KEY",
       null,
       "deepseek-chat",
+      null,
     ]);
     expect(test.mock.calls[1]).toEqual([
       "https://api.deepseek.com/v1",
       "openai-completions",
-      "DEEPSEEK_PROD_API_KEY",
+      "DEEPSEEK_API_KEY",
       null,
       "deepseek-chat",
+      "sk-deepseek-prod",
     ]);
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -119,9 +120,8 @@ describe("ProviderDialog Test connection recovery", () => {
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     expect(within(dialog).getByRole("button", { name: "Testing…" })).toBeDisabled();
 
-    const apiKey = within(dialog).getByRole("textbox", { name: "API Key Env Var" });
-    await user.clear(apiKey);
-    await user.type(apiKey, "DEEPSEEK_ROTATED_KEY");
+    const apiKey = within(dialog).getByLabelText("API Key");
+    await user.type(apiKey, "sk-deepseek-rotated");
 
     await act(async () => {
       rejectPending?.(new Error("HTTP 401 Unauthorized: old credential"));
@@ -137,6 +137,7 @@ describe("ProviderDialog Test connection recovery", () => {
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     expect(await within(dialog).findByText("Connection successful", { exact: true })).toBeVisible();
     expect(test).toHaveBeenCalledTimes(2);
-    expect(test.mock.calls[1]?.[2]).toBe("DEEPSEEK_ROTATED_KEY");
+    expect(test.mock.calls[1]?.[2]).toBe("DEEPSEEK_API_KEY");
+    expect(test.mock.calls[1]?.[5]).toBe("sk-deepseek-rotated");
   });
 });

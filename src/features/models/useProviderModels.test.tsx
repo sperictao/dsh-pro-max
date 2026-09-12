@@ -112,4 +112,16 @@ describe("useProviderModels", () => {
     await act(async () => resolveOld(["stale-model"]));
     expect(result.current.models).toEqual(["new-model"]);
   });
+
+  it("uses an unsaved API key only for the live probe and skips persistent cache", async () => {
+    const cache = vi.spyOn(cmd, "modelRemoteCacheGet").mockResolvedValue({ models: ["old-model"], fetchedAt: 1 });
+    const remote = vi.spyOn(cmd, "modelRemoteList").mockResolvedValue(["new-model"]);
+    const { result } = renderHook(() => useProviderModels(true, provider, "sk-unsaved"));
+    await flush();
+    expect(cache).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(MODEL_DISCOVERY_DEBOUNCE_MS); });
+    await flush();
+    expect(result.current.models).toEqual(["new-model"]);
+    expect(remote.mock.calls[0]?.[4]).toBe("sk-unsaved");
+  });
 });

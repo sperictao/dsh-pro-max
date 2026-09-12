@@ -12,6 +12,7 @@ import { tErr } from "@/shared/i18n/error";
 import { HeadersEditor } from "./HeadersEditor";
 import { ModelPanes } from "./ModelPanes";
 import { useProviderModels } from "./useProviderModels";
+import { apiKeyFailure, credentialRefFor, type CredentialWrite } from "./credentials";
 import {
   API_OPTIONS,
   EFFORT_OPTIONS,
@@ -47,7 +48,7 @@ export function ProviderDialog({
   state: ProviderDialogState;
   catalog: ModelCatalogEntry[];
   onClose: () => void;
-  onSubmit: (provider: ProviderConfig, originalRoute: string | null) => Promise<void>;
+  onSubmit: (provider: ProviderConfig, originalRoute: string | null, credential: CredentialWrite | null) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const isEdit = state.mode === "edit";
@@ -70,6 +71,8 @@ export function ProviderDialog({
     isEdit ? structuredClone(state.provider) : emptyProvider(),
   );
   const [pickedPreset, setPickedPreset] = useState<ModelPreset | null>(null);
+  // Secret is write-only UI state: never hydrate it from ProviderConfig or the credential store.
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [serviceChosen, setServiceChosen] = useState(isEdit);
   const [urlError, setUrlError] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -96,7 +99,10 @@ export function ProviderDialog({
   const effectivePreset = pickedPreset ?? (isEdit ? presetOfRoute : null);
   const knownService = effectivePreset != null;
   const showComposer = isEdit || serviceChosen;
-  const editChanged = !isEdit || comparableProvider(draft) !== comparableProvider(state.provider);
+  const configChanged = !isEdit || comparableProvider(draft) !== comparableProvider(state.provider);
+  const keyValue = apiKeyDraft.trim();
+  const apiKeyError = apiKeyFailure(apiKeyDraft);
+  const editChanged = configChanged || apiKeyDraft.length > 0;
   // Add 尚未选服务时只有临时搜索文本，不算配置工作；一旦选定服务就保护这段进度。
   const hasUnsavedChanges = isEdit ? editChanged : serviceChosen;
 
@@ -104,6 +110,12 @@ export function ProviderDialog({
     testRevisionRef.current += 1;
     setTestResult(null);
     setTesting(false);
+  };
+
+  const updateApiKey = (value: string) => {
+    setApiKeyDraft(value);
+    invalidateTestResult();
+    setSubmitError(null);
   };
 
   const updateConnection = (value: Partial<ProviderConfig>) => {
@@ -137,16 +149,16 @@ export function ProviderDialog({
   };
 
   const currentUrlIssue = validateBaseUrl(draft.baseURL ?? "");
-  // 托管预设无显式 apiKeyEnv 时可能由 dsh/pi-ai 的 ambient/已存登录认证；
-  // Launcher 自身拿不到那条凭据 seam，因此不主动撞匿名请求。自定义端点仍允许匿名发现。
+  // 已保存引用由 Rust credential plane 解析；尚未保存的 key 只随本次 Test/Fetch 请求传递。
+  const hasRequestCredential = Boolean(draft.apiKeyEnv?.trim()) || keyValue.length > 0;
   const discoveryActive =
     showComposer &&
     !currentUrlIssue &&
     Boolean(draft.baseURL?.trim()) &&
-    (!knownService || Boolean(draft.apiKeyEnv?.trim()));
-  const discovery = useProviderModels(discoveryActive, draft);
+    (!knownService || hasRequestCredential);
+  const discovery = useProviderModels(discoveryActive, draft, keyValue || null);
   const testTarget = providerConnectionTarget(draft);
-  const launcherCanTest = !knownService || Boolean(draft.apiKeyEnv?.trim());
+  const launcherCanTest = !knownService || hasRequestCredential;
   const canTest =
     showComposer && launcherCanTest && !currentUrlIssue && Boolean(testTarget) && !saving && !testing;
 
@@ -180,6 +192,7 @@ export function ProviderDialog({
         draft.apiKeyEnv,
         draft.headers,
         target.model,
+        keyValue || null,
       );
       if (testRevisionRef.current === requestRevision) {
         setTestResult({ kind: "success", text: t("Connection successful") });
@@ -199,6 +212,7 @@ export function ProviderDialog({
     setAdvancedOpen(false);
     setUrlError(null);
     setSubmitError(null);
+    setApiKeyDraft("");
     invalidateTestResult();
 
     if (!preset) {
@@ -236,6 +250,7 @@ export function ProviderDialog({
     // 新增 Provider 至少选择一个模型才是可用配置；编辑态仅在确有变更时允许保存。
     (isEdit || draft.models.length > 0) &&
     editChanged &&
+    !apiKeyError &&
     !saving;
 
   const finishClose = () => {
@@ -278,15 +293,18 @@ export function ProviderDialog({
     setSaving(true);
     setSubmitError(null);
     try {
+      const credentialRef = credentialRefFor(draft);
       await onSubmit(
         {
           ...draft,
           route: draft.route.trim(),
           displayName: draft.displayName?.trim() || null,
           baseURL: draft.baseURL?.trim() ? normalizeBaseUrl(draft.baseURL) : null,
-          apiKeyEnv: draft.apiKeyEnv?.trim() || null,
+          // Existing refs stay stable; a reference-free provider only records the conventional ref when a key is entered.
+          apiKeyEnv: draft.apiKeyEnv?.trim() || (keyValue ? credentialRef : null),
         },
         isEdit ? state.provider.route : null,
+        keyValue ? { ref: credentialRef, value: keyValue } : null,
       );
     } catch (error) {
       setSubmitError(tErr(String(error)));
@@ -421,32 +439,46 @@ export function ProviderDialog({
                         />
                       </label>
                       <label className="flex flex-col gap-1 text-xs opacity-70">
-                        {t("API Key Env Var")}
+                        {t("API Key")}
                         <input
                           ref={apiKeyInputRef}
-                          className={`${INPUT_MONO} font-mono`}
-                          value={draft.apiKeyEnv ?? ""}
-                          onChange={(event) =>
-                            updateConnection({ apiKeyEnv: event.target.value || null })
-                          }
-                          placeholder="MY_PROVIDER_API_KEY"
-                          aria-label={t("API Key Env Var")}
+                          type="password"
+                          className={INPUT_MONO}
+                          value={apiKeyDraft}
+                          onChange={(event) => updateApiKey(event.target.value)}
+                          placeholder={t("Enter API key")}
+                          aria-label={t("API Key")}
+                          aria-invalid={Boolean(apiKeyError)}
+                          autoComplete="off"
+                          spellCheck={false}
                         />
+                        {apiKeyError && (
+                          <span role="alert" className="text-destructive">
+                            {t(apiKeyError)}
+                          </span>
+                        )}
                       </label>
                     </div>
                   ) : (
                     <label className="flex flex-col gap-1 text-xs opacity-70">
-                      {t("API Key Env Var")}
+                      {t("API Key")}
                       <input
                         ref={apiKeyInputRef}
-                        className={`${INPUT_MONO} font-mono`}
-                        value={draft.apiKeyEnv ?? ""}
-                        onChange={(event) =>
-                          updateConnection({ apiKeyEnv: event.target.value || null })
-                        }
-                        placeholder="MY_PROVIDER_API_KEY"
-                        aria-label={t("API Key Env Var")}
+                        type="password"
+                        className={INPUT_MONO}
+                        value={apiKeyDraft}
+                        onChange={(event) => updateApiKey(event.target.value)}
+                        placeholder={t("Enter API key")}
+                        aria-label={t("API Key")}
+                        aria-invalid={Boolean(apiKeyError)}
+                        autoComplete="off"
+                        spellCheck={false}
                       />
+                      {apiKeyError && (
+                        <span role="alert" className="text-destructive">
+                          {t(apiKeyError)}
+                        </span>
+                      )}
                     </label>
                   )
                 ) : (
@@ -491,17 +523,24 @@ export function ProviderDialog({
                       )}
                     </label>
                     <label className="flex flex-col gap-1 text-xs opacity-70">
-                      {t("API Key Env Var")}
+                      {t("API Key")}
                       <input
                         ref={apiKeyInputRef}
-                        className={`${INPUT_MONO} font-mono`}
-                        value={draft.apiKeyEnv ?? ""}
-                        onChange={(event) =>
-                          updateConnection({ apiKeyEnv: event.target.value || null })
-                        }
-                        placeholder="MY_GATEWAY_API_KEY"
-                        aria-label={t("API Key Env Var")}
+                        type="password"
+                        className={INPUT_MONO}
+                        value={apiKeyDraft}
+                        onChange={(event) => updateApiKey(event.target.value)}
+                        placeholder={t("Enter API key")}
+                        aria-label={t("API Key")}
+                        aria-invalid={Boolean(apiKeyError)}
+                        autoComplete="off"
+                        spellCheck={false}
                       />
+                      {apiKeyError && (
+                        <span role="alert" className="text-destructive">
+                          {t(apiKeyError)}
+                        </span>
+                      )}
                     </label>
                     <label className="flex flex-col gap-1 text-xs opacity-70">
                       {t("Wire Protocol")}

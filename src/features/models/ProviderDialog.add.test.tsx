@@ -67,7 +67,7 @@ describe("ProviderDialog Add provider", () => {
     await user.click(within(picker).getByRole("option", { name: /DeepSeek deepseek/i }));
 
     expect(service).toHaveValue("DeepSeek");
-    const apiKey = within(dialog).getByLabelText("API Key Env Var");
+    const apiKey = within(dialog).getByLabelText("API Key");
     await waitFor(() => expect(apiKey).toHaveFocus());
     expect(within(dialog).queryByLabelText("Display Name")).not.toBeInTheDocument();
     expect(save).toBeDisabled();
@@ -80,7 +80,7 @@ describe("ProviderDialog Add provider", () => {
     expect(within(models).getByRole("checkbox", { name: /^deepseek-v4-pro$/ })).toBeInTheDocument();
     expect(within(models).queryByRole("checkbox", { name: /^deepseek-chat$/ })).not.toBeInTheDocument();
 
-    await user.type(apiKey, "DEEPSEEK_API_KEY");
+    await user.type(apiKey, "sk-deepseek-test");
     expect(save).toBeDisabled();
     await waitFor(() => expect(cmd.modelRemoteList).toHaveBeenCalledOnce(), { timeout: 2000 });
     await waitFor(() => expect(fetchList).toBeEnabled());
@@ -93,11 +93,12 @@ describe("ProviderDialog Add provider", () => {
 
     await user.click(save);
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
-    const [provider, originalRoute] = onSubmit.mock.calls[0];
+    const [provider, originalRoute, credential] = onSubmit.mock.calls[0];
     expect(originalRoute).toBeNull();
     expect(provider.route).toBe("deepseek");
     expect(provider.displayName).toBe("DeepSeek");
     expect(provider.apiKeyEnv).toBe("DEEPSEEK_API_KEY");
     expect(provider.models.map((model) => model.id)).toEqual(["deepseek-v4-pro"]);
+    expect(credential).toEqual({ ref: "DEEPSEEK_API_KEY", value: "sk-deepseek-test" });
   });
 });

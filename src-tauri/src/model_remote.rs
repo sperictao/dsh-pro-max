@@ -149,17 +149,16 @@ fn env_value_available(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn required_env_value(name: &str) -> Result<String, String> {
-    match std::env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
-        _ => {
-            crate::logging::warn("模型服务缺密钥环境变量", name);
-            Err(keyf(
-                "Environment variable is not set in the environment where dsh-pro-max was launched",
-                &[],
-            ))
+fn request_api_key(api_key: Option<&str>, api_key_env: Option<&str>) -> Result<Option<String>, String> {
+    if let Some(value) = non_empty(api_key) {
+        if !value.bytes().all(|byte| (0x21..=0x7e).contains(&byte)) {
+            return Err(keyf("API key contains invalid characters", &[]));
         }
+        return Ok(Some(value.to_string()));
     }
+    let Some(reference) = non_empty(api_key_env) else { return Ok(None) };
+    let value = crate::model_credential_resolver::resolve(reference)?;
+    value.map(Some).ok_or_else(|| keyf("API key is not configured", &[]))
 }
 
 fn remote_models_url(base_url: &str, api: Option<&str>) -> Result<String, String> {
@@ -222,15 +221,12 @@ fn fetch_remote_models(
     base_url: &str,
     api: Option<&str>,
     api_key_env: Option<&str>,
+    api_key: Option<&str>,
     headers: Option<&BTreeMap<String, String>>,
 ) -> Result<Vec<String>, String> {
-    // apiKeyEnv 未配置 = 明确允许匿名模型发现；一旦配置则环境变量必须存在且
-    // 非空，不静默回退匿名访问，避免把凭据配置错误伪装成可用状态。
-    let key = if let Some(env_name) = non_empty(api_key_env) {
-        Some(required_env_value(env_name)?)
-    } else {
-        None
-    };
+    // Transient write-only key wins for an unsaved draft; otherwise resolve the stored
+    // reference using the same precedence as DSH credentials-local.
+    let key = request_api_key(api_key, api_key_env)?;
 
     let url = remote_models_url(base_url, api)?;
     let client = reqwest::blocking::Client::builder()
@@ -327,14 +323,11 @@ fn test_provider_connection(
     base_url: &str,
     api: &str,
     api_key_env: Option<&str>,
+    api_key: Option<&str>,
     headers: Option<&BTreeMap<String, String>>,
     model: &str,
 ) -> Result<(), String> {
-    let key = if let Some(env_name) = non_empty(api_key_env) {
-        Some(required_env_value(env_name)?)
-    } else {
-        None
-    };
+    let key = request_api_key(api_key, api_key_env)?;
     let url = provider_inference_url(base_url, api)?;
     let body = provider_test_body(api, model)?;
     let client = reqwest::blocking::Client::builder()
@@ -421,12 +414,14 @@ pub async fn model_test_connection(
     api_key_env: Option<String>,
     headers: Option<BTreeMap<String, String>>,
     model: String,
+    api_key: Option<String>,
 ) -> Result<(), String> {
     crate::dsh::ipc_blocking(move || {
         test_provider_connection(
             &base_url,
             &api,
             api_key_env.as_deref(),
+            api_key.as_deref(),
             headers.as_ref(),
             &model,
         )
@@ -440,12 +435,14 @@ pub async fn model_remote_list_with_headers(
     api: Option<String>,
     api_key_env: Option<String>,
     headers: Option<BTreeMap<String, String>>,
+    api_key: Option<String>,
 ) -> Result<Vec<String>, String> {
     crate::dsh::ipc_blocking(move || {
         let models = fetch_remote_models(
             &base_url,
             api.as_deref(),
             api_key_env.as_deref(),
+            api_key.as_deref(),
             headers.as_ref(),
         )?;
         remember_provider_models(
@@ -526,6 +523,13 @@ mod tests {
 
         let anthropic = provider_test_body("anthropic-messages", "m").unwrap();
         assert_eq!(anthropic["max_tokens"], 16);
+    }
+
+    #[test]
+    fn transient_api_key_is_validated_without_becoming_cache_identity() {
+        assert_eq!(request_api_key(Some("sk-test_123"), None).unwrap().as_deref(), Some("sk-test_123"));
+        assert!(request_api_key(Some("bad key"), None).is_err());
+        assert_eq!(request_api_key(None, None).unwrap(), None);
     }
 
     #[test]

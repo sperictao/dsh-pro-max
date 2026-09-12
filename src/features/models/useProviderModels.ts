@@ -31,12 +31,13 @@ function canDiscover(provider: ProviderConfig): boolean {
   return Boolean(baseURL) && validateBaseUrl(baseURL) == null;
 }
 
-async function fetchRemote(provider: ProviderConfig): Promise<string[]> {
+async function fetchRemote(provider: ProviderConfig, apiKey: string | null): Promise<string[]> {
   return await cmd.modelRemoteList(
     provider.baseURL ?? "",
     provider.api ?? null,
     provider.apiKeyEnv ?? null,
     provider.headers,
+    apiKey,
   );
 }
 
@@ -48,6 +49,7 @@ async function fetchRemote(provider: ProviderConfig): Promise<string[]> {
 export function useProviderModels(
   active: boolean,
   provider: ProviderConfig,
+  apiKey: string | null = null,
 ): ProviderModelsDiscovery {
   const [state, setState] = useState<ProviderModelsState>(IDLE);
   const requestSeq = useRef(0);
@@ -56,6 +58,8 @@ export function useProviderModels(
   stateRef.current = state;
   const paramsRef = useRef(provider);
   paramsRef.current = provider;
+  const apiKeyRef = useRef(apiKey);
+  apiKeyRef.current = apiKey;
 
   const baseURL = provider.baseURL ?? "";
   const api = provider.api ?? null;
@@ -79,7 +83,7 @@ export function useProviderModels(
       ...(previous.source ? { source: previous.source } : {}),
     });
     try {
-      const models = await fetchRemote(current);
+      const models = await fetchRemote(current, apiKeyRef.current);
       if (requestSeq.current !== requestId) return;
       if (models.length > 0) {
         setState({ status: "ready", models, source: "remote" });
@@ -116,15 +120,18 @@ export function useProviderModels(
     // persistent cache entry, if one exists, before the debounced live probe.
     setState(IDLE);
     void (async () => {
-      try {
-        const cached = await cmd.modelRemoteCacheGet(baseURL, api, apiKeyEnv, provider.headers);
-        if (requestSeq.current !== requestId) return;
-        if (cached?.models.length) {
-          setState({ status: "loading", models: cached.models, source: "cache" });
+      // A typed-but-unsaved key is a new credential boundary. Do not paint a cache
+      // produced by another key; the secret itself is never persisted in the cache key.
+      if (!apiKey) {
+        try {
+          const cached = await cmd.modelRemoteCacheGet(baseURL, api, apiKeyEnv, provider.headers);
+          if (requestSeq.current !== requestId) return;
+          if (cached?.models.length) {
+            setState({ status: "loading", models: cached.models, source: "cache" });
+          }
+        } catch {
+          // Cache is an optimization only; a damaged/unavailable cache never blocks live discovery.
         }
-      } catch {
-        // Cache is an optimization only; a damaged/unavailable cache never
-        // blocks live discovery.
       }
       if (requestSeq.current !== requestId) return;
       timerRef.current = setTimeout(() => void run(requestId), MODEL_DISCOVERY_DEBOUNCE_MS);
@@ -134,7 +141,7 @@ export function useProviderModels(
       requestSeq.current += 1;
       clearTimer();
     };
-  }, [active, baseURL, api, apiKeyEnv, hKey]);
+  }, [active, baseURL, api, apiKeyEnv, hKey, apiKey]);
 
   const reload = () => {
     if (!active || !canDiscover(paramsRef.current)) return;

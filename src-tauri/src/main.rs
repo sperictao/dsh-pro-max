@@ -12,6 +12,7 @@ mod dsh;
 mod i18n;
 mod logging;
 mod model_credentials;
+mod model_credential_resolver;
 mod model_remote;
 mod tray;
 mod updater;

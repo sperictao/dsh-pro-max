@@ -56,6 +56,7 @@ describe("ProviderDialog connection test", () => {
       "MY_GATEWAY_KEY",
       { "X-Tenant": "desktop" },
       "my-model",
+      null,
     );
     expect(await screen.findByRole("status")).toHaveTextContent("Connection successful");
   });
