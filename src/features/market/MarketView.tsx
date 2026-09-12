@@ -16,6 +16,7 @@ import {
   BTN_SM,
   INPUT,
   INPUT_MONO,
+  TOGGLE_LABELED,
 } from "@/shared/lib/ui";
 import { githubRepoId } from "@/shared/lib/specifier";
 import type {
@@ -787,8 +788,8 @@ function MarketCard({
     </button>
   );
 
-  // 启停开关（带状态文字的胶囊开关 text-switch，样式同 codex-pro-max
-  // 配置看守参数行）：写入是本地文件操作（瞬时，无 busy 态；重复点击幂等——
+  // 启停开关（带状态文字的胶囊开关 TOGGLE_LABELED，与设置页 TOGGLE 同一
+  // 配方文件）：写入是本地文件操作（瞬时，无 busy 态；重复点击幂等——
   // 判定核内容未变化即免写盘）。移除中禁用——翻转启停与移除后的孤儿行
   // 清理写同一 patch 文件，二者并发会互相覆盖。开关置于状态条左下角、
   // 胶囊文字即启停状态（Enabled/Disabled）；安装/更新/移除等操作在右下
@@ -796,7 +797,7 @@ function MarketCard({
   const toggleEnabledBtn = onSetEnabled && installed && !installed.managed && (
     <input
       type="checkbox"
-      className="text-switch"
+      className={TOGGLE_LABELED}
       role="switch"
       data-state-text={installed.enabled ? t("Enabled") : t("Disabled")}
       checked={installed.enabled}

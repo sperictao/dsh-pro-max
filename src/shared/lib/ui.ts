@@ -40,3 +40,12 @@ export const SELECT =
 
 export const TOGGLE =
   "relative h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full bg-input transition-colors outline-none checked:bg-primary focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 before:absolute before:left-0.5 before:top-0.5 before:h-4 before:w-4 before:rounded-full before:bg-background before:shadow-sm before:transition-transform checked:before:translate-x-4";
+
+// 带状态文字的胶囊开关（市场「启/停」状态条在用）：胶囊内居中显示 data-state-text，
+// 旋钮位移随 --sw-width 自动计算；v4 的 translate 与 scale 是独立属性，
+// checked + active 时位移与按下缩小自动叠加，无需成对规则
+// 用法：<input type="checkbox" className={TOGGLE_LABELED} data-state-text="Enabled">
+// - data-state-text：胶囊内文字（随状态切换由调用方更新）
+// - --sw-width：胶囊宽度（默认 6.25rem，容纳最长英文 "Disabled"）
+export const TOGGLE_LABELED =
+  "relative h-6 w-[var(--sw-width,6.25rem)] shrink-0 cursor-pointer appearance-none rounded-full bg-input outline-none transition-colors duration-200 checked:bg-primary focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 before:absolute before:left-0.5 before:top-0.5 before:h-5 before:w-5 before:rounded-full before:bg-background before:shadow-sm before:transition-transform before:duration-[250ms] before:ease-[cubic-bezier(0.34,1.56,0.64,1)] checked:before:translate-x-[calc(var(--sw-width,6.25rem)_-_24px)] after:pointer-events-none after:absolute after:left-1/2 after:top-1/2 after:z-[1] after:-translate-x-1/2 after:-translate-y-1/2 after:whitespace-nowrap after:text-xs after:font-medium after:leading-none after:opacity-70 after:transition-[color,opacity] after:duration-200 after:content-[attr(data-state-text)] checked:after:text-primary-foreground checked:after:opacity-100 active:not-disabled:before:scale-85";
