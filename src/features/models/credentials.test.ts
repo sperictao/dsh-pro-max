@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { apiKeyFailure, deriveCredentialRef } from "./credentials";
 
 describe("model credentials", () => {
-  it("derives the same conventional credential ref as DSH", () => {
+  it("derives DSH-compatible conventional credential refs", () => {
     expect(deriveCredentialRef("deepseek")).toBe("DEEPSEEK_API_KEY");
     expect(deriveCredentialRef("minimax-cn")).toBe("MINIMAX_CN_API_KEY");
     expect(deriveCredentialRef("my.gateway/v2")).toBe("MY_GATEWAY_V2_API_KEY");
