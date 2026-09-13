@@ -1278,7 +1278,7 @@ fn run_capture_lines_streams_lines_from_real_process() {
 #[ignore] // 仅由 timeout/cancel 回归测试作为子进程夹具显式调用
 fn run_capture_lines_fixture_hangs_after_output() {
     use std::io::Write;
-    print!("partial\n");
+    println!("partial");
     std::io::stdout().flush().expect("flush partial output");
     std::thread::sleep(std::time::Duration::from_secs(30));
 }
