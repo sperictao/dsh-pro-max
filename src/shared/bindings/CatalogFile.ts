@@ -8,4 +8,8 @@ export type CatalogFile = {
 /**
  * unix 秒（IPC 走 JSON number）
  */
-fetchedAt: number, providerCount?: number, entries: Array<CatalogEntry>, };
+fetchedAt: number, 
+/**
+ * models.dev 中至少发布一个模型的 provider 数；旧快照缺席时为 None。
+ */
+providerCount?: number, entries: Array<CatalogEntry>, };
