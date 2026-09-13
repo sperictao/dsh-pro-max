@@ -5,7 +5,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { i18n } from "@/shared/i18n";
-import { BTN_OUTLINE, BTN_PRIMARY } from "@/shared/lib/ui";
+import { BTN_OUTLINE, BTN_PRIMARY, MUTED } from "@/shared/lib/ui";
 import { useAppStore } from "@/shared/store";
 
 interface BoundaryState {
@@ -82,7 +82,7 @@ function CrashPanel({
         </button>
       </div>
       <details className="max-w-xl">
-        <summary className="cursor-pointer text-xs opacity-50">{t("Error details")}</summary>
+        <summary className={`cursor-pointer ${MUTED}`}>{t("Error details")}</summary>
         <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-xs opacity-60">
           {error.message}
           {stack ? `\n${stack}` : ""}

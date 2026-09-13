@@ -116,7 +116,7 @@ export function HeadersEditor({
   return (
     <div className="flex flex-col gap-2" data-testid="headers-editor">
       {reserved.length > 0 && (
-        <p role="alert" className="text-xs text-amber-700 dark:text-amber-400">
+        <p role="alert" className="text-xs text-(--status-warn)">
           {t("Reserved credential headers are ignored: {{names}}", { names: reserved.join(", ") })}
         </p>
       )}

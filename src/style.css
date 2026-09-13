@@ -72,6 +72,13 @@
 .status-badge.failed .dot { background-color: var(--destructive); }
 .status-badge.starting .dot,
 .status-badge.stopping .dot { background-color: var(--status-warn); }
+/* ok 变体：市场页安装/启用事实徽章（绿点 + 语义绿文字，同色淡底描边） */
+.status-badge.ok {
+  color: var(--status-ok);
+  border-color: color-mix(in srgb, var(--status-ok) 35%, transparent);
+  background-color: color-mix(in srgb, var(--status-ok) 10%, transparent);
+}
+.status-badge.ok .dot { background-color: var(--status-ok); }
 
 /* 选择卡（语言/模式/主题族通用）：默认边框，选中走 primary */
 .select-card {
@@ -108,7 +115,9 @@
 .select-card.selected .select-card-check { display: inline-flex; }
 
 /* 模式卡预览：迷你 UI 骨架（标题条 + 文本行 + 主按钮药丸）。
-   亮/暗固定色——预览的是模式本身，不随主题族 */
+   ★ 有意例外（DESIGN.md「Intentional exceptions」）：下方亮/暗固定灰阶
+   刻意硬编码——预览的是模式本身而非某个主题族，不随主题切换；
+   勿改成语义 token */
 .mode-preview {
   display: flex;
   width: 120px;
@@ -299,13 +308,21 @@
   height: 88px;
 }
 /* 光晕双层：近距高亮晕（清晰描边感）+ 远距柔光（保留悬浮深度）；
-   --icon-tint 为呼吸谷点的图标染色（状态色向白 30% 混合），峰点回到纯白 */
+   --icon-tint 为呼吸谷点的图标染色（状态色向白 30% 混合），峰点回到纯白。
+   渐变以 color-mix 从语义 token 派生亮/暗两端：ok/warn 走固定语义色，
+   错误随族走 --destructive（与状态文字同源，族切换后绿/黄/红角色不变）；
+   stopped 中性灰无语义变量对应（灰=停用的视觉惯例，不随主题族），有意例外 */
 .status-indicator-icon.running {
-  --icon-tint: #c2eecd;
-  background: radial-gradient(circle at 35% 30%, #78f59c 0%, #34c759 58%, #168d34 100%);
+  --icon-tint: color-mix(in oklab, var(--status-ok) 30%, white);
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in oklab, var(--status-ok) 65%, white) 0%,
+    var(--status-ok) 58%,
+    color-mix(in oklab, var(--status-ok) 72%, black) 100%
+  );
   box-shadow:
-    0 0 36px rgba(52, 199, 89, 0.55),
-    0 14px 44px rgba(52, 199, 89, 0.32);
+    0 0 36px color-mix(in srgb, var(--status-ok) 55%, transparent),
+    0 14px 44px color-mix(in srgb, var(--status-ok) 32%, transparent);
 }
 .status-indicator-icon.stopped {
   --icon-tint: #dddee0;
@@ -315,18 +332,28 @@
     0 14px 44px rgba(99, 99, 102, 0.26);
 }
 .status-indicator-icon.starting {
-  --icon-tint: #fff0b3;
-  background: radial-gradient(circle at 35% 30%, #ffe88a 0%, #ffcc00 58%, #ff9500 100%);
+  --icon-tint: color-mix(in oklab, var(--status-warn) 30%, white);
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in oklab, var(--status-warn) 65%, white) 0%,
+    var(--status-warn) 58%,
+    color-mix(in oklab, var(--status-warn) 72%, black) 100%
+  );
   box-shadow:
-    0 0 36px rgba(255, 149, 0, 0.55),
-    0 14px 44px rgba(255, 149, 0, 0.32);
+    0 0 36px color-mix(in srgb, var(--status-warn) 55%, transparent),
+    0 14px 44px color-mix(in srgb, var(--status-warn) 32%, transparent);
 }
 .status-indicator-icon.failed {
-  --icon-tint: #ffc4c1;
-  background: radial-gradient(circle at 35% 30%, #ff8d86 0%, #ff3b30 58%, #c82920 100%);
+  --icon-tint: color-mix(in oklab, var(--destructive) 30%, white);
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in oklab, var(--destructive) 65%, white) 0%,
+    var(--destructive) 58%,
+    color-mix(in oklab, var(--destructive) 72%, black) 100%
+  );
   box-shadow:
-    0 0 36px rgba(255, 59, 48, 0.55),
-    0 14px 44px rgba(255, 59, 48, 0.32);
+    0 0 36px color-mix(in srgb, var(--destructive) 55%, transparent),
+    0 14px 44px color-mix(in srgb, var(--destructive) 32%, transparent);
 }
 .status-indicator-text {
   font-size: 24px;
@@ -347,7 +374,7 @@
 }
 
 /* 首页一键三键放大档：仅作用于 .dsh-actions-row 内的按钮，
-   覆盖 BTN_PRIMARY/BTN_DESTRUCTIVE/BTN_OUTLINE 共享配方的 h-9 px-4 text-sm，
+   覆盖 BTN_PRIMARY/BTN_DANGER/BTN_OUTLINE 共享配方的 h-9 px-4 与字号，
    不影响市场/设置页同配方按钮 */
 .dsh-actions-row > button {
   height: 2.75rem;
@@ -459,12 +486,10 @@
   to { transform: rotate(360deg); }
 }
 
-/* 更新徽标（header 软件名右侧）：幽灵圆形按钮，绿色随亮暗模式
-   （参照 cc-switch：light green-600 / dark green-400 + 同色淡底 hover） */
-.update-badge { color: #16a34a; }
-.update-badge:hover { background-color: rgb(22 163 74 / 0.08); }
-[data-theme$="-dark"] .update-badge { color: #4ade80; }
-[data-theme$="-dark"] .update-badge:hover { background-color: rgb(74 222 128 / 0.12); }
+/* 更新徽标（header 软件名右侧）：幽灵圆形按钮，绿色取状态语义 --status-ok
+   （亮暗共用一值，无需暗色特例）；hover 淡底为同色透明叠色 */
+.update-badge { color: var(--status-ok); }
+.update-badge:hover { background-color: color-mix(in srgb, var(--status-ok) 8%, transparent); }
 
 /* 收藏星标切换回弹：外层 span 以 favorited 为 key 重挂载重播 */
 .star-pop { animation: star-pop 0.3s ease; }
@@ -472,64 +497,4 @@
   0% { transform: scale(0.6); }
   60% { transform: scale(1.25); }
   100% { transform: scale(1); }
-}
-
-/* 带状态文字的胶囊开关（移植自 codex-pro-max 配置看守参数行，规则同源）：
-   胶囊内居中显示 data-state-text，旋钮位移随 --sw-width 自动计算
-   用法：<input type="checkbox" class="text-switch" data-state-text="已启用">
-   - data-state-text：胶囊内文字（随状态切换由调用方更新）
-   - --sw-width：胶囊宽度，默认 6.25rem（100px，容纳最长英文 "Disabled"） */
-.text-switch {
-  position: relative;
-  flex-shrink: 0;
-  width: var(--sw-width, 6.25rem);
-  height: 1.5rem;
-  appearance: none;
-  border: none;
-  border-radius: 9999px;
-  background: var(--input);
-  cursor: pointer;
-  outline: none;
-  transition: background-color 0.2s ease;
-}
-.text-switch:checked { background: var(--primary); }
-.text-switch:disabled { cursor: not-allowed; opacity: 0.5; }
-.text-switch:focus-visible { box-shadow: 0 0 0 2px var(--ring); }
-/* 旋钮：20px，四边各留 2px，checked 位移 = 宽度 - 24px */
-.text-switch::before {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--background);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  /* 弹性滑动：轻微过冲回弹，比线性 ease 更有质感 */
-  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-.text-switch:checked::before { transform: translateX(calc(var(--sw-width, 6.25rem) - 24px)); }
-/* 按下时旋钮轻微缩小，给触摸反馈 */
-.text-switch:active:not(:disabled)::before { transform: scale(0.85); }
-.text-switch:checked:active:not(:disabled)::before { transform: translateX(calc(var(--sw-width, 6.25rem) - 24px)) scale(0.85); }
-/* 状态文字：始终居中，置于旋钮之上 */
-.text-switch::after {
-  content: attr(data-state-text);
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 1;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
-  opacity: 0.7;
-  pointer-events: none;
-  transition: color 0.2s ease, opacity 0.2s ease;
-}
-.text-switch:checked::after {
-  color: var(--primary-foreground);
-  opacity: 1;
 }

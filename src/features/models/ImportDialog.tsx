@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { BTN, BTN_PRIMARY, BTN_SM, INPUT } from "@/shared/lib/ui";
+import { BTN, BTN_PRIMARY, BTN_SM, INPUT, MODAL_OVERLAY, MODAL_PANEL, MUTED, MUTED_STRONG } from "@/shared/lib/ui";
 import * as cmd from "@/shared/commands";
 import type { ImportGroup, ImportRunResult } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
@@ -105,7 +105,7 @@ export function ImportDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      className={MODAL_OVERLAY}
       role="dialog"
       aria-modal="true"
       aria-label={t("Import provider configuration")}
@@ -117,7 +117,7 @@ export function ImportDialog({
         if (e.target === e.currentTarget && !running) onClose();
       }}
     >
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col gap-3 overflow-y-auto rounded-lg border border-border bg-background p-5 shadow-lg">
+      <div className={`flex max-h-[85vh] w-full max-w-2xl flex-col gap-3 overflow-y-auto ${MODAL_PANEL} p-5`}>
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">{t("Import provider configuration")}</h3>
           <button type="button" className={BTN_SM} onClick={onClose} aria-label={t("Close")}>
@@ -169,7 +169,7 @@ export function ImportDialog({
                       aria-label={group.source}
                     />
                     <span>{sourceLabel(group.source)}</span>
-                    <span className="rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-normal opacity-70">
+                    <span className={`rounded-full bg-muted px-1.5 py-0.5 font-normal ${MUTED_STRONG}`}>
                       {group.entries.length}
                     </span>
                   </label>
@@ -189,13 +189,13 @@ export function ImportDialog({
                               <span className="truncate font-mono text-xs font-medium">{e.route}</span>
                               <span className="truncate text-xs opacity-60">{e.name}</span>
                             </span>
-                            <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] opacity-60">
+                            <span className={`mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 ${MUTED}`}>
                               {e.baseURL && <span className="truncate">{e.baseURL}</span>}
                               {e.credential === "env" && e.apiKeyEnv && (
                                 <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{e.apiKeyEnv}</span>
                               )}
                               {e.credential === "literal" && (
-                                <span className="font-medium text-amber-700 opacity-100 dark:text-amber-400">
+                                <span className="font-medium text-(--status-warn) opacity-100">
                                   {t("Literal key — not imported")}
                                 </span>
                               )}

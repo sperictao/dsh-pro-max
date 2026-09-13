@@ -9,7 +9,7 @@ import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
-import { BTN, BTN_SM } from "@/shared/lib/ui";
+import { BTN, BTN_SM, MUTED } from "@/shared/lib/ui";
 import { tErr } from "@/shared/i18n/error";
 
 // 已装版本相对验证栈的状态胶囊（颜色即语义）；调用方保证已安装
@@ -122,7 +122,7 @@ export function DshVersionSection() {
                     <span className="shrink-0 text-xs text-destructive">{t("incompatible with the bundled plugin stack")}</span>
                   )}
                   {tag.aboveSupported && !tag.incompatible && !tag.isInstalled && (
-                    <span className="shrink-0 text-xs opacity-50">{t("unverified")}</span>
+                    <span className={`shrink-0 ${MUTED}`}>{t("unverified")}</span>
                   )}
                 </span>
                 {!tag.isInstalled && (
@@ -143,7 +143,7 @@ export function DshVersionSection() {
             {t("Checking the npm registry…")}
           </div>
         )}
-        <p className="text-xs opacity-50">
+        <p className={MUTED}>
           {t("The verified stack is {{version}} — the dsh version this app's bundled authorization plugins are tested against. Versions marked incompatible break local & remote access; ones marked unverified are newer same-line releases with untested remote authorization.", { version: info?.supportedVersion || "…" })}
         </p>
 

@@ -9,6 +9,7 @@ import type {
   DiscoveryCompat,
   InstalledPlugin,
   InstallNotice,
+  InstallOutcome,
   MarketCatalog,
   MarketInstallLogEvent,
   PluginReleaseNotes,
@@ -36,6 +37,65 @@ function installNoticeText(notices: InstallNotice[]): string {
     )
     .filter(Boolean)
     .join(" ");
+}
+
+type InstalledOutcome = Extract<InstallOutcome, { status: "installed" }>;
+type MarketToast = (message: string, type?: "info" | "error" | "success") => void;
+
+function notifyInstallOutcome(
+  toast: MarketToast,
+  outcome: InstalledOutcome,
+  label: string,
+  verb: "installed" | "updated",
+  silent = false,
+): void {
+  const receipt = outcome.receipt;
+  if (!silent) {
+    const message =
+      verb === "installed"
+        ? receipt
+          ? i18n.t("Plugin installed: {{name}} ({{spec}})", { name: receipt.name, spec: receipt.spec })
+          : i18n.t("Plugin installed: {{name}}", { name: label })
+        : receipt
+          ? i18n.t("Plugin updated: {{name}} ({{spec}})", { name: receipt.name, spec: receipt.spec })
+          : i18n.t("Plugin updated: {{name}}", { name: label });
+    toast(message, "success");
+  }
+  const notices = installNoticeText(outcome.notices);
+  if (notices) toast(notices, "info");
+}
+
+type MarketOperationState = Pick<
+  MarketSlice,
+  | "marketInstalling"
+  | "marketUpdating"
+  | "marketRemoving"
+  | "marketUpdateAllQueue"
+  | "marketUpdateAllPrefetching"
+  | "marketPendingApproval"
+  | "marketReleaseAgeConfirm"
+>;
+
+/**
+ * The profile is a single pnpm workspace, so every write must share one gate.
+ * Batch queue state is ignored only by the batch driver itself; user actions
+ * must wait until the whole queued operation has settled.
+ */
+function hasMarketOperation(
+  state: MarketOperationState,
+  options: { allowBatchQueue?: boolean; allowApproval?: boolean } = {},
+): boolean {
+  if (
+    state.marketInstalling !== null ||
+    state.marketUpdating !== null ||
+    state.marketRemoving !== null ||
+    state.marketUpdateAllPrefetching
+  ) {
+    return true;
+  }
+  if (!options.allowBatchQueue && state.marketUpdateAllQueue !== null) return true;
+  if (!options.allowApproval && state.marketPendingApproval !== null) return true;
+  return state.marketReleaseAgeConfirm !== null;
 }
 
 /// 更新/重装的安装标识拼装：GitHub 仓库形态（github:/git+https: 落盘形态，
@@ -229,7 +289,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   // （卡片失败态持久展示 + 日志留存），重试或关闭时清除。被 pnpm 拦截构建
   // 脚本时清 busy 挂起审批（对话框需要可交互），不当作失败
   installMarketPlugin: async (specifier, label) => {
-    if (get().marketInstalling) return;
+    if (hasMarketOperation(get())) return;
     set({ marketInstalling: specifier, marketInstallLog: { specifier, lines: [] }, marketInstallError: null });
     try {
       const outcome = await cmd.marketInstall(specifier);
@@ -246,15 +306,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
         });
         return;
       }
-      const receipt = outcome.receipt;
-      get().toast(
-        receipt
-          ? i18n.t("Plugin installed: {{name}} ({{spec}})", { name: receipt.name, spec: receipt.spec })
-          : i18n.t("Plugin installed: {{name}}", { name: label }),
-        "success",
-      );
-      const notices = installNoticeText(outcome.notices);
-      if (notices) get().toast(notices, "info");
+      notifyInstallOutcome(get().toast, outcome, label, "installed");
       set({ marketInstallLog: null });
       await get().refreshMarketInstalled();
     } catch (e) {
@@ -269,7 +321,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   // 失败保留挂起状态，用户可重试或取消；重跑输出同样经事件桥进卡片明细
   approveMarketBuilds: async () => {
     const pending = get().marketPendingApproval;
-    if (!pending || get().marketInstalling) return;
+    if (!pending || hasMarketOperation(get(), { allowApproval: true, allowBatchQueue: true })) return;
     const { specifier } = pending;
     set({ marketInstalling: specifier, marketInstallLog: { specifier, lines: [] }, marketInstallError: null });
     try {
@@ -286,21 +338,19 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
         });
         return;
       }
-      const receipt = outcome.receipt;
-      get().toast(
-        receipt
-          ? i18n.t("Plugin installed: {{name}} ({{spec}})", { name: receipt.name, spec: receipt.spec })
-          : i18n.t("Plugin installed: {{name}}", { name: pending.label }),
-        "success",
-      );
-      const notices = installNoticeText(outcome.notices);
-      if (notices) get().toast(notices, "info");
+      notifyInstallOutcome(get().toast, outcome, pending.label, "installed");
       set({ marketPendingApproval: null, marketInstallLog: null });
       await get().refreshMarketInstalled();
       // 批量更新中撞审批后放行成功：弹队首（本项已装好）续传下一个。
       // 单卡安装路径无 marketUpdateAllQueue，不入此分支
       if (get().marketUpdateAllQueue) {
-        set((s) => ({ marketUpdateAllQueue: s.marketUpdateAllQueue!.slice(1), marketUpdateAllOk: s.marketUpdateAllOk + 1 }));
+        // finally runs after this branch; release the current install before
+        // handing control back to the batch driver.
+        set((s) => ({
+          marketInstalling: null,
+          marketUpdateAllQueue: s.marketUpdateAllQueue!.slice(1),
+          marketUpdateAllOk: s.marketUpdateAllOk + 1,
+        }));
         await get().resumeMarketUpdateAll();
       }
     } catch (e) {
@@ -326,7 +376,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   },
 
   removeMarketPlugin: async (name) => {
-    if (get().marketRemoving) return;
+    if (hasMarketOperation(get())) return;
     set({ marketRemoving: name });
     try {
       await cmd.marketRemove(name);
@@ -343,6 +393,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   // 运行中的 dsh 不受影响）。落盘回执（重读后的落盘事实）与请求一致才出
   // 变更 toast；不一致 = 内容未变化的空操作（重复启停），如实提示没改
   setMarketPluginEnabled: async (name, enabled) => {
+    if (hasMarketOperation(get())) return;
     try {
       const receipt = await cmd.marketSetPluginEnabled(name, enabled);
       if (receipt.enabled === enabled) {
@@ -392,7 +443,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   // toast，明细不驻留
   updateMarketPlugin: async (name, opts) => {
     const silent = opts?.silent ?? false;
-    if (get().marketUpdating) return false;
+    if (hasMarketOperation(get(), { allowBatchQueue: true })) return false;
     const info = get().marketUpdates?.[name];
     if (!opts?.releaseAgePin && info?.updateAvailable && info.latestInReleaseAgeWindow && info.latestVersion) {
       set({
@@ -429,17 +480,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
         return false;
       }
       const receipt = outcome.receipt;
-      if (!silent) {
-        get().toast(
-          receipt
-            ? i18n.t("Plugin updated: {{name}} ({{spec}})", { name: receipt.name, spec: receipt.spec })
-            : i18n.t("Plugin updated: {{name}}", { name }),
-          "success",
-        );
-      }
-      // 护栏事实（重复挂载剥离）不受 silent 影响：批量更新里同样必须可见
-      const notices = installNoticeText(outcome.notices);
-      if (notices) get().toast(notices, "info");
+      notifyInstallOutcome(get().toast, outcome, name, "updated", silent);
       // 回执背书的乐观收敛：@latest/钉定版本装成 = 已到检测时的 latest，
       // 本包"有更新"即刻为假（徽章与 Update 按钮随回执消失，不等后台
       // registry 重检）。installedVersion 的暂态失真可容忍：卡片版本号读
@@ -515,7 +556,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       // Update 按钮已禁用，批量入口同样排除
       .filter((u) => u.updateAvailable && !u.managed && u.compatible !== false)
       .map((u) => u.name);
-    if (targets.length === 0 || get().marketUpdating || get().marketUpdateAllPrefetching) return;
+    if (targets.length === 0 || hasMarketOperation(get())) return;
     // 预下载候选：与后续安装同源生成 specifier，npm 形态（githubRepoId(spec)
     // 为 null）才预热；窗口项生成 name@latestVersion 钉版本，同样可预热
     const npmSpecifiers = targets
@@ -547,6 +588,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   resumeMarketUpdateAll: async () => {
     if (get().marketUpdating) return;
     if (get().marketPendingApproval || get().marketReleaseAgeConfirm) return;
+    if (hasMarketOperation(get(), { allowBatchQueue: true })) return;
     const queue = get().marketUpdateAllQueue;
     if (!queue) return;
     // 队列已空但仍持中继态（最后一项经 confirm/dismiss 弹空后触发）：收尾

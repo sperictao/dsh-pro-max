@@ -8,7 +8,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
-import { BTN, BTN_DANGER_SM, BTN_PRIMARY, BTN_SM, INPUT, SELECT } from "@/shared/lib/ui";
+import {
+  BTN,
+  BTN_DANGER_SM,
+  BTN_PRIMARY,
+  BTN_SM,
+  INPUT,
+  MUTED,
+  PANEL,
+  ROW_ICON_BUTTON,
+  SELECT,
+} from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelConfig, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
@@ -38,8 +48,6 @@ const EMPTY_CONFIG: ModelConfig = {
   providers: [],
 };
 
-const ROW_ICON_BUTTON =
-  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50";
 const ROW_ICON_DANGER =
   `${ROW_ICON_BUTTON} text-destructive hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive`;
 
@@ -570,7 +578,7 @@ export function ModelsView() {
         </div>
 
         {/* —— Defaults：只呈现当前事实与两个高频选择 —— */}
-        <section className="rounded-xl border border-border bg-card p-4" id="models-default">
+        <section className={`${PANEL} p-4`} id="models-default">
           <h3 className="mb-1 text-sm font-medium">{t("Default Model")}</h3>
           <div className="divide-y divide-border">
             <div className="flex min-h-14 items-center gap-4 py-3">
@@ -633,7 +641,7 @@ export function ModelsView() {
         </section>
 
         {/* —— Provider Studio —— */}
-        <section className="rounded-xl border border-border bg-card" id="models-providers">
+        <section className={PANEL} id="models-providers">
           <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">
             <h3 className="flex items-center gap-2 text-sm font-medium">
               {t("AI providers")}
@@ -771,7 +779,7 @@ export function ModelsView() {
                               {`${t("Remove")} ${provider.displayName ?? provider.route}?`}
                             </div>
                             {isDefault && (
-                              <div className="mt-0.5 text-[11px] opacity-60">
+                              <div className={`mt-0.5 ${MUTED}`}>
                                 {`${t("Default model")}: ${
                                   fallbackProvider && removalPreview?.defaultModel
                                     ? `${fallbackProvider.displayName ?? fallbackProvider.route} · ${removalPreview.defaultModel}`

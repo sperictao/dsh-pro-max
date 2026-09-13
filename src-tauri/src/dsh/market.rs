@@ -1271,6 +1271,18 @@ pub(crate) fn failure_raw(stdout: &str, stderr: &str, action: &str) -> String {
 /// 已结束的命令）
 static ACTIVE_PLUGIN_CMD: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 
+/// All plugin mutations share one web profile. Keep the lock at the command
+/// boundary so install guards, rollback, approvals, removals, and patch edits
+/// cannot interleave when two IPC requests arrive at once.
+static PLUGIN_OPERATION_LOCK: Mutex<()> = Mutex::new(());
+
+fn with_plugin_operation<T>(operation: impl FnOnce() -> T) -> T {
+    let _guard = PLUGIN_OPERATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    operation()
+}
+
 /// 执行 dsh plugin 子命令；每行输出经 on_line 实时回调（首行是执行命令本身，
 /// 与实际 argv 同一拼装），Err 的 (raw, display) 中 raw 是本地化前的原始
 /// 输出（stdout+stderr 合并，见 failure_raw；审计台账的可复述事实，不随
@@ -2387,7 +2399,7 @@ pub async fn market_install(
     app: tauri::AppHandle,
     specifier: String,
 ) -> Result<InstallOutcome, String> {
-    super::ipc_blocking(move || install_once(&app, &specifier)).await
+    super::ipc_blocking(move || with_plugin_operation(|| install_once(&app, &specifier))).await
 }
 
 /// 用户审批放行构建脚本后的执行体（market_approve_builds 的阻塞部分）：
@@ -2452,7 +2464,10 @@ pub async fn market_approve_builds(
     {
         return Err("Invalid plugin identifier".to_string());
     }
-    super::ipc_blocking(move || approve_builds_once(&app, &specifier, packages)).await
+    super::ipc_blocking(move || {
+        with_plugin_operation(|| approve_builds_once(&app, &specifier, packages))
+    })
+    .await
 }
 
 /// 启停执行体（market_set_plugin_enabled 的阻塞部分）：判定核在前，写盘
@@ -2532,7 +2547,10 @@ pub async fn market_set_plugin_enabled(
     if !valid_identifier(&name) {
         return Err("Invalid plugin identifier".to_string());
     }
-    super::ipc_blocking(move || set_plugin_enabled_once(&app, &name, enabled)).await
+    super::ipc_blocking(move || {
+        with_plugin_operation(|| set_plugin_enabled_once(&app, &name, enabled))
+    })
+    .await
 }
 
 /// 移除后清理孤儿 disabled 覆盖行（只动本插件 claimed 入口的覆盖形态，尽力
@@ -2576,7 +2594,7 @@ fn remove_once(app: &tauri::AppHandle, name: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn market_remove(app: tauri::AppHandle, name: String) -> Result<(), String> {
-    super::ipc_blocking(move || remove_once(&app, &name)).await
+    super::ipc_blocking(move || with_plugin_operation(|| remove_once(&app, &name))).await
 }
 
 /// 更新检测：npm 形态已装插件比对 registry latest（进入市场页自动跑，

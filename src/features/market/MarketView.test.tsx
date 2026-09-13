@@ -110,6 +110,11 @@ beforeEach(() => {
     // 后续测试会让所有重检被 busy 守卫拦掉（卡片永远等不到 outdated 数据）
     marketUpdates: null,
     marketUpdatesBusy: false,
+    marketUpdating: null,
+    marketUpdateAllQueue: null,
+    marketUpdateAllOk: 0,
+    marketUpdateAllFailed: 0,
+    marketUpdateAllPrefetching: false,
     marketFavorites: [],
     marketCompat: {},
     marketReleaseNotes: null,
@@ -260,6 +265,62 @@ describe("normalizeCustomSpecifier", () => {
     expect(normalizeCustomSpecifier("github:o#x/r")).toBeNull();
     // `^` 范围形态不在白名单字符集内，如实拒绝
     expect(normalizeCustomSpecifier("pkg@^1.2.3")).toBeNull();
+  });
+});
+
+describe("market operation serialization", () => {
+  it("does not start an install while an update is active", async () => {
+    let resolveUpdate: (outcome: InstallOutcome) => void = () => {};
+    let calls = 0;
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockImplementation(
+      () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Promise<InstallOutcome>((resolve) => {
+            resolveUpdate = resolve;
+          });
+        }
+        return Promise.resolve({
+          status: "installed",
+          receipt: { name: "dsh-other", spec: "dsh-other@1.0.0" },
+          notices: [],
+        });
+      },
+    );
+    useAppStore.setState({
+      marketInstalled: [
+        { name: "dsh-existing", spec: "dsh-existing@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      ],
+      marketUpdates: {
+        "dsh-existing": {
+          name: "dsh-existing",
+          spec: "dsh-existing@1.0.0",
+          managed: false,
+          installedVersion: "1.0.0",
+          latestVersion: "2.0.0",
+          latestInReleaseAgeWindow: false,
+          latestPublishTime: null,
+          requiresDsh: null,
+          compatible: null,
+          updateAvailable: true,
+        },
+      },
+    });
+
+    const update = useAppStore.getState().updateMarketPlugin("dsh-existing");
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-existing@latest"));
+
+    // A second write would race the same web profile. The store gate must
+    // leave the active update untouched and reject this install request.
+    await useAppStore.getState().installMarketPlugin("dsh-other@latest", "dsh-other");
+    expect(installSpy).toHaveBeenCalledTimes(1);
+
+    resolveUpdate({
+      status: "installed",
+      receipt: { name: "dsh-existing", spec: "dsh-existing@2.0.0" },
+      notices: [],
+    });
+    await update;
   });
 });
 

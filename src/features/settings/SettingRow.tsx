@@ -2,11 +2,12 @@
 // 行间分隔线由 SettingsCard 的 divide-y 提供，行自身不画边框。
 
 import type { ReactNode } from "react";
+import { PANEL } from "@/shared/lib/ui";
 
 // 分组卡片：一组设置行的容器
 export function SettingsCard({ children }: { children: ReactNode }) {
   return (
-    <div className="flex max-w-2xl flex-col divide-y divide-border/60 rounded-xl border border-border bg-card p-4 text-card-foreground">
+    <div className={`flex max-w-2xl flex-col divide-y divide-border/60 ${PANEL} p-4`}>
       {children}
     </div>
   );

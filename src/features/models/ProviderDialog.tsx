@@ -6,7 +6,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as cmd from "@/shared/commands";
-import { BTN, BTN_DANGER, BTN_PRIMARY, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
+import { BTN, BTN_DANGER, BTN_PRIMARY, BTN_SM, INPUT, INPUT_MONO, MODAL_OVERLAY, MODAL_PANEL, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 import { HeadersEditor } from "./HeadersEditor";
@@ -322,7 +322,7 @@ export function ProviderDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      className={MODAL_OVERLAY}
       role="dialog"
       aria-modal="true"
       aria-label={isEdit ? t("Edit provider") : t("Add provider")}
@@ -341,7 +341,7 @@ export function ProviderDialog({
       }}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+        className={`flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden ${MODAL_PANEL}`}
         aria-busy={saving}
       >
         <div className="shrink-0 border-b border-border">

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore, isConfigDirty, type SettingsSection } from "@/shared/store";
-import { BTN, BTN_PRIMARY } from "@/shared/lib/ui";
+import { BTN, BTN_PRIMARY, MUTED } from "@/shared/lib/ui";
 import { isValidCatalogUrl } from "./validation";
 import { GeneralSection } from "./GeneralSection";
 import { AppearanceSection } from "./AppearanceSection";
@@ -81,7 +81,7 @@ export function SettingsView() {
         <nav className="flex w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-3">
           {SECTION_GROUPS.map((g) => (
             <div className="flex flex-col gap-0.5" key={g.labelKey}>
-              <div className="px-2.5 pb-1 text-[11px] font-medium tracking-wide opacity-45">
+              <div className={`px-2.5 pb-1 font-medium tracking-wide ${MUTED}`}>
                 {t(g.labelKey)}
               </div>
               {g.sections.map((s) => (
