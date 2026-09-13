@@ -18,6 +18,12 @@ const tauriConfPath = "src-tauri/tauri.conf.json";
 const tauriConf = JSON.parse(read(tauriConfPath));
 const tauriVersion = tauriConf.version;
 const cargoVersion = read("src-tauri/Cargo.toml").match(/^version = "([^"]+)"$/m)?.[1];
+// Cargo.lock 也记录 workspace 包自身的版本，且 cargo 会在任意命令里就地改写它。
+// bump 上面三处却漏了它，之后每次 cargo test 都会留下假脏 diff，CI 的
+// generated-artifacts 守卫也会红。
+const lockVersion = read("src-tauri/Cargo.lock").match(
+  /\[\[package\]\]\nname = "dsh-pro-max"\nversion = "([^"]+)"/,
+)?.[1];
 
 const failures = [];
 if (!cargoVersion) {
@@ -26,6 +32,13 @@ if (!cargoVersion) {
 if (pkgVersion !== tauriVersion || tauriVersion !== cargoVersion) {
   failures.push(
     `版本号三处不一致：package.json=${pkgVersion} tauri.conf.json=${tauriVersion} Cargo.toml=${cargoVersion}`,
+  );
+}
+if (!lockVersion) {
+  failures.push("src-tauri/Cargo.lock 找不到 dsh-pro-max 的 package 版本");
+} else if (lockVersion !== pkgVersion) {
+  failures.push(
+    `src-tauri/Cargo.lock 版本号未同步：Cargo.lock=${lockVersion}，期望 ${pkgVersion}（跑一次 cargo check 就地同步后一并提交）`,
   );
 }
 

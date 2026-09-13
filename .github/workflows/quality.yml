@@ -70,6 +70,11 @@ jobs:
       - name: Build bundled dsh plugins
         run: pnpm run build:dsh-plugins
       - name: Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: Test
         run: cargo test --manifest-path src-tauri/Cargo.toml
+      # cargo test 会就地重写 ts-rs 生成物与 Cargo.lock。跑完测试必须与提交内容
+      # 一致：不一致说明 Rust 结构改了却没有重新生成，前端会静默拿到过期类型；
+      # 或版本号 bump 后 Cargo.lock 未同步（见 AGENTS.md 发布流程）。
+      - name: Generated artifacts are in sync
+        run: git diff --exit-code -- src/shared/bindings src-tauri/Cargo.lock
