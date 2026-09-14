@@ -24,8 +24,6 @@ jobs:
       - run: pnpm install
       - name: Apply patch
         run: python .github/scripts/apply_frontend_audit_followups.py
-      - name: Format touched files
-        run: pnpm exec prettier --write src/shared/store/slices/market.ts src/features/market/MarketView.test.tsx src/features/models/ProviderDialog.tsx src/features/models/ProviderDialog.close.test.tsx src/features/models/readiness.ts src/features/models/readiness.test.ts src/features/models/ModelsView.tsx src/shared/commands.ts
       - name: TypeScript
         run: pnpm exec tsc --noEmit
       - name: Focused frontend tests
