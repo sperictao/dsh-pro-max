@@ -195,6 +195,32 @@ describe("ProviderDialog close behavior", () => {
     expect(within(dialog).getByTestId("provider-discard-confirm")).toBeInTheDocument();
   });
 
+  it("moves initial focus into the modal and keeps Tab navigation inside it", async () => {
+    const user = userEvent.setup();
+    renderEdit();
+    const dialog = screen.getByRole("dialog", { name: "Edit provider" });
+    const displayName = within(dialog).getByLabelText("Display Name");
+
+    await waitFor(() => expect(displayName).toHaveFocus());
+    const focusable = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    expect(first).toBeTruthy();
+    expect(last).toBeTruthy();
+
+    last.focus();
+    await user.tab();
+    expect(first).toHaveFocus();
+
+    first.focus();
+    await user.tab({ shift: true });
+    expect(last).toHaveFocus();
+  });
+
   it("restores focus to the control that opened the dialog after a real close", async () => {
     const user = userEvent.setup();
 

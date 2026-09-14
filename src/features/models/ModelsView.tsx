@@ -26,7 +26,7 @@ import { deriveCredentialRef, type CredentialWrite } from "./credentials";
 import { ImportDialog } from "./ImportDialog";
 import {
   launcherRemoteProbeAllowed,
-  providerEnvNames,
+  providerCredentialRefs,
   providerReadiness,
   type ProviderReadiness,
 } from "./readiness";
@@ -65,9 +65,9 @@ function configValidationError(config: ModelConfig): string | null {
   return null;
 }
 
-async function resolveProviderEnvStatus(providers: ProviderConfig[]): Promise<Record<string, boolean>> {
-  const names = providerEnvNames(providers);
-  return names.length > 0 ? cmd.modelEnvStatus(names) : {};
+async function resolveProviderCredentialStatus(providers: ProviderConfig[]): Promise<Record<string, boolean>> {
+  const names = providerCredentialRefs(providers);
+  return names.length > 0 ? cmd.modelCredentialStatus(names) : {};
 }
 
 /** Match DSH Models ownership: only this page's derived, configured, writable key is ours to remove. */
@@ -166,7 +166,7 @@ export function ModelsView() {
   const toast = useAppStore((state) => state.toast);
   const loadModelConfig = useAppStore((state) => state.loadModelConfig);
   const [config, setConfig] = useState<ModelConfig | null>(null);
-  const [envStatus, setEnvStatus] = useState<Record<string, boolean> | null>(null);
+  const [credentialStatus, setCredentialStatus] = useState<Record<string, boolean> | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyRoute, setBusyRoute] = useState<string | null>(null);
   const [probingRoute, setProbingRoute] = useState<string | null>(null);
@@ -194,13 +194,13 @@ export function ModelsView() {
         const loaded = await loadModelConfig();
         let status: Record<string, boolean> = {};
         try {
-          status = await resolveProviderEnvStatus(loaded.providers);
+          status = await resolveProviderCredentialStatus(loaded.providers);
         } catch {
           // IPC 已统一记日志；这里 fail-closed，避免把未知状态误标成 Ready。
         }
         if (!disposed) {
           setConfig(loaded);
-          setEnvStatus(status);
+          setCredentialStatus(status);
         }
       } catch (error) {
         if (!disposed) toast(tErr(String(error)), "error");
@@ -268,7 +268,7 @@ export function ModelsView() {
 
   const cfg = config ?? EMPTY_CONFIG;
   const readinessByRoute = new Map(
-    cfg.providers.map((provider) => [provider.route, providerReadiness(provider, envStatus)] as const),
+    cfg.providers.map((provider) => [provider.route, providerReadiness(provider, credentialStatus)] as const),
   );
   const readyRoutes = new Set(
     cfg.providers
@@ -329,12 +329,12 @@ export function ModelsView() {
       await cmd.modelConfigSave(next);
       let status: Record<string, boolean> = {};
       try {
-        status = await resolveProviderEnvStatus(next.providers);
+        status = await resolveProviderCredentialStatus(next.providers);
       } catch {
         // 保存事实仍成功；readiness 查询失败时保持 fail-closed。
       }
       setConfig(next);
-      setEnvStatus(status);
+      setCredentialStatus(status);
     } catch (error) {
       if (reportError) toast(tErr(String(error)), "error");
       throw error;
@@ -392,18 +392,18 @@ export function ModelsView() {
           current,
           provider,
           originalRoute,
-          credential == null && providerReadiness(provider, envStatus).ready,
+          credential == null && providerReadiness(provider, credentialStatus).ready,
         ),
         catalog,
       );
       await persist(next, provider.route, false);
     }
 
-    let status = envStatus ?? {};
+    let status = credentialStatus ?? {};
     if (credential) {
       const stored = await cmd.modelCredentialSet(credential.ref, credential.value);
       status = { ...status, [credential.ref]: stored.configured };
-      setEnvStatus(status);
+      setCredentialStatus(status);
     }
 
     // A newly stored credential can make the first provider Ready only after the
@@ -489,7 +489,7 @@ export function ModelsView() {
   /** 连接测试与模型发现分离：真实推理请求验证 endpoint/auth/model，绝不调用 /models。 */
   const testProvider = async (provider: ProviderConfig) => {
     const target = providerConnectionTarget(provider);
-    const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
+    const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, credentialStatus);
     if (!target || !launcherRemoteProbeAllowed(readiness)) return;
     setTestingRoute(provider.route);
     const providerName = provider.displayName ?? provider.route;
@@ -511,7 +511,7 @@ export function ModelsView() {
 
   /** 服务行模型发现：显式 env 或匿名自定义端点由 Launcher 探测；provider-auth 留给 dsh/pi-ai。 */
   const probeProvider = async (provider: ProviderConfig) => {
-    const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
+    const readiness = readinessByRoute.get(provider.route) ?? providerReadiness(provider, credentialStatus);
     if (!provider.baseURL?.trim() || !launcherRemoteProbeAllowed(readiness)) return;
     setProbingRoute(provider.route);
     const providerName = provider.displayName ?? provider.route;
@@ -691,7 +691,7 @@ export function ModelsView() {
                 const firstModel = firstProviderModelId(provider);
                 const displayModel = provider.models[0]?.id ?? null;
                 const readiness =
-                  readinessByRoute.get(provider.route) ?? providerReadiness(provider, envStatus);
+                  readinessByRoute.get(provider.route) ?? providerReadiness(provider, credentialStatus);
                 const launcherProbeAllowed = launcherRemoteProbeAllowed(readiness);
                 const canTest = Boolean(providerConnectionTarget(provider)) && launcherProbeAllowed;
                 const canProbe = Boolean(provider.baseURL?.trim()) && launcherProbeAllowed;
@@ -951,12 +951,12 @@ export function ModelsView() {
                 const fresh = await loadModelConfig();
                 let status: Record<string, boolean> = {};
                 try {
-                  status = await resolveProviderEnvStatus(fresh.providers);
+                  status = await resolveProviderCredentialStatus(fresh.providers);
                 } catch {
                   // IPC 已记日志；导入配置本身仍有效，readiness fail-closed。
                 }
                 setConfig(fresh);
-                setEnvStatus(status);
+                setCredentialStatus(status);
               } catch {
                 // 重载失败保持现状；下次进入页面自动重读。
               }
@@ -1050,7 +1050,7 @@ function ReadinessBadge({
           ? t("Custom endpoint")
           : readiness.kind === "checking"
             ? t("Detecting…")
-            : readiness.envName ?? t("Ready");
+            : readiness.credentialRef ?? t("Ready");
   const classes = readiness.ready
     ? "bg-primary/10 text-primary"
     : readiness.kind === "checking"

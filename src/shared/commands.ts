@@ -114,11 +114,11 @@ export const modelCredentialSet = (name: string, value: string) =>
   invokeTyped<ModelCredentialInfo>("model_credential_set", { name, value });
 export const modelCredentialUnset = (name: string) =>
   invokeTyped<ModelCredentialInfo>("model_credential_unset", { name });
-// Compatibility adapter for existing readiness call sites: the booleans now come from
-// DSH credential describe, not from the Launcher process environment.
-export const modelEnvStatus = async (names: string[]) => {
-  const described = await modelCredentialDescribe(names);
-  return Object.fromEntries(names.map((name) => [name, described[name]?.configured === true]));
+// Readiness adapter: expose configured booleans from DSH credential describe without
+// leaking secret values or pretending the launcher process environment is authoritative.
+export const modelCredentialStatus = async (refs: string[]) => {
+  const described = await modelCredentialDescribe(refs);
+  return Object.fromEntries(refs.map((ref) => [ref, described[ref]?.configured === true]));
 };
 export type ProviderModelsCacheEntry = { models: string[]; fetchedAt: number };
 // Provider 模型发现缓存：按连接指纹读取，只返回模型 ID 与时间戳。

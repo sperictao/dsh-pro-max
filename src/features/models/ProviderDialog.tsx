@@ -3,7 +3,7 @@
 // Custom endpoint 也保持“身份 → 连接 → 模型”的顺序，并避免把本地目录误当远端结果。
 // 编辑态同样聚焦高频字段；测试与高级连接细节保持独立入口。
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as cmd from "@/shared/commands";
 import { BTN, BTN_DANGER, BTN_PRIMARY, BTN_SM, INPUT, INPUT_MONO, MODAL_OVERLAY, MODAL_PANEL, SELECT } from "@/shared/lib/ui";
@@ -27,6 +27,13 @@ import {
 export type ProviderDialogState =
   | { mode: "add" }
   | { mode: "edit"; index: number; provider: ProviderConfig };
+
+const DIALOG_FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function dialogFocusable(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE));
+}
 
 /** 与最终写盘规范化保持一致，用于判断 Edit 是否真的产生了配置变化。 */
 function comparableProvider(provider: ProviderConfig): string {
@@ -52,6 +59,7 @@ export function ProviderDialog({
 }) {
   const { t } = useTranslation();
   const isEdit = state.mode === "edit";
+  const dialogRef = useRef<HTMLDivElement>(null);
   const displayNameInputRef = useRef<HTMLInputElement>(null);
   const apiKeyInputRef = useRef<HTMLInputElement>(null);
   // Dialog 关闭后把焦点还给原触发控件；无需让 ModelsView 为每个入口维护第二份状态。
@@ -82,6 +90,13 @@ export function ProviderDialog({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [discardPending, setDiscardPending] = useState(false);
   const baseUrlErrorId = "provider-base-url-error";
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const initial = dialog.querySelector<HTMLElement>("[data-modal-initial-focus]");
+    (initial ?? dialogFocusable(dialog)[0] ?? dialog).focus();
+  }, []);
 
   // 保存失败属于刚刚那一版草稿。用户继续改任一 Provider 字段后，旧错误
   // 已经不再描述当前草稿，因此统一从唯一 patch 入口撤销，避免局部字段漏清。
@@ -322,12 +337,35 @@ export function ProviderDialog({
 
   return (
     <div
+      ref={dialogRef}
       className={MODAL_OVERLAY}
       role="dialog"
       aria-modal="true"
       aria-label={isEdit ? t("Edit provider") : t("Add provider")}
       id="provider-dialog"
+      tabIndex={-1}
       onKeyDown={(event) => {
+        if (event.key === "Tab") {
+          const dialog = dialogRef.current;
+          if (dialog) {
+            const focusable = dialogFocusable(dialog);
+            if (focusable.length === 0) {
+              event.preventDefault();
+              dialog.focus();
+            } else {
+              const first = focusable[0];
+              const last = focusable[focusable.length - 1];
+              const active = document.activeElement;
+              if (event.shiftKey && (active === first || !dialog.contains(active))) {
+                event.preventDefault();
+                last.focus();
+              } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+                event.preventDefault();
+                first.focus();
+              }
+            }
+          }
+        }
         if (event.key === "Escape" && !saving) {
           event.preventDefault();
           event.stopPropagation();
@@ -436,6 +474,7 @@ export function ProviderDialog({
                       <label className="flex flex-col gap-1 text-xs opacity-70">
                         {t("Display Name")}
                         <input
+                          data-modal-initial-focus={isEdit ? "true" : undefined}
                           className={INPUT}
                           value={draft.displayName ?? ""}
                           onChange={(event) => {
@@ -494,6 +533,7 @@ export function ProviderDialog({
                       {t("Display Name")}
                       <input
                         ref={displayNameInputRef}
+                        data-modal-initial-focus={isEdit ? "true" : undefined}
                         className={INPUT}
                         value={draft.displayName ?? ""}
                         onChange={(event) => updateCustomDisplayName(event.target.value)}
@@ -803,6 +843,7 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
     <div className="relative">
       <input
         id="preset-search"
+        data-modal-initial-focus="true"
         className={INPUT}
         role="combobox"
         aria-autocomplete="list"
@@ -868,7 +909,7 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
                 event.preventDefault();
                 pick(null);
               }}
-              onMouseEnter={() => setHighlighted(-1)}
+              onMouseMove={() => setHighlighted(-1)}
             >
               <span>{t("Custom endpoint")}</span>
               <span className="text-xs opacity-60">{t("Wire Protocol")}</span>
@@ -887,7 +928,7 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
                   event.preventDefault();
                   pick(preset);
                 }}
-                onMouseEnter={() => setHighlighted(index)}
+                onMouseMove={() => setHighlighted(index)}
               >
                 <span className="min-w-0 truncate">{preset.name}</span>
                 <span className="shrink-0 font-mono text-xs opacity-60">{preset.id}</span>

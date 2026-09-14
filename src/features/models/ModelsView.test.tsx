@@ -102,7 +102,7 @@ beforeEach(() => {
     Object.fromEntries(names.map((name) => [name, { configured: true, source: "file", writable: true }])),
   );
   vi.spyOn(cmd, "modelCredentialUnset").mockResolvedValue({ configured: false, source: null, writable: true });
-  vi.spyOn(cmd, "modelEnvStatus").mockImplementation(async (names) =>
+  vi.spyOn(cmd, "modelCredentialStatus").mockImplementation(async (names) =>
     Object.fromEntries(names.map((name) => [name, true])),
   );
 });
@@ -342,7 +342,7 @@ describe("ModelsView provider studio", () => {
         },
       ],
     });
-    vi.mocked(cmd.modelEnvStatus).mockResolvedValue({ MISSING_OPENAI_KEY: false });
+    vi.mocked(cmd.modelCredentialStatus).mockResolvedValue({ MISSING_OPENAI_KEY: false });
     const user = userEvent.setup();
     render(createElement(ModelsView));
 
@@ -469,7 +469,7 @@ describe("ModelsView provider studio", () => {
       SPERO_AI_API_KEY: { configured: true, source: "env", writable: false },
     });
     vi.spyOn(cmd, "modelCredentialUnset").mockResolvedValue({ configured: true, source: "env", writable: false });
-    vi.spyOn(cmd, "modelEnvStatus").mockResolvedValue({ SPERO_AI_API_KEY: true });
+    vi.spyOn(cmd, "modelCredentialStatus").mockResolvedValue({ SPERO_AI_API_KEY: true });
     loadWith({ ...config, providers: [config.providers[0]] });
     render(createElement(ModelsView));
     await waitFor(() => expect(screen.getByText("Spero AI")).toBeInTheDocument());

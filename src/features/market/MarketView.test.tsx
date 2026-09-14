@@ -1186,6 +1186,8 @@ describe("MarketView", () => {
         label: "DSH-better-sidebar",
         packages: ["node-pty"],
         workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
+        operation: "install",
+        silent: false,
       },
     });
     const user = userEvent.setup();
@@ -1201,6 +1203,103 @@ describe("MarketView", () => {
     expect(useAppStore.getState().marketPendingApproval).toBeNull();
   });
 
+  it("approving a paused update preserves update semantics and clears the update badge", async () => {
+    vi.spyOn(cmd, "marketApproveBuilds").mockResolvedValue({
+      status: "installed",
+      receipt: { name: "dsh-better-sidebar", spec: "dsh-better-sidebar@2.0.0" },
+      notices: [],
+    });
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "dsh-better-sidebar",
+        spec: "dsh-better-sidebar@2.0.0",
+        managed: false,
+        installedVersion: "2.0.0",
+        latestVersion: "2.0.0",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
+        updateAvailable: false,
+      },
+    ]);
+    useAppStore.setState({
+      marketUpdates: {
+        "dsh-better-sidebar": {
+          name: "dsh-better-sidebar",
+          spec: "dsh-better-sidebar@1.0.0",
+          managed: false,
+          installedVersion: "1.0.0",
+          latestVersion: "2.0.0",
+          latestInReleaseAgeWindow: false,
+          latestPublishTime: null,
+          requiresDsh: null,
+          compatible: null,
+          updateAvailable: true,
+        },
+      },
+      marketPendingApproval: {
+        specifier: "dsh-better-sidebar@latest",
+        label: "dsh-better-sidebar",
+        packages: ["node-pty"],
+        workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
+        operation: "update",
+        silent: false,
+      },
+    });
+
+    await useAppStore.getState().approveMarketBuilds();
+
+    const messages = useAppStore.getState().toasts.map((toast) => toast.message);
+    expect(messages).toContain("Plugin updated: dsh-better-sidebar (dsh-better-sidebar@2.0.0)");
+    expect(messages).not.toContain("Plugin installed: dsh-better-sidebar (dsh-better-sidebar@2.0.0)");
+    expect(useAppStore.getState().marketUpdates?.["dsh-better-sidebar"]?.updateAvailable).toBe(false);
+    expect(useAppStore.getState().marketPendingApproval).toBeNull();
+  });
+
+  it("dismissing build approval during Update all skips that item and resumes the remaining queue", async () => {
+    const update = (name: string) => ({
+      name,
+      spec: `${name}@1.0.0`,
+      managed: false,
+      installedVersion: "1.0.0",
+      latestVersion: "2.0.0",
+      latestInReleaseAgeWindow: false,
+      latestPublishTime: null,
+      requiresDsh: null,
+      compatible: null,
+      updateAvailable: true,
+    });
+    useAppStore.setState({
+      marketInstalled: [
+        { name: "blocked", spec: "blocked@1.0.0", version: "1.0.0", managed: false, enabled: true },
+        { name: "next", spec: "next@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      ],
+      marketUpdates: { blocked: update("blocked"), next: update("next") },
+      marketUpdateAllQueue: ["blocked", "next"],
+      marketPendingApproval: {
+        specifier: "blocked@latest",
+        label: "blocked",
+        packages: ["native-build"],
+        workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
+        operation: "update",
+        silent: true,
+      },
+    });
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "installed",
+      receipt: { name: "next", spec: "next@2.0.0" },
+      notices: [],
+    });
+
+    useAppStore.getState().dismissMarketApproval();
+
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("next@latest"));
+    expect(installSpy).not.toHaveBeenCalledWith("blocked@latest");
+    await waitFor(() => expect(useAppStore.getState().marketUpdateAllQueue).toBeNull());
+    expect(useAppStore.getState().toasts.map((toast) => toast.message)).toContain("Updated 1 plugins");
+  });
+
   it("dismissing clears the pending approval and explains the manual path", async () => {
     useAppStore.setState({
       marketPendingApproval: {
@@ -1208,6 +1307,8 @@ describe("MarketView", () => {
         label: "DSH-better-sidebar",
         packages: ["node-pty"],
         workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
+        operation: "install",
+        silent: false,
       },
     });
     const user = userEvent.setup();
@@ -1226,6 +1327,8 @@ describe("MarketView", () => {
         label: "DSH-better-sidebar",
         packages: ["node-pty"],
         workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
+        operation: "install",
+        silent: false,
       },
     });
     const user = userEvent.setup();

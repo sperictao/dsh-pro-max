@@ -48,7 +48,7 @@ beforeEach(() => {
   vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(structuredClone(config));
   vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
   vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(catalog);
-  vi.spyOn(cmd, "modelEnvStatus").mockResolvedValue({
+  vi.spyOn(cmd, "modelCredentialStatus").mockResolvedValue({
     OPENAI_API_KEY: true,
     DEEPSEEK_API_KEY: true,
   });
