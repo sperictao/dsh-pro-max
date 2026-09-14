@@ -1,0 +1,38 @@
+name: publish-v0.8.17
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  publish:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'release/publish-v0.8.17'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main release commit
+        uses: actions/checkout@v5
+        with:
+          ref: 4628dd726032dc7c95157cdcdda06827b06e499e
+          fetch-depth: 0
+
+      - name: Create release tag
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --tags origin refs/tags/v0.8.17 >/dev/null 2>&1; then
+            echo "v0.8.17 already exists"
+          else
+            git tag v0.8.17 4628dd726032dc7c95157cdcdda06827b06e499e
+            git push origin refs/tags/v0.8.17
+          fi
+
+      - name: Dispatch canonical release workflow on tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build-release.yml --repo "${GITHUB_REPOSITORY}" --ref v0.8.17
