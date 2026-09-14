@@ -1,0 +1,527 @@
+from pathlib import Path
+
+
+def load(path: str) -> str:
+    return Path(path).read_text()
+
+
+def save(path: str, text: str) -> None:
+    Path(path).write_text(text)
+
+
+def replace_once(text: str, old: str, new: str, label: str) -> str:
+    count = text.count(old)
+    if count != 1:
+        raise SystemExit(f"{label}: expected exactly 1 match, found {count}")
+    return text.replace(old, new, 1)
+
+
+# 1) Market approval state keeps the originating operation semantics and
+# resumes Update all when the user declines build-script approval.
+path = "src/shared/store/slices/market.ts"
+text = load(path)
+text = replace_once(
+    text,
+    '  marketPendingApproval: { specifier: string; label: string; packages: string[]; workspaceYaml: string } | null;',
+    '''  marketPendingApproval: {
+    specifier: string;
+    label: string;
+    packages: string[];
+    workspaceYaml: string;
+    operation: "install" | "update";
+    silent: boolean;
+  } | null;''',
+    "market pending approval type",
+)
+text = replace_once(
+    text,
+    '''          marketPendingApproval: {
+            specifier,
+            label,
+            packages: outcome.packages,
+            workspaceYaml: outcome.workspaceYaml,
+          },''',
+    '''          marketPendingApproval: {
+            specifier,
+            label,
+            packages: outcome.packages,
+            workspaceYaml: outcome.workspaceYaml,
+            operation: "install",
+            silent: false,
+          },''',
+    "install approval context",
+)
+text = replace_once(
+    text,
+    '''          marketPendingApproval: {
+            specifier: pending.specifier,
+            label: pending.label,
+            packages: outcome.packages,
+            workspaceYaml: outcome.workspaceYaml,
+          },''',
+    '''          marketPendingApproval: {
+            specifier: pending.specifier,
+            label: pending.label,
+            packages: outcome.packages,
+            workspaceYaml: outcome.workspaceYaml,
+            operation: pending.operation,
+            silent: pending.silent,
+          },''',
+    "nested approval context",
+)
+text = replace_once(
+    text,
+    '''      notifyInstallOutcome(get().toast, outcome, pending.label, "installed");
+      set({ marketPendingApproval: null, marketInstallLog: null });
+      await get().refreshMarketInstalled();
+      // 批量更新中撞审批后放行成功：弹队首（本项已装好）续传下一个。
+      // 单卡安装路径无 marketUpdateAllQueue，不入此分支
+      if (get().marketUpdateAllQueue) {''',
+    '''      notifyInstallOutcome(
+        get().toast,
+        outcome,
+        pending.label,
+        pending.operation === "update" ? "updated" : "installed",
+        pending.silent,
+      );
+      set({ marketPendingApproval: null, marketInstallLog: null });
+      if (pending.operation === "update" && outcome.receipt) {
+        const receipt = outcome.receipt;
+        set((s) => {
+          const info = s.marketUpdates?.[receipt.name];
+          if (!info) return s;
+          return {
+            marketUpdates: {
+              ...s.marketUpdates!,
+              [receipt.name]: { ...info, updateAvailable: false },
+            },
+          };
+        });
+      }
+      await get().refreshMarketInstalled();
+      if (pending.operation === "update" && !pending.silent) void get().refreshMarketUpdates();
+      // 批量更新中撞审批后放行成功：弹队首（本项已装好）续传下一个。
+      // 单卡安装路径无 marketUpdateAllQueue，不入此分支
+      if (pending.operation === "update" && get().marketUpdateAllQueue) {''',
+    "approval success semantics",
+)
+text = replace_once(
+    text,
+    '''    } catch (e) {
+      set({ marketInstallError: { specifier, message: String(e) } });
+      get().toast(i18n.t("Failed to install plugin: {{error}}", { error: tErr(String(e)) }), "error");
+    } finally {
+      set({ marketInstalling: null });
+    }
+  },
+
+  // 用户拒绝放行：只清挂起，不动已落盘的半成品依赖（重装路径可自然收敛）
+  dismissMarketApproval: () => {
+    const pending = get().marketPendingApproval;
+    if (!pending) return;
+    set({ marketPendingApproval: null });
+    get().toast(
+      i18n.t(
+        'Build scripts not approved. Run "pnpm approve-builds" in {{path}} to allow them later.',
+        { path: pending.workspaceYaml },
+      ),
+      "info",
+    );
+  },''',
+    '''    } catch (e) {
+      set({ marketInstallError: { specifier, message: String(e) } });
+      get().toast(
+        i18n.t(
+          pending.operation === "update"
+            ? "Failed to update plugin: {{error}}"
+            : "Failed to install plugin: {{error}}",
+          { error: tErr(String(e)) },
+        ),
+        "error",
+      );
+    } finally {
+      set({ marketInstalling: null });
+    }
+  },
+
+  // 用户拒绝放行：清挂起但保留已下载的半成品；批量更新则跳过当前队首并继续，
+  // 与 release-age 取消保持同一“用户拒绝当前项，不锁死剩余队列”的语义。
+  dismissMarketApproval: () => {
+    const pending = get().marketPendingApproval;
+    if (!pending) return;
+    const batchQueue = get().marketUpdateAllQueue;
+    set({ marketPendingApproval: null });
+    get().toast(
+      i18n.t(
+        'Build scripts not approved. Run "pnpm approve-builds" in {{path}} to allow them later.',
+        { path: pending.workspaceYaml },
+      ),
+      "info",
+    );
+    if (pending.operation === "update" && batchQueue) {
+      set((s) => ({ marketUpdateAllQueue: s.marketUpdateAllQueue?.slice(1) ?? null }));
+      void get().resumeMarketUpdateAll();
+    }
+  },''',
+    "approval failure and dismiss semantics",
+)
+text = replace_once(
+    text,
+    '''          marketPendingApproval: {
+            specifier,
+            label: name,
+            packages: outcome.packages,
+            workspaceYaml: outcome.workspaceYaml,
+          },''',
+    '''          marketPendingApproval: {
+            specifier,
+            label: name,
+            packages: outcome.packages,
+            workspaceYaml: outcome.workspaceYaml,
+            operation: "update",
+            silent,
+          },''',
+    "update approval context",
+)
+save(path, text)
+
+# 2) ProviderDialog owns initial focus and a keyboard focus loop so the modal
+# cannot leave focus on / tab into the background page.
+path = "src/features/models/ProviderDialog.tsx"
+text = load(path)
+text = replace_once(
+    text,
+    'import { useMemo, useRef, useState } from "react";',
+    'import { useEffect, useMemo, useRef, useState } from "react";',
+    "ProviderDialog useEffect import",
+)
+text = replace_once(
+    text,
+    '''export type ProviderDialogState =
+  | { mode: "add" }
+  | { mode: "edit"; index: number; provider: ProviderConfig };
+
+/** 与最终写盘规范化保持一致，用于判断 Edit 是否真的产生了配置变化。 */''',
+    '''export type ProviderDialogState =
+  | { mode: "add" }
+  | { mode: "edit"; index: number; provider: ProviderConfig };
+
+const DIALOG_FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function dialogFocusable(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE));
+}
+
+/** 与最终写盘规范化保持一致，用于判断 Edit 是否真的产生了配置变化。 */''',
+    "ProviderDialog focus helper",
+)
+text = replace_once(
+    text,
+    '''  const isEdit = state.mode === "edit";
+  const displayNameInputRef = useRef<HTMLInputElement>(null);''',
+    '''  const isEdit = state.mode === "edit";
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const displayNameInputRef = useRef<HTMLInputElement>(null);''',
+    "ProviderDialog dialog ref",
+)
+text = replace_once(
+    text,
+    '''  const [discardPending, setDiscardPending] = useState(false);
+  const baseUrlErrorId = "provider-base-url-error";
+
+  // 保存失败属于刚刚那一版草稿。用户继续改任一 Provider 字段后，旧错误''',
+    '''  const [discardPending, setDiscardPending] = useState(false);
+  const baseUrlErrorId = "provider-base-url-error";
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const initial = dialog.querySelector<HTMLElement>("[data-modal-initial-focus]");
+    (initial ?? dialogFocusable(dialog)[0] ?? dialog).focus();
+  }, []);
+
+  // 保存失败属于刚刚那一版草稿。用户继续改任一 Provider 字段后，旧错误''',
+    "ProviderDialog initial focus effect",
+)
+text = replace_once(
+    text,
+    '''    <div
+      className={MODAL_OVERLAY}
+      role="dialog"
+      aria-modal="true"
+      aria-label={isEdit ? t("Edit provider") : t("Add provider")}
+      id="provider-dialog"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !saving) {''',
+    '''    <div
+      ref={dialogRef}
+      className={MODAL_OVERLAY}
+      role="dialog"
+      aria-modal="true"
+      aria-label={isEdit ? t("Edit provider") : t("Add provider")}
+      id="provider-dialog"
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.key === "Tab") {
+          const dialog = dialogRef.current;
+          if (dialog) {
+            const focusable = dialogFocusable(dialog);
+            if (focusable.length === 0) {
+              event.preventDefault();
+              dialog.focus();
+            } else {
+              const first = focusable[0];
+              const last = focusable[focusable.length - 1];
+              const active = document.activeElement;
+              if (event.shiftKey && (active === first || !dialog.contains(active))) {
+                event.preventDefault();
+                last.focus();
+              } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+                event.preventDefault();
+                first.focus();
+              }
+            }
+          }
+        }
+        if (event.key === "Escape" && !saving) {''',
+    "ProviderDialog focus trap",
+)
+known_display = '''                        <input
+                          className={INPUT}
+                          value={draft.displayName ?? ""}'''
+if text.count(known_display) != 1:
+    raise SystemExit(f"known edit display marker: expected 1, found {text.count(known_display)}")
+text = text.replace(
+    known_display,
+    '''                        <input
+                          data-modal-initial-focus={isEdit ? "true" : undefined}
+                          className={INPUT}
+                          value={draft.displayName ?? ""}''',
+    1,
+)
+custom_display = '''                      <input
+                        ref={displayNameInputRef}
+                        className={INPUT}
+                        value={draft.displayName ?? ""}'''
+if text.count(custom_display) != 1:
+    raise SystemExit(f"custom display marker: expected 1, found {text.count(custom_display)}")
+text = text.replace(
+    custom_display,
+    '''                      <input
+                        ref={displayNameInputRef}
+                        data-modal-initial-focus={isEdit ? "true" : undefined}
+                        className={INPUT}
+                        value={draft.displayName ?? ""}''',
+    1,
+)
+text = replace_once(
+    text,
+    '''        id="preset-search"
+        className={INPUT}
+        role="combobox"''',
+    '''        id="preset-search"
+        data-modal-initial-focus="true"
+        className={INPUT}
+        role="combobox"''',
+    "ProviderDialog add initial focus",
+)
+save(path, text)
+
+# 3) Credential/readiness naming reflects the DSH credential plane rather than
+# the removed launcher-process environment lookup.
+path = "src/features/models/readiness.ts"
+text = load(path)
+text = text.replace(
+    "// Provider 可用性只由现有配置 + launcher 进程环境事实推导，不写回 settings.yaml。",
+    "// Provider 可用性只由现有配置 + DSH credential describe 事实推导，不写回 settings.yaml。",
+)
+text = text.replace("providerEnvNames", "providerCredentialRefs")
+text = text.replace("envName", "credentialRef")
+text = text.replace("envStatus", "credentialStatus")
+save(path, text)
+
+path = "src/features/models/ModelsView.tsx"
+text = load(path)
+text = text.replace("providerEnvNames", "providerCredentialRefs")
+text = text.replace("resolveProviderEnvStatus", "resolveProviderCredentialStatus")
+text = text.replace("setEnvStatus", "setCredentialStatus")
+text = text.replace("envStatus", "credentialStatus")
+text = text.replace("modelEnvStatus", "modelCredentialStatus")
+text = text.replace("readiness.envName", "readiness.credentialRef")
+save(path, text)
+
+path = "src/shared/commands.ts"
+text = load(path)
+text = replace_once(
+    text,
+    '''// Compatibility adapter for existing readiness call sites: the booleans now come from
+// DSH credential describe, not from the Launcher process environment.
+export const modelEnvStatus = async (names: string[]) => {
+  const described = await modelCredentialDescribe(names);
+  return Object.fromEntries(names.map((name) => [name, described[name]?.configured === true]));
+};''',
+    '''// Readiness adapter: expose configured booleans from DSH credential describe without
+// leaking secret values or pretending the launcher process environment is authoritative.
+export const modelCredentialStatus = async (refs: string[]) => {
+  const described = await modelCredentialDescribe(refs);
+  return Object.fromEntries(refs.map((ref) => [ref, described[ref]?.configured === true]));
+};''',
+    "credential status adapter",
+)
+save(path, text)
+
+for candidate in list(Path("src").rglob("*.ts")) + list(Path("src").rglob("*.tsx")):
+    source = candidate.read_text()
+    changed = source.replace("modelEnvStatus", "modelCredentialStatus").replace(
+        "providerEnvNames", "providerCredentialRefs"
+    )
+    if changed != source:
+        candidate.write_text(changed)
+
+path = "src/features/models/readiness.test.ts"
+text = load(path)
+text = text.replace("envName", "credentialRef")
+text = text.replace("missing env and available env", "missing and available credentials")
+text = text.replace("env names before IPC", "credential refs before IPC")
+save(path, text)
+
+# 4) Regression coverage for focus containment and Market approval transitions.
+path = "src/features/models/ProviderDialog.close.test.tsx"
+text = load(path)
+anchor = '''  it("restores focus to the control that opened the dialog after a real close", async () => {'''
+focus_test = '''  it("moves initial focus into the modal and keeps Tab navigation inside it", async () => {
+    const user = userEvent.setup();
+    renderEdit();
+    const dialog = screen.getByRole("dialog", { name: "Edit provider" });
+    const displayName = within(dialog).getByLabelText("Display Name");
+
+    await waitFor(() => expect(displayName).toHaveFocus());
+    const focusable = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    expect(first).toBeTruthy();
+    expect(last).toBeTruthy();
+
+    last.focus();
+    await user.tab();
+    expect(first).toHaveFocus();
+
+    first.focus();
+    await user.tab({ shift: true });
+    expect(last).toHaveFocus();
+  });
+
+'''
+text = replace_once(text, anchor, focus_test + anchor, "ProviderDialog focus regression test")
+save(path, text)
+
+path = "src/features/market/MarketView.test.tsx"
+text = load(path)
+fixture = '        workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",\n      },'
+fixture_replacement = '        workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",\n        operation: "install",\n        silent: false,\n      },'
+fixture_count = text.count(fixture)
+if fixture_count < 3:
+    raise SystemExit(f"market manual approval fixtures: expected >=3, found {fixture_count}")
+text = text.replace(fixture, fixture_replacement)
+
+anchor = '''  it("dismissing clears the pending approval and explains the manual path", async () => {'''
+market_tests = '''  it("approving a paused update preserves update semantics and clears the update badge", async () => {
+    vi.spyOn(cmd, "marketApproveBuilds").mockResolvedValue({
+      status: "installed",
+      receipt: { name: "dsh-better-sidebar", spec: "dsh-better-sidebar@2.0.0" },
+      notices: [],
+    });
+    useAppStore.setState({
+      marketUpdates: {
+        "dsh-better-sidebar": {
+          name: "dsh-better-sidebar",
+          spec: "dsh-better-sidebar@1.0.0",
+          managed: false,
+          installedVersion: "1.0.0",
+          latestVersion: "2.0.0",
+          latestInReleaseAgeWindow: false,
+          latestPublishTime: null,
+          requiresDsh: null,
+          compatible: null,
+          updateAvailable: true,
+        },
+      },
+      marketPendingApproval: {
+        specifier: "dsh-better-sidebar@latest",
+        label: "dsh-better-sidebar",
+        packages: ["node-pty"],
+        workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
+        operation: "update",
+        silent: false,
+      },
+    });
+
+    await useAppStore.getState().approveMarketBuilds();
+
+    const messages = useAppStore.getState().toasts.map((toast) => toast.message);
+    expect(messages).toContain("Plugin updated: dsh-better-sidebar (dsh-better-sidebar@2.0.0)");
+    expect(messages).not.toContain("Plugin installed: dsh-better-sidebar (dsh-better-sidebar@2.0.0)");
+    expect(useAppStore.getState().marketUpdates?.["dsh-better-sidebar"]?.updateAvailable).toBe(false);
+    expect(useAppStore.getState().marketPendingApproval).toBeNull();
+  });
+
+  it("dismissing build approval during Update all skips that item and resumes the remaining queue", async () => {
+    const update = (name: string) => ({
+      name,
+      spec: `${name}@1.0.0`,
+      managed: false,
+      installedVersion: "1.0.0",
+      latestVersion: "2.0.0",
+      latestInReleaseAgeWindow: false,
+      latestPublishTime: null,
+      requiresDsh: null,
+      compatible: null,
+      updateAvailable: true,
+    });
+    useAppStore.setState({
+      marketInstalled: [
+        { name: "blocked", spec: "blocked@1.0.0", version: "1.0.0", managed: false, enabled: true },
+        { name: "next", spec: "next@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      ],
+      marketUpdates: { blocked: update("blocked"), next: update("next") },
+      marketUpdateAllQueue: ["blocked", "next"],
+      marketPendingApproval: {
+        specifier: "blocked@latest",
+        label: "blocked",
+        packages: ["native-build"],
+        workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
+        operation: "update",
+        silent: true,
+      },
+    });
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "installed",
+      receipt: { name: "next", spec: "next@2.0.0" },
+      notices: [],
+    });
+
+    useAppStore.getState().dismissMarketApproval();
+
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("next@latest"));
+    expect(installSpy).not.toHaveBeenCalledWith("blocked@latest");
+    await waitFor(() => expect(useAppStore.getState().marketUpdateAllQueue).toBeNull());
+    expect(useAppStore.getState().toasts.map((toast) => toast.message)).toContain("Updated 1 plugins");
+  });
+
+'''
+text = replace_once(text, anchor, market_tests + anchor, "Market approval regression tests")
+save(path, text)
+
+leftovers = []
+for candidate in list(Path("src").rglob("*.ts")) + list(Path("src").rglob("*.tsx")):
+    source = candidate.read_text()
+    for token in ("modelEnvStatus", "providerEnvNames"):
+        if token in source:
+            leftovers.append(f"{candidate}: {token}")
+if leftovers:
+    raise SystemExit("stale credential naming remains:\n" + "\n".join(leftovers))
