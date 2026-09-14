@@ -909,7 +909,7 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
                 event.preventDefault();
                 pick(null);
               }}
-              onMouseEnter={() => setHighlighted(-1)}
+              onMouseMove={() => setHighlighted(-1)}
             >
               <span>{t("Custom endpoint")}</span>
               <span className="text-xs opacity-60">{t("Wire Protocol")}</span>
@@ -928,7 +928,7 @@ function PresetPicker({ onPick }: { onPick: (preset: ModelPreset | null) => void
                   event.preventDefault();
                   pick(preset);
                 }}
-                onMouseEnter={() => setHighlighted(index)}
+                onMouseMove={() => setHighlighted(index)}
               >
                 <span className="min-w-0 truncate">{preset.name}</span>
                 <span className="shrink-0 font-mono text-xs opacity-60">{preset.id}</span>
