@@ -1,6 +1,6 @@
 name: Apply frontend audit follow-up patch v2
 
-on: push
+on: pull_request
 
 permissions:
   contents: write
