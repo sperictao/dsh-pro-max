@@ -65,7 +65,7 @@ beforeEach(() => {
   vi.spyOn(cmd, "modelRemoteCacheGet").mockResolvedValue(null);
   vi.spyOn(cmd, "modelRemoteList").mockResolvedValue(["deepseek-chat"]);
   vi.spyOn(cmd, "modelTestConnection").mockResolvedValue(undefined);
-  vi.spyOn(cmd, "modelEnvStatus").mockImplementation(async (names) =>
+  vi.spyOn(cmd, "modelCredentialStatus").mockImplementation(async (names) =>
     Object.fromEntries(names.map((name) => [name, true])),
   );
 });

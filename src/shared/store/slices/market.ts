@@ -171,7 +171,14 @@ export interface MarketSlice {
   marketInstallError: { specifier: string; message: string } | null;
   marketRemoving: string | null;
   // pnpm 拦截构建脚本 → 挂起等用户审批；确认后才经 market_approve_builds 放行重装
-  marketPendingApproval: { specifier: string; label: string; packages: string[]; workspaceYaml: string } | null;
+  marketPendingApproval: {
+    specifier: string;
+    label: string;
+    packages: string[];
+    workspaceYaml: string;
+    operation: "install" | "update";
+    silent: boolean;
+  } | null;
   // latest 落在 pnpm minimumReleaseAge 保护窗口 → 挂起等用户知情确认；
   // 确认后钉版本重装（见 updateSpecifierFor）。载荷携带版本过渡与发布时间，
   // 确认框据此展示"从哪升到哪、发布多久了"
@@ -302,6 +309,8 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
             label,
             packages: outcome.packages,
             workspaceYaml: outcome.workspaceYaml,
+            operation: "install",
+            silent: false,
           },
         });
         return;
@@ -334,16 +343,38 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
             label: pending.label,
             packages: outcome.packages,
             workspaceYaml: outcome.workspaceYaml,
+            operation: pending.operation,
+            silent: pending.silent,
           },
         });
         return;
       }
-      notifyInstallOutcome(get().toast, outcome, pending.label, "installed");
+      notifyInstallOutcome(
+        get().toast,
+        outcome,
+        pending.label,
+        pending.operation === "update" ? "updated" : "installed",
+        pending.silent,
+      );
       set({ marketPendingApproval: null, marketInstallLog: null });
+      if (pending.operation === "update" && outcome.receipt) {
+        const receipt = outcome.receipt;
+        set((s) => {
+          const info = s.marketUpdates?.[receipt.name];
+          if (!info) return s;
+          return {
+            marketUpdates: {
+              ...s.marketUpdates!,
+              [receipt.name]: { ...info, updateAvailable: false },
+            },
+          };
+        });
+      }
       await get().refreshMarketInstalled();
+      if (pending.operation === "update" && !pending.silent) void get().refreshMarketUpdates();
       // 批量更新中撞审批后放行成功：弹队首（本项已装好）续传下一个。
       // 单卡安装路径无 marketUpdateAllQueue，不入此分支
-      if (get().marketUpdateAllQueue) {
+      if (pending.operation === "update" && get().marketUpdateAllQueue) {
         // finally runs after this branch; release the current install before
         // handing control back to the batch driver.
         set((s) => ({
@@ -355,16 +386,26 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       }
     } catch (e) {
       set({ marketInstallError: { specifier, message: String(e) } });
-      get().toast(i18n.t("Failed to install plugin: {{error}}", { error: tErr(String(e)) }), "error");
+      get().toast(
+        i18n.t(
+          pending.operation === "update"
+            ? "Failed to update plugin: {{error}}"
+            : "Failed to install plugin: {{error}}",
+          { error: tErr(String(e)) },
+        ),
+        "error",
+      );
     } finally {
       set({ marketInstalling: null });
     }
   },
 
-  // 用户拒绝放行：只清挂起，不动已落盘的半成品依赖（重装路径可自然收敛）
+  // 用户拒绝放行：清挂起但保留已下载的半成品；批量更新则跳过当前队首并继续，
+  // 与 release-age 取消保持同一“用户拒绝当前项，不锁死剩余队列”的语义。
   dismissMarketApproval: () => {
     const pending = get().marketPendingApproval;
     if (!pending) return;
+    const batchQueue = get().marketUpdateAllQueue;
     set({ marketPendingApproval: null });
     get().toast(
       i18n.t(
@@ -373,6 +414,10 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       ),
       "info",
     );
+    if (pending.operation === "update" && batchQueue) {
+      set((s) => ({ marketUpdateAllQueue: s.marketUpdateAllQueue?.slice(1) ?? null }));
+      void get().resumeMarketUpdateAll();
+    }
   },
 
   removeMarketPlugin: async (name) => {
@@ -471,6 +516,8 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
             label: name,
             packages: outcome.packages,
             workspaceYaml: outcome.workspaceYaml,
+            operation: "update",
+            silent,
           },
         });
         get().toast(

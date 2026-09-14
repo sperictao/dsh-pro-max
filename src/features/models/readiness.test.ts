@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderConfig } from "@/shared/types";
-import { launcherRemoteProbeAllowed, providerEnvNames, providerReadiness } from "./readiness";
+import { launcherRemoteProbeAllowed, providerCredentialRefs, providerReadiness } from "./readiness";
 
 const provider = (patch: Partial<ProviderConfig>): ProviderConfig => ({
   route: "custom",
@@ -21,7 +21,7 @@ describe("provider readiness", () => {
     expect(providerReadiness(provider({}), {})).toEqual({
       kind: "anonymous",
       ready: true,
-      envName: null,
+      credentialRef: null,
     });
   });
 
@@ -30,26 +30,26 @@ describe("provider readiness", () => {
     expect(readiness).toEqual({
       kind: "provider-auth",
       ready: true,
-      envName: null,
+      credentialRef: null,
     });
     expect(launcherRemoteProbeAllowed(readiness)).toBe(false);
   });
 
-  it("distinguishes checking, missing env and available env", () => {
+  it("distinguishes checking, missing and available credentials", () => {
     const configured = provider({ apiKeyEnv: "MY_KEY" });
     expect(providerReadiness(configured, null).kind).toBe("checking");
     expect(providerReadiness(configured, {}).kind).toBe("missing-env");
     expect(providerReadiness(configured, { MY_KEY: true })).toEqual({
       kind: "ready",
       ready: true,
-      envName: "MY_KEY",
+      credentialRef: "MY_KEY",
     });
     expect(launcherRemoteProbeAllowed(providerReadiness(configured, { MY_KEY: true }))).toBe(true);
   });
 
-  it("normalizes and deduplicates env names before IPC", () => {
+  it("normalizes and deduplicates credential refs before IPC", () => {
     expect(
-      providerEnvNames([
+      providerCredentialRefs([
         provider({ route: "a", apiKeyEnv: " SAME_KEY " }),
         provider({ route: "b", apiKeyEnv: "SAME_KEY" }),
         provider({ route: "c", apiKeyEnv: null }),

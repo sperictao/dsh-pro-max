@@ -25,7 +25,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   useAppStore.setState({ toasts: [], modelConfigBusy: false });
   vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(structuredClone(emptyConfig));
-  vi.spyOn(cmd, "modelEnvStatus").mockResolvedValue({});
+  vi.spyOn(cmd, "modelCredentialStatus").mockResolvedValue({});
   vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(snapshot(7));
   vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(snapshot(7));
 });

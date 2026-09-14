@@ -73,7 +73,7 @@ beforeEach(() => {
   vi.spyOn(cmd, "modelConfigLoad").mockResolvedValue(structuredClone(config));
   vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
   vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue(catalog);
-  vi.spyOn(cmd, "modelEnvStatus").mockResolvedValue({
+  vi.spyOn(cmd, "modelCredentialStatus").mockResolvedValue({
     PRIMARY_API_KEY: true,
     BACKUP_API_KEY: true,
   });

@@ -1,4 +1,4 @@
-// Provider 可用性只由现有配置 + launcher 进程环境事实推导，不写回 settings.yaml。
+// Provider 可用性只由现有配置 + DSH credential describe 事实推导，不写回 settings.yaml。
 // 内置目录 route 省略 apiKeyEnv 时遵循 dsh llm-pi-ai 原生语义：保持 configured-but-keyless，
 // 由 pi-ai / harness 的 ambient 或已存登录凭据完成认证；自定义 route 无 apiKeyEnv 时
 // 仍按显式匿名端点处理（Ollama / LM Studio / 本地兼容网关等）。
@@ -18,10 +18,10 @@ export type ProviderReadinessKind =
 export type ProviderReadiness = {
   kind: ProviderReadinessKind;
   ready: boolean;
-  envName: string | null;
+  credentialRef: string | null;
 };
 
-export function providerEnvNames(providers: ProviderConfig[]): string[] {
+export function providerCredentialRefs(providers: ProviderConfig[]): string[] {
   return [
     ...new Set(
       providers
@@ -33,24 +33,24 @@ export function providerEnvNames(providers: ProviderConfig[]): string[] {
 
 export function providerReadiness(
   provider: ProviderConfig,
-  envStatus: Record<string, boolean> | null,
+  credentialStatus: Record<string, boolean> | null,
 ): ProviderReadiness {
-  const envName = provider.apiKeyEnv?.trim() || null;
+  const credentialRef = provider.apiKeyEnv?.trim() || null;
   const builtin = BUILTIN_ROUTES.has(provider.route.trim());
 
-  if (!envName) {
+  if (!credentialRef) {
     return builtin
-      ? { kind: "provider-auth", ready: true, envName: null }
-      : { kind: "anonymous", ready: true, envName: null };
+      ? { kind: "provider-auth", ready: true, credentialRef: null }
+      : { kind: "anonymous", ready: true, credentialRef: null };
   }
 
-  if (envStatus == null) {
-    return { kind: "checking", ready: false, envName };
+  if (credentialStatus == null) {
+    return { kind: "checking", ready: false, credentialRef };
   }
 
-  return envStatus[envName]
-    ? { kind: "ready", ready: true, envName }
-    : { kind: "missing-env", ready: false, envName };
+  return credentialStatus[credentialRef]
+    ? { kind: "ready", ready: true, credentialRef }
+    : { kind: "missing-env", ready: false, credentialRef };
 }
 
 
