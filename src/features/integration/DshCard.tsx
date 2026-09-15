@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
-import { tErr } from "@/shared/i18n/error";
+import { tDiagnostic, tErr } from "@/shared/i18n/error";
 import * as cmd from "@/shared/commands";
 import { BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, PANEL, TOGGLE } from "@/shared/lib/ui";
 import type { DshAccessMode, DshStepEvent } from "@/shared/types";
@@ -525,11 +525,11 @@ export function DshCard() {
                 </div>
                 <div className="timeline-content">
                   <div className="timeline-title">{t(stepTitleKey(step))}</div>
-                  {step.detail && <div className="timeline-detail">{step.detail}</div>}
+                  {step.detail && <div className="timeline-detail">{tDiagnostic(step.detail)}</div>}
                   {step.state === "failed" && (step.problem || step.solution) && (
                     <div className="timeline-issue">
-                      {step.problem && <div className="timeline-problem">{step.problem}</div>}
-                      {step.solution && <div className="timeline-solution">{step.solution}</div>}
+                      {step.problem && <div className="timeline-problem">{tDiagnostic(step.problem)}</div>}
+                      {step.solution && <div className="timeline-solution">{tDiagnostic(step.solution)}</div>}
                       {(step.id === "start" || step.id === "ready") && <StartLogDisclosure />}
                       {step.actionPlugin && (
                         <DisableRetryButton plugin={step.actionPlugin} disabled={busy} />

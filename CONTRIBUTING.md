@@ -25,7 +25,7 @@ them locally before pushing:
 | --- | --- |
 | `pnpm exec tsc --noEmit` | TypeScript types (also keeps the zh-CN dictionary in sync with en at compile time) |
 | `pnpm exec vitest run` | Frontend unit tests |
-| `node scripts/check-i18n.mjs` | i18n coverage: every `t("...")` / Rust `tr(...)` key must exist, no dead dictionary entries |
+| `node scripts/check-i18n.mjs` | i18n coverage: every `t("...")` / Rust `tr(...)` key must exist, and no dictionary entry is unreachable (frontend literals ∪ Rust-produced diagnostics ∪ the dynamic `step.<id>` family). Keys written as `{{name}}` templates are reported, not failed: Rust diagnostics currently interpolate before crossing IPC, so those templates only become live once the payload carries key + args |
 | `pnpm run test:e2e` | Browser smoke test over a mocked Tauri IPC (needs Chrome) |
 | `cargo clippy --all-targets -- -D warnings` | Rust lints, warnings are errors |
 | `cargo test` | Rust unit tests (in `src-tauri`) |
@@ -47,7 +47,10 @@ A practical shortcut: `pnpm test` runs the theme tests plus vitest.
   only in `src/shared/commands.ts` and `src-tauri/src` `#[tauri::command]`s.
 - **i18n**: user-visible strings come from `src/shared/i18n/en.ts` (frontend)
   and the `zh_cn` table in `src-tauri/src/i18n.rs` (shell/tray/errors). Both
-  are scan-checked by `check-i18n.mjs`.
+  are scan-checked by `check-i18n.mjs`. Strings produced by Rust (timeline
+  `detail` / `problem` / `solution`, `Err` payloads) are keys too: render them
+  through `tErr` / `tDiagnostic` so the dictionary is actually consulted, and
+  add the entry to both dictionaries when you add such a string.
 
 ## Updating the pinned dsh plugins
 

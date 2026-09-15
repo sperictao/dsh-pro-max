@@ -119,7 +119,6 @@ export const en = {
 
   // —— 模型配置 ——
   "AI providers": "AI providers",
-  "API Key Env Var": "API Key Env Var",
   "API Key": "API Key",
   "Enter API key": "Enter API key",
   "API key cannot be blank": "API key cannot be blank",
@@ -152,11 +151,8 @@ export const en = {
   "Default model provider and model are required": "Default model provider and model are required",
   "Default reasoning level": "Default reasoning level",
   "Delete": "Delete",
-  "Delete?": "Delete?",
   "Display Name": "Display Name",
-  "Edit": "Edit",
   "Edit provider": "Edit provider",
-  "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.": "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.",
   "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored in the DSH credential store, never in settings.yaml.": "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored in the DSH credential store, never in settings.yaml.",
   "Enter a base URL to load models.": "Enter a base URL to load models.",
   "Enter a model ID first": "Enter a model ID first",
@@ -213,14 +209,12 @@ export const en = {
   "Models from this service": "Models from this service",
   "No AI provider ready": "No AI provider ready",
   "No AI providers yet": "No AI providers yet",
-  "No API key reference yet": "No API key reference yet",
   "No matching models": "No matching models",
   "No models chosen yet. Pick one from the list.": "No models chosen yet. Pick one from the list.",
   "No provider configurations found on this machine.": "No provider configurations found on this machine.",
   "Not set": "Not set",
   "Nothing found": "Nothing found",
   "Pick a known service to fill fields, or choose custom endpoint.": "Pick a known service to fill fields, or choose custom endpoint.",
-  "Provider API key environment variable is not configured": "Provider API key environment variable is not configured",
   "Provider base URL is required to fetch models": "Provider base URL is required to fetch models",
   "Provider route key cannot be empty": "Provider route key cannot be empty",
   "Provider route keys must be unique": "Provider route keys must be unique",
@@ -233,8 +227,6 @@ export const en = {
   "Request timeout (ms)": "Request timeout (ms)",
   "Reserved credential headers are ignored: {{names}}": "Reserved credential headers are ignored: {{names}}",
   "Route key": "Route key",
-  "Route matches the built-in catalog: endpoint, protocol and models are inherited; only the credential reference is required.": "Route matches the built-in catalog: endpoint, protocol and models are inherited; only the credential reference is required.",
-  "Save or discard your changes before importing.": "Save or discard your changes before importing.",
   "Save provider": "Save provider",
   "Saving…": "Saving…",
   "Scan local agent tools (Claude Code, Codex, OpenCode, Pi, CC Switch) for provider declarations. Literal API keys are never imported — only environment-variable references map to the credential field.": "Scan local agent tools (Claude Code, Codex, OpenCode, Pi, CC Switch) for provider declarations. Literal API keys are never imported — only environment-variable references map to the credential field.",
@@ -249,7 +241,6 @@ export const en = {
   "The provider models endpoint returned an HTTP error": "The provider models endpoint returned an HTTP error",
   "Thinking levels": "Thinking levels",
   "This service returned no models. Add a model ID below.": "This service returned no models. Add a model ID below.",
-  "Unsaved changes — save to apply. Changes take effect immediately (hot reload).": "Unsaved changes — save to apply. Changes take effect immediately (hot reload).",
   "Use a JSON object with header names and string values.": "Use a JSON object with header names and string values.",
   "Wire Protocol": "Wire Protocol",
   "Wire spelling for {{level}}": "Wire spelling for {{level}}",
@@ -273,7 +264,6 @@ export const en = {
   "When enabled, the close button hides the window and the app keeps running in the system tray.": "When enabled, the close button hides the window and the app keeps running in the system tray.",
   "Launch at login": "Launch at login",
   "When enabled, the app starts silently in the system tray when you log in.": "When enabled, the app starts silently in the system tray when you log in.",
-  "Logs": "Logs",
   "Open log folder": "Open log folder",
   "Logs are written to files only; open the folder when something goes wrong.": "Logs are written to files only; open the folder when something goes wrong.",
   "Language": "Language",
@@ -315,7 +305,6 @@ export const en = {
   // —— Skill 视图 ——
 
   // —— 看守视图 ——
-  "Save": "Save",
   "Error": "Error",
 
   // —— 看守文件管理 ——
@@ -344,7 +333,6 @@ export const en = {
   "Source code, issue tracker, and release history.": "Source code, issue tracker, and release history.",
   "dsh is the DeepSeek Harness CLI; this app bundles a verified compatibility stack (CLI + authorization plugins) for one-click local & remote access.": "dsh is the DeepSeek Harness CLI; this app bundles a verified compatibility stack (CLI + authorization plugins) for one-click local & remote access.",
   "Local access to the dsh Web UI at http://127.0.0.1:3899.": "Local access to the dsh Web UI at http://127.0.0.1:3899.",
-  "The access address appears here while dsh web is running.": "The access address appears here while dsh web is running.",
   "One-click start dsh web": "One-click start dsh web",
   "One-click stop dsh web": "One-click stop dsh web",
   "One-click restart dsh web": "One-click restart dsh web",

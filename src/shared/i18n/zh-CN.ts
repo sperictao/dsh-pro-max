@@ -121,7 +121,6 @@ export const zhCN: Record<I18nKey, string> = {
 
   // —— 模型配置 ——
   "AI providers": "AI 服务",
-  "API Key Env Var": "API Key 环境变量名",
   "API Key": "API 密钥",
   "Enter API key": "输入 API 密钥",
   "API key cannot be blank": "API 密钥不能为空",
@@ -154,11 +153,8 @@ export const zhCN: Record<I18nKey, string> = {
   "Default model provider and model are required": "默认模型的服务与模型必填",
   "Default reasoning level": "默认推理档",
   "Delete": "删除",
-  "Delete?": "确认删除？",
   "Display Name": "显示名",
-  "Edit": "编辑",
   "Edit provider": "编辑服务",
-  "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored as environment variable names, never as values.": "编辑 ~/.dsh/settings.yaml 的模型设置。API Key 以环境变量名保存，绝不存值。",
   "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored in the DSH credential store, never in settings.yaml.": "编辑 ~/.dsh/settings.yaml 的模型配置。API 密钥保存在 DSH 凭据存储中，不会写入 settings.yaml。",
   "Enter a base URL to load models.": "填写地址即可获取模型列表。",
   "Enter a model ID first": "请先输入模型 ID",
@@ -215,14 +211,12 @@ export const zhCN: Record<I18nKey, string> = {
   "Models from this service": "该服务的模型",
   "No AI provider ready": "还没有可用的 AI 服务",
   "No AI providers yet": "还没有 AI 服务",
-  "No API key reference yet": "尚未设置凭据引用",
   "No matching models": "没有匹配的模型",
   "No models chosen yet. Pick one from the list.": "尚未选择模型。请在模型列表中勾选。",
   "No provider configurations found on this machine.": "本机未发现可导入的模型服务配置。",
   "Not set": "未设置",
   "Nothing found": "没有发现",
   "Pick a known service to fill fields, or choose custom endpoint.": "选择已知服务自动回填，或选自定义端点手填。",
-  "Provider API key environment variable is not configured": "服务商 API Key 环境变量未配置",
   "Provider base URL is required to fetch models": "获取模型列表需要先填服务商接口地址",
   "Provider route key cannot be empty": "服务路由键不能为空",
   "Provider route keys must be unique": "服务路由键不能重复",
@@ -235,8 +229,6 @@ export const zhCN: Record<I18nKey, string> = {
   "Request timeout (ms)": "请求超时（毫秒）",
   "Reserved credential headers are ignored: {{names}}": "凭据类保留头会被忽略：{{names}}",
   "Route key": "路由键",
-  "Route matches the built-in catalog: endpoint, protocol and models are inherited; only the credential reference is required.": "路由键命中内置目录：端点、协议与模型目录自动继承，只需填凭据引用。",
-  "Save or discard your changes before importing.": "请先保存或撤销当前修改，再执行导入。",
   "Save provider": "保存服务",
   "Saving…": "保存中…",
   "Scan local agent tools (Claude Code, Codex, OpenCode, Pi, CC Switch) for provider declarations. Literal API keys are never imported — only environment-variable references map to the credential field.": "扫描本机其他工具（Claude Code、Codex、OpenCode、Pi、CC Switch）的服务商声明。明文 API Key 一律不导入——只有环境变量引用会映射到凭据字段。",
@@ -251,7 +243,6 @@ export const zhCN: Record<I18nKey, string> = {
   "The provider models endpoint returned an HTTP error": "服务商模型列表端点返回 HTTP 错误",
   "Thinking levels": "思考等级",
   "This service returned no models. Add a model ID below.": "该服务未返回任何模型，可在下方手动添加模型 ID。",
-  "Unsaved changes — save to apply. Changes take effect immediately (hot reload).": "有未保存的修改——保存后生效。更改即时生效（热加载）。",
   "Use a JSON object with header names and string values.": "JSON 须是由请求头名称和字符串值组成的对象。",
   "Wire Protocol": "wire 协议",
   "Wire spelling for {{level}}": "{{level}} 档的 wire 拼写",
@@ -275,7 +266,6 @@ export const zhCN: Record<I18nKey, string> = {
   "When enabled, the close button hides the window and the app keeps running in the system tray.": "启用后点击关闭按钮会隐藏窗口，应用继续驻留系统托盘。",
   "Launch at login": "登录时启动",
   "When enabled, the app starts silently in the system tray when you log in.": "启用后登录系统时应用静默启动并驻留系统托盘。",
-  "Logs": "日志",
   "Open log folder": "打开日志目录",
   "Logs are written to files only; open the folder when something goes wrong.": "日志只写入文件，出问题时打开目录查看。",
   "Language": "语言",
@@ -317,7 +307,6 @@ export const zhCN: Record<I18nKey, string> = {
   // —— Skill 视图 ——
 
   // —— 看守视图 ——
-  "Save": "保存",
   "Error": "错误",
 
   // —— 看守文件管理 ——
@@ -346,7 +335,6 @@ export const zhCN: Record<I18nKey, string> = {
   "Source code, issue tracker, and release history.": "源代码、问题跟踪与历史版本。",
   "dsh is the DeepSeek Harness CLI; this app bundles a verified compatibility stack (CLI + authorization plugins) for one-click local & remote access.": "dsh 是 DeepSeek Harness CLI；本应用内置验证过的兼容栈（CLI + 授权插件），支持一键本地与远程访问。",
   "Local access to the dsh Web UI at http://127.0.0.1:3899.": "在 http://127.0.0.1:3899 本地访问 dsh Web UI。",
-  "The access address appears here while dsh web is running.": "dsh web 运行期间，访问地址显示在这里。",
   "One-click start dsh web": "一键启动 dsh web",
   "One-click stop dsh web": "一键关闭 dsh web",
   "One-click restart dsh web": "一键重启 dsh web",
