@@ -174,8 +174,22 @@ pub(crate) fn run_capture_lines(
     timeout: Option<Duration>,
     cancel: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<(String, String, bool, bool), String> {
+    run_capture_lines_env(program, args, on_line, timeout, cancel, &[])
+}
+
+/// run_capture_lines 的带额外环境变量形态（如 store 重建需要的 CI=true）；
+/// PATH 覆盖与管道/超时/取消基建完全一致，extra_env 在 PATH 之后设置
+pub(crate) fn run_capture_lines_env(
+    program: &str,
+    args: &[&str],
+    on_line: impl Fn(&str) + Send + Sync + 'static,
+    timeout: Option<Duration>,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+    extra_env: &[(&str, &str)],
+) -> Result<(String, String, bool, bool), String> {
     let mut child = cli_command(program, args)
         .env("PATH", probe_path())
+        .envs(extra_env.iter().copied())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

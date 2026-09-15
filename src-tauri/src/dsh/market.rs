@@ -20,8 +20,8 @@
 //! `~/.dsh-pro-max/plugin-policy.json` 白名单约束可安装的包；安装成功返回
 //! 落盘回执（name + spec）。
 
-use super::components::{resolve_dsh_bin, web_profile_package_path};
-use super::process::run_capture_lines;
+use super::components::{pnpm_bin, resolve_dsh_bin, web_profile_package_path};
+use super::process::{run_capture_lines, run_capture_lines_env};
 use crate::i18n::keyf;
 use crate::version::{is_newer, parse_version};
 use serde::{Deserialize, Serialize};
@@ -126,8 +126,9 @@ pub struct InstallReceipt {
 }
 
 /// 安装结果：成功带回执与护栏事实（notices）；被 pnpm 拦截构建脚本时转
-/// 审批请求（被拦包名 + 待写文件路径）。审批是用户决策点：安装脚本以用户
-/// 身份执行任意代码，launcher 不静默放行
+/// 审批请求（被拦包名 + 待写文件路径）；node_modules 由旧 pnpm 大版本
+/// 创建（store 漂移）时转自动修复信号（执行体内部消化，IPC 不可达）。
+/// 审批是用户决策点：安装脚本以用户身份执行任意代码，launcher 不静默放行
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(tag = "status", rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/shared/bindings/")]
@@ -142,6 +143,12 @@ pub enum InstallOutcome {
         packages: Vec<String>,
         workspace_yaml: String,
     },
+    /// pnpm 大版本升级导致 store 漂移（ERR_PNPM_UNEXPECTED_STORE / hoist
+    /// pattern diff）：pnpm 拒绝在旧链接的 node_modules 上继续操作，修复是
+    /// 在 profile 目录重建 node_modules（CI=true pnpm install）后重试
+    #[serde(rename = "needsStoreRepair")]
+    #[ts(rename = "needsStoreRepair")]
+    NeedsStoreRepair,
 }
 
 /// 目录加载失败的两类：契约不符必须原样上报（不能拿旧快照掩盖升级信号），
@@ -1228,7 +1235,8 @@ pub(crate) fn install_failure_message(action: &str, error: &str) -> String {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "~/.dsh/profiles/web/pnpm-workspace.yaml".to_string());
         return keyf(
-            "Plugin build scripts were blocked by pnpm. Add the package name printed in the log under \"allowBuilds\" in {path}, then retry. Detail: {error}", &[("path", path), ("error", error.to_string())],
+            "Plugin build scripts were blocked by pnpm. Add the package name printed in the log under \"allowBuilds\" in {path}, then retry. Detail: {error}",
+            &[("path", path), ("error", error.to_string())],
         );
     }
     keyf(
@@ -1281,6 +1289,49 @@ fn with_plugin_operation<T>(operation: impl FnOnce() -> T) -> T {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     operation()
+}
+
+/// 在 profile 目录重建 node_modules（ERR_PNPM_UNEXPECTED_STORE / hoist 漂移
+/// 的自动修复）：pnpm 大版本升级换了默认 store，旧 node_modules 链在旧
+/// store 上，pnpm 拒绝一切操作；`pnpm install` 按当前 store 整体重建。
+/// CI=true 让非交互终端下的 pnpm 无需确认即可删除重建 node_modules。
+/// 输出走与安装同一实时行通道（on_line 携带对应命令的 $ 行）；不注册取消
+/// 令牌（不与 run_plugin_cmd 的全局槽互踩），用户取消由紧随的重试 add 承接
+fn rebuild_profile_store(
+    on_line: impl Fn(&str) + Send + Sync + 'static,
+) -> Result<(), (String, String)> {
+    let profile = web_profile_dir().map_err(|e| (e.clone(), e))?;
+    let pnpm = pnpm_bin();
+    let profile_str = profile.display().to_string();
+    let argv = ["--dir", profile_str.as_str(), "install"];
+    on_line(&format!("$ CI=true {} {}", pnpm, argv.join(" ")));
+    // 重建要重新落盘整棵依赖树，与安装同一超时量级
+    match run_capture_lines_env(
+        &pnpm,
+        &argv,
+        on_line,
+        Some(PLUGIN_ADD_TIMEOUT),
+        None,
+        &[("CI", "true")],
+    ) {
+        Ok((_, _, true, _)) => Ok(()),
+        Ok((out, err, false, killed)) => {
+            let mut raw = failure_raw(&out, &err, "install");
+            if killed {
+                raw.push_str("\npnpm install timed out and was terminated");
+            }
+            crate::logging::error("[market] profile store 重建失败", &raw);
+            let display = keyf(
+                "Failed to rebuild dependencies in {path}: {error}",
+                &[("path", profile_str), ("error", raw.clone())],
+            );
+            Err((raw, display))
+        }
+        Err(e) => {
+            crate::logging::error("[market] profile store 重建执行失败", &e);
+            Err((e.clone(), e))
+        }
+    }
 }
 
 /// 执行 dsh plugin 子命令；每行输出经 on_line 实时回调（首行是执行命令本身，
@@ -2306,6 +2357,14 @@ pub(crate) fn install_decision(
             })
         }
         Err((raw, display)) => {
+            // store 漂移（pnpm 大版本升级后 profile 的 node_modules 仍链在旧
+            // store / hoist 形态上）：pnpm 拒绝一切安装与卸载，构建脚本审批
+            // 无从谈起——先于审批指纹分流，执行体据此走自动重建重试
+            if pnpm_failure_hint(&raw)
+                .is_some_and(|h| h == HINT_UNEXPECTED_STORE || h == HINT_HOIST_DRIFT)
+            {
+                return Ok(InstallOutcome::NeedsStoreRepair);
+            }
             // 两类 pnpm 构建拦截都转审批，packages 统一承载"写入 allowBuilds
             // 的键"：registry 包 = 包名（Ignored build scripts 行），git 包 =
             // 完整键（ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED 硬失败，无该行）；
@@ -2335,16 +2394,38 @@ pub(crate) fn install_decision(
 /// 安装一键候选的执行体（market_install 的阻塞部分）：进程执行与审计台账
 /// 在本壳，判定决策在 install_decision（审批分流附带回执/拦截原始事实，
 /// 台账记原始子进程输出，不随判定层的加工漂移）。判定成功后过安装护栏
-/// （预检/冲突对账/自动回滚），护栏拦截转失败、剥离事实附进结果
+/// （预检/冲突对账/自动回滚），护栏拦截转失败、剥离事实附进结果。
+/// store 漂移（NeedsStoreRepair）走自动修复：重建 node_modules 后原样重跑
 fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcome, String> {
     let before = installed_plugins()
         .ok()
         .map(|l| l.iter().map(|p| p.name.clone()).collect::<Vec<_>>());
     let before_layer = capture_profile_layer();
-    let run = run_plugin_cmd("add", specifier, emit_install_line(app, specifier));
+    let mut run = run_plugin_cmd("add", specifier, emit_install_line(app, specifier));
+    let workspace_yaml = workspace_yaml_path().ok().map(|p| p.display().to_string());
+    let store_repair = matches!(
+        run.as_ref().err(),
+        Some((raw, _))
+            if pnpm_failure_hint(raw)
+                .is_some_and(|h| h == HINT_UNEXPECTED_STORE || h == HINT_HOIST_DRIFT)
+    );
+    if store_repair {
+        // 首跑命中的原始输出进台账（可复述事实），随后重建重试
+        let first_raw = run.as_ref().err().map(|(raw, _)| raw.clone());
+        append_audit(app, "repair-store", specifier, first_raw.as_deref());
+        match rebuild_profile_store(emit_install_line(app, specifier)) {
+            Ok(()) => {
+                append_audit(app, "repair-store", specifier, None);
+                run = run_plugin_cmd("add", specifier, emit_install_line(app, specifier));
+            }
+            Err((raw, display)) => {
+                append_audit(app, "repair-store", specifier, Some(&raw));
+                return Err(display);
+            }
+        }
+    }
     let raw_failure = run.as_ref().err().map(|(raw, _)| raw.clone());
     let after = installed_plugins().ok();
-    let workspace_yaml = workspace_yaml_path().ok().map(|p| p.display().to_string());
     match install_decision(specifier, run, before, after, workspace_yaml) {
         Ok(InstallOutcome::Installed { receipt, .. }) => {
             // 护栏在回执判定之后：它要跑 remove/dump-config 子进程，判定核
@@ -2364,6 +2445,11 @@ fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcom
             append_audit(app, "needs-approval", specifier, raw_failure.as_deref());
             Ok(outcome)
         }
+        // 自动修复只重试一次：重跑仍报 store 漂移按普通失败如实上报
+        Ok(InstallOutcome::NeedsStoreRepair) => Err(install_failure_message(
+            "add",
+            raw_failure.as_deref().unwrap_or_default(),
+        )),
         Err((raw, display)) => {
             append_audit(app, "add", specifier, Some(&raw));
             Err(display)
@@ -2620,31 +2706,33 @@ fn prefetch_once(specifiers: Vec<String>, profile_dir: &std::path::Path) -> Resu
     if specifiers.is_empty() {
         return Ok(());
     }
-    let pnpm = super::components::pnpm_bin();
+    let pnpm = pnpm_bin();
     let queue: Mutex<Vec<String>> = Mutex::new(specifiers);
     std::thread::scope(|s| {
         for _ in 0..PREFETCH_CONCURRENCY {
-            s.spawn(|| loop {
-                let spec = match queue.lock().unwrap_or_else(|p| p.into_inner()).pop() {
-                    Some(x) => x,
-                    None => return,
-                };
-                let profile_str = profile_dir.display().to_string();
-                let argv = ["--dir", profile_str.as_str(), "store", "add", spec.as_str()];
-                match run_capture_lines(&pnpm, &argv, |_| {}, Some(PREFETCH_TIMEOUT), None) {
-                    Ok((_, _, true, _)) => {}
-                    Ok((out, err, false, _)) => {
-                        let raw = failure_raw(&out, &err, "prefetch");
-                        crate::logging::warn(
-                            "[market] 更新预下载失败",
-                            &format!("{}: {}", spec, raw),
-                        );
-                    }
-                    Err(e) => {
-                        crate::logging::warn(
-                            "[market] 更新预下载执行失败",
-                            &format!("{}: {}", spec, e),
-                        );
+            s.spawn(|| {
+                loop {
+                    let spec = match queue.lock().unwrap_or_else(|p| p.into_inner()).pop() {
+                        Some(x) => x,
+                        None => return,
+                    };
+                    let profile_str = profile_dir.display().to_string();
+                    let argv = ["--dir", profile_str.as_str(), "store", "add", spec.as_str()];
+                    match run_capture_lines(&pnpm, &argv, |_| {}, Some(PREFETCH_TIMEOUT), None) {
+                        Ok((_, _, true, _)) => {}
+                        Ok((out, err, false, _)) => {
+                            let raw = failure_raw(&out, &err, "prefetch");
+                            crate::logging::warn(
+                                "[market] 更新预下载失败",
+                                &format!("{}: {}", spec, raw),
+                            );
+                        }
+                        Err(e) => {
+                            crate::logging::warn(
+                                "[market] 更新预下载执行失败",
+                                &format!("{}: {}", spec, e),
+                            );
+                        }
                     }
                 }
             });
@@ -2782,22 +2870,24 @@ fn discovery_compat_once(
         if let Ok(client) = update_http_client() {
             std::thread::scope(|s| {
                 for _ in 0..COMPAT_CONCURRENCY.min(queue.lock().map(|q| q.len()).unwrap_or(0)) {
-                    s.spawn(|| loop {
-                        let name = match queue.lock().unwrap_or_else(|p| p.into_inner()).pop() {
-                            Some(n) => n,
-                            None => return,
-                        };
-                        match registry_latest_with(&client, &name) {
-                            Ok(latest) => fetched
-                                .lock()
-                                .unwrap_or_else(|p| p.into_inner())
-                                .push((name, latest.requires_dsh)),
-                            Err(_) => {
-                                // 冷却记账：失败不进响应也不进磁盘缓存
-                                COMPAT_FAILURES
+                    s.spawn(|| {
+                        loop {
+                            let name = match queue.lock().unwrap_or_else(|p| p.into_inner()).pop() {
+                                Some(n) => n,
+                                None => return,
+                            };
+                            match registry_latest_with(&client, &name) {
+                                Ok(latest) => fetched
                                     .lock()
                                     .unwrap_or_else(|p| p.into_inner())
-                                    .insert(name, now + COMPAT_FAILURE_COOLDOWN_SECS);
+                                    .push((name, latest.requires_dsh)),
+                                Err(_) => {
+                                    // 冷却记账：失败不进响应也不进磁盘缓存
+                                    COMPAT_FAILURES
+                                        .lock()
+                                        .unwrap_or_else(|p| p.into_inner())
+                                        .insert(name, now + COMPAT_FAILURE_COOLDOWN_SECS);
+                                }
                             }
                         }
                     });

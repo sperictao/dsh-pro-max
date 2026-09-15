@@ -42,6 +42,12 @@ function installNoticeText(notices: InstallNotice[]): string {
 type InstalledOutcome = Extract<InstallOutcome, { status: "installed" }>;
 type MarketToast = (message: string, type?: "info" | "error" | "success") => void;
 
+// needsStoreRepair 是 launcher 内部消化的自动修复信号，不会越过 IPC；
+// 防御性收窄让类型系统证明其不可达，而非静默当成功处理
+function asInstalled(outcome: InstallOutcome): InstalledOutcome | null {
+  return outcome.status === "installed" ? outcome : null;
+}
+
 function notifyInstallOutcome(
   toast: MarketToast,
   outcome: InstalledOutcome,
@@ -315,7 +321,9 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
         });
         return;
       }
-      notifyInstallOutcome(get().toast, outcome, label, "installed");
+      const installed = asInstalled(outcome);
+      if (!installed) return;
+      notifyInstallOutcome(get().toast, installed, label, "installed");
       set({ marketInstallLog: null });
       await get().refreshMarketInstalled();
     } catch (e) {
@@ -349,16 +357,18 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
         });
         return;
       }
+      const installed = asInstalled(outcome);
+      if (!installed) return;
       notifyInstallOutcome(
         get().toast,
-        outcome,
+        installed,
         pending.label,
         pending.operation === "update" ? "updated" : "installed",
         pending.silent,
       );
       set({ marketPendingApproval: null, marketInstallLog: null });
-      if (pending.operation === "update" && outcome.receipt) {
-        const receipt = outcome.receipt;
+      if (pending.operation === "update" && installed.receipt) {
+        const receipt = installed.receipt;
         set((s) => {
           const info = s.marketUpdates?.[receipt.name];
           if (!info) return s;
@@ -526,8 +536,10 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
         );
         return false;
       }
-      const receipt = outcome.receipt;
-      notifyInstallOutcome(get().toast, outcome, name, "updated", silent);
+      const installed = asInstalled(outcome);
+      if (!installed) return false;
+      const receipt = installed.receipt;
+      notifyInstallOutcome(get().toast, installed, name, "updated", silent);
       // 回执背书的乐观收敛：@latest/钉定版本装成 = 已到检测时的 latest，
       // 本包"有更新"即刻为假（徽章与 Update 按钮随回执消失，不等后台
       // registry 重检）。installedVersion 的暂态失真可容忍：卡片版本号读

@@ -3102,7 +3102,7 @@ fn install_decision_elevates_blocked_builds_to_needs_approval() {
             assert_eq!(packages, vec!["node-pty"]);
             assert_eq!(workspace_yaml, "/p/pnpm-workspace.yaml");
         }
-        InstallOutcome::Installed { .. } => panic!("expected needsApproval"),
+        _ => panic!("expected needsApproval"),
     }
     // 普通失败 → Err（raw 留给台账，display 给用户）
     let err = super::market::install_decision(
@@ -3142,7 +3142,7 @@ fn install_decision_elevates_git_prepare_block_to_needs_approval() {
                 vec!["dsh-advisor@git+https://github.com/btspoony/dsh-advisor.git#1eda7b"]
             );
         }
-        InstallOutcome::Installed { .. } => panic!("expected needsApproval"),
+        _ => panic!("expected needsApproval"),
     }
     // 解析不出键 → 普通失败，display 保留 HINT_GIT_PREPARE 手动兜底
     let err = super::market::install_decision(
@@ -3157,6 +3157,56 @@ fn install_decision_elevates_git_prepare_block_to_needs_approval() {
     )
     .expect_err("plain failure");
     assert_eq!(err.1, "hint");
+    set_current("en");
+}
+
+#[test]
+fn install_decision_elevates_store_drift_to_needs_store_repair() {
+    set_current("en");
+    // store 漂移指纹（pnpm 大版本升级后的实际输出形态）→ NeedsStoreRepair，
+    // 由执行体自动重建重试；先于构建脚本审批分流（漂移会吞掉一切 pnpm 操作）
+    for raw in [
+        "[ERR_PNPM_UNEXPECTED_STORE] Unexpected store location\n\nThe dependencies at \"/u/.dsh/profiles/web/node_modules\" are currently linked from the store at \"/u/Library/pnpm/store/v10\".\n\npnpm now wants to use the store at \"/u/Library/pnpm/store/v11\" to link dependencies.",
+        "ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF  Your node_modules has been created with a different pnpm major",
+    ] {
+        let outcome = super::market::install_decision(
+            "@scope/pkg@1.0.0",
+            Err((raw.to_string(), "hint".to_string())),
+            None,
+            None,
+            Some("/p/pnpm-workspace.yaml".to_string()),
+        )
+        .expect("store drift is not an error");
+        assert!(
+            matches!(outcome, InstallOutcome::NeedsStoreRepair),
+            "expected needsStoreRepair for: {raw}"
+        );
+    }
+    // 既有分流不回归：构建脚本拦截仍转审批，普通失败仍 Err
+    let outcome = super::market::install_decision(
+        "node-pty",
+        Err((
+            "Ignored build scripts: node-pty@1.1.0".to_string(),
+            "display".to_string(),
+        )),
+        None,
+        None,
+        Some("/p/pnpm-workspace.yaml".to_string()),
+    )
+    .expect("needs approval");
+    assert!(matches!(outcome, InstallOutcome::NeedsApproval { .. }));
+    let err = super::market::install_decision(
+        "pkg",
+        Err((
+            "boom".to_string(),
+            "Failed to install plugin: boom".to_string(),
+        )),
+        None,
+        None,
+        Some("/p/x.yaml".to_string()),
+    )
+    .expect_err("plain failure");
+    assert_eq!(err.1, "Failed to install plugin: boom");
     set_current("en");
 }
 
@@ -3178,7 +3228,7 @@ fn install_decision_success_computes_receipt_from_before_after() {
             assert_eq!(r.name, "dsh-new");
             assert_eq!(r.spec, "dsh-new@2.0");
         }
-        InstallOutcome::NeedsApproval { .. } => panic!("expected installed"),
+        _ => panic!("expected installed"),
     }
     // after 缺失（重读 profile 失败）→ 安装仍成功、回执为空，不放大失败
     let outcome = super::market::install_decision("dsh-new@2.0", Ok(()), Some(vec![]), None, None)
