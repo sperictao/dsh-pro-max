@@ -170,15 +170,17 @@ fn dsh_version_compatible_pins_to_supported_line() {
     // 已装插件的 peer——那会在「CLI 已升、插件未升」的跟线窗口里自相
     // 矛盾）。常量自身和同线更高 rc/稳定版兼容。
     assert!(dsh_version_is_compatible(Some(SUPPORTED_DSH_VERSION)));
-    assert!(dsh_version_is_compatible(Some("0.1.5-alpha.2")));
-    assert!(dsh_version_is_compatible(Some("0.1.5")));
-    // 跨线一律不兼容：旧线 0.1.2/0.1.3 与更远的线都拒绝。0.1.3-alpha.2
+    assert!(dsh_version_is_compatible(Some("0.1.6-alpha.2")));
+    assert!(dsh_version_is_compatible(Some("0.1.6")));
+    // 跨线一律不兼容：旧线 0.1.2/0.1.3/0.1.5 与更远的线都拒绝。0.1.3-alpha.2
     // 曾满足 ">= 下限"的宽松判定，但跨线重排了运行时与数据格式（实机教训）
+    assert!(!dsh_version_is_compatible(Some("0.1.5-alpha.2")));
     assert!(!dsh_version_is_compatible(Some("0.1.2-rc.1")));
     assert!(!dsh_version_is_compatible(Some("0.1.3-alpha.2")));
     assert!(!dsh_version_is_compatible(Some("1.0.0")));
     // 低于锁定版本或无法解析的版本不兼容；alpha.0 位于 floor 之下，
     // bump 常量会翻转判定方向
+    assert!(!dsh_version_is_compatible(Some("0.1.6-alpha.0")));
     assert!(!dsh_version_is_compatible(Some("0.1.5-alpha.0")));
     assert!(!dsh_version_is_compatible(Some("0.1.2-alpha.5")));
     assert!(!dsh_version_is_compatible(Some("0.0.1-rc.5")));
@@ -218,13 +220,14 @@ fn decide_pinned_dsh_keeps_newer_but_lower_line_installs() {
     // 启动/自启不该悄悄降回），如实披露而不装回；同线更高/等于也保留；
     // 低于下限或未装才装回锁定版。
     assert_eq!(decide_pinned_dsh(Some(SUPPORTED_DSH_VERSION)), PinnedDshDecision::KeepCurrent);
-    assert_eq!(decide_pinned_dsh(Some("0.1.5-alpha.2")), PinnedDshDecision::KeepCurrent);
-    assert_eq!(decide_pinned_dsh(Some("0.1.5")), PinnedDshDecision::KeepCurrent);
+    assert_eq!(decide_pinned_dsh(Some("0.1.6-alpha.2")), PinnedDshDecision::KeepCurrent);
+    assert_eq!(decide_pinned_dsh(Some("0.1.6")), PinnedDshDecision::KeepCurrent);
     // 跨线新版本（高于下限）保留并如实披露
     assert_eq!(decide_pinned_dsh(Some("0.2.0")), PinnedDshDecision::KeepCrossLine);
-    assert_eq!(decide_pinned_dsh(Some("0.1.6-alpha.1")), PinnedDshDecision::KeepCrossLine);
+    assert_eq!(decide_pinned_dsh(Some("0.1.7-alpha.1")), PinnedDshDecision::KeepCrossLine);
     // 低于下限 / 解析失败 / 未装 → 装回锁定版
-    assert_eq!(decide_pinned_dsh(Some("0.1.5-alpha.0")), PinnedDshDecision::InstallPinned);
+    assert_eq!(decide_pinned_dsh(Some("0.1.6-alpha.0")), PinnedDshDecision::InstallPinned);
+    assert_eq!(decide_pinned_dsh(Some("0.1.5-alpha.2")), PinnedDshDecision::InstallPinned);
     assert_eq!(decide_pinned_dsh(Some("0.1.2-alpha.5")), PinnedDshDecision::InstallPinned);
     assert_eq!(decide_pinned_dsh(Some("not-a-version")), PinnedDshDecision::InstallPinned);
     assert_eq!(decide_pinned_dsh(None), PinnedDshDecision::InstallPinned);

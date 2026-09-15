@@ -375,7 +375,7 @@ describe("start failure log disclosure", () => {
         index: 2,
         id: "start",
         state: "done" as const,
-        detail: "dsh web is running on 127.0.0.1:3899\nIncompatible plugin dsh-rewind-plugin: @deepseek-ai/dsh-session does not export decodeStorageRecord; it will abort dsh startup",
+        detail: "dsh web is running on 127.0.0.1:3899\nIncompatible plugin dsh-rewind-plugin: @deepseek-ai/dsh-session does not export decodeStorageRecord; the plugin will not load, and dsh aborts startup if its entry is required",
         problem: null,
         solution: null,
         actionPlugin: "dsh-rewind-plugin",

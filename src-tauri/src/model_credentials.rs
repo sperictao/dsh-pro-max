@@ -1,4 +1,4 @@
-//! DSH 模型凭据桥：对齐 dsh 0.1.5-alpha.1 的 `ctx.credentials` 语义。
+//! DSH 模型凭据桥：对齐 dsh 0.1.6-alpha.1 的 `ctx.credentials` 语义。
 //!
 //! `apiKeyEnv` 只是 CredentialRef（POSIX 环境变量形状的引用名），secret 不进入
 //! settings.yaml。dsh web 运行时优先调用官方 credentials/describe|set|unset RPC，
@@ -93,7 +93,7 @@ fn document_from_text(text: &str, filename: &Path) -> Result<Mapping, String> {
         .cloned()
         .ok_or_else(|| format!("Credentials file {} must be a mapping", filename.display()))?;
 
-    // dsh 0.1.5-alpha.1 接受预发布 flat layout，并在下一次写入升级到 v1。
+    // dsh 0.1.6-alpha.1 接受预发布 flat layout，并在下一次写入升级到 v1。
     if !root.contains_key(mapping_key("version")) && !root.is_empty() {
         let mut refs = Mapping::new();
         for (key, value) in root.clone() {

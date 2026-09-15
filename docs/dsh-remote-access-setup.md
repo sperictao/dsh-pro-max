@@ -39,13 +39,13 @@
 
 ## 3. dsh 版本兼容与修复
 
-Launcher 当前验证栈为 **dsh 0.1.5-alpha.1**（与内置授权插件一同钉版发布）。兼容判定按
+Launcher 当前验证栈为 **dsh 0.1.6-alpha.1**（与内置授权插件一同钉版发布）。兼容判定按
 「支持线」进行，不要求与钉版逐字相等：
 
-- **同线且 ≥ 0.1.5-alpha.1**（如 0.1.5）：兼容，可直接使用。主页会提示
+- **同线且 ≥ 0.1.6-alpha.1**（如 0.1.6）：兼容，可直接使用。主页会提示
   "Newer than the verified stack"，表示比已验证组合新；插件出现不兼容症状时，
   点主页的 **Repair dsh stack** 一键回到验证栈（重装钉版 dsh + 两个授权插件）
-- **低于 0.1.5-alpha.1 或跨线**（如 0.1.2-rc.1、0.1.2-alpha.5、0.1.6-alpha.1）：标记不兼容，
+- **低于 0.1.6-alpha.1 或跨线**（如 0.1.5-alpha.2、0.1.5-rc.1、0.2.0）：标记不兼容，
   主页出现 **Repair dsh stack** 按钮；设置 → dsh Version 的逐版本安装仍可进行
   （版本闸门已放开，风险以红字与 toast 披露，不阻断安装）
 - **版本达标但缺授权插件**：不再强制降级 dsh，状态行引导直接点一键启动补装插件
@@ -208,7 +208,7 @@ capability 名必须在三处**同名**：
 远程模式下点**一键启动**，时间轴应依次通过 8 步：
 
 1. Node.js 与 npm
-2. 支持线内的 dsh（缺装或不兼容时自动装回验证栈 0.1.5-alpha.1，见第 3 节）
+2. 支持线内的 dsh（缺装或不兼容时自动装回验证栈 0.1.6-alpha.1，见第 3 节）
 3. 两个授权插件
 4. Tailscale 在线与当前登录身份
 5. MagicDNS / HTTPS Certificates
@@ -238,8 +238,8 @@ tailscale serve status
 | 保存时报"Tailscale login name contains unsupported characters" | 登录名含非法字符（如空格、中文）。只允许 ASCII 字母数字及 `@._+-` |
 | Tailscale ping 正常，但异机 HTTPS / RPC / WSS 超时 | tailnet grant 缺少 `"ip": ["tcp:443"]`，或 `src` / `dst` 未匹配实际远程身份与 dsh 节点。App Capability 本身不会放行端口 |
 | 启动时间轴卡在最后一步 / 远程打开提示无权限 | grant 缺少 `tcp:443` 网络授权、capability 只配了设置页没配 `app`，或 capability 名不一致。核对第 7 节 |
-| 主页提示 "Newer than the verified stack (…)" | dsh 版本高于验证栈但仍在支持线内（如 0.1.2-alpha.3），可继续使用；插件出现不兼容症状时点 **Repair dsh stack** 回到验证栈 |
-| 状态行显示 "dsh version is not supported by the auth plugins" / 时间轴卡在 Install DeepSeek Harness (dsh) | 装了跨线版本（如 0.1.3-alpha.1）→ 点 **Repair dsh stack**（回装验证栈 + 插件）；版本达标但缺插件 → 直接一键启动补装，无需降级 |
+| 主页提示 "Newer than the verified stack (…)" | dsh 版本高于验证栈但仍在支持线内（如 0.1.6-rc.1），可继续使用；插件出现不兼容症状时点 **Repair dsh stack** 回到验证栈 |
+| 状态行显示 "dsh version is not supported by the auth plugins" / 时间轴卡在 Install DeepSeek Harness (dsh) | 装了跨线版本（如 0.1.5-alpha.1）→ 点 **Repair dsh stack**（回装验证栈 + 插件）；版本达标但缺插件 → 直接一键启动补装，无需降级 |
 | serve 报 `unknown flag: --accept-app-caps` | Tailscale 版本过旧，需 1.92+。升级 Tailscale |
 | 已确认 `tcp:443` grant 匹配，但开启代理时打不开 `https://<hostname>.ts.net` | 多被 Shadowrocket / Clash / Surge 或系统代理抢走 tailnet 流量；宿主 Mac 上把 Launcher 显示的精确主机名加入 Shadowrocket“通用 → 跳过代理（skip-proxy）”，其他访问端设备再配置精确 `DOMAIN,<hostname>.<tailnet>.ts.net,DIRECT`（详见 dsh-remote-access.md 的排查节） |
 | 远程管理接口（settings / credentials）始终 403 | Admin capability 未配置或未在 grants 下发。确认 `dsh_admin_cap_domain` 已填、grants 里给了 `<域名>/cap/dsh-admin` |

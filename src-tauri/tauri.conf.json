@@ -40,10 +40,10 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../.artifacts/dsh-plugins/dsh-client-connection-authz-021fee6a4f4a.tgz": "dsh-plugins/dsh-client-connection-authz-021fee6a4f4a.tgz",
-      "../.artifacts/dsh-plugins/dsh-client-connection-authz-021fee6a4f4a.tgz.sha256": "dsh-plugins/dsh-client-connection-authz-021fee6a4f4a.tgz.sha256",
-      "../.artifacts/dsh-plugins/dsh-auth-tailscale-9765f2a544c7.tgz": "dsh-plugins/dsh-auth-tailscale-9765f2a544c7.tgz",
-      "../.artifacts/dsh-plugins/dsh-auth-tailscale-9765f2a544c7.tgz.sha256": "dsh-plugins/dsh-auth-tailscale-9765f2a544c7.tgz.sha256"
+      "../.artifacts/dsh-plugins/dsh-client-connection-authz-c7464b8629bf.tgz": "dsh-plugins/dsh-client-connection-authz-c7464b8629bf.tgz",
+      "../.artifacts/dsh-plugins/dsh-client-connection-authz-c7464b8629bf.tgz.sha256": "dsh-plugins/dsh-client-connection-authz-c7464b8629bf.tgz.sha256",
+      "../.artifacts/dsh-plugins/dsh-auth-tailscale-ec56f199107d.tgz": "dsh-plugins/dsh-auth-tailscale-ec56f199107d.tgz",
+      "../.artifacts/dsh-plugins/dsh-auth-tailscale-ec56f199107d.tgz.sha256": "dsh-plugins/dsh-auth-tailscale-ec56f199107d.tgz.sha256"
     },
     "macOS": {
       "hardenedRuntime": true,

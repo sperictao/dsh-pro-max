@@ -263,7 +263,7 @@ pub(crate) fn preflight_warning_lines(drifts: &[ExportDrift]) -> String {
             let mut missing = d.missing.clone();
             missing.sort();
             keyf(
-                "Incompatible plugin {plugin}: {dependency} does not export {names}; it will abort dsh startup",
+                "Incompatible plugin {plugin}: {dependency} does not export {names}; the plugin will not load, and dsh aborts startup if its entry is required",
                 &[
                     ("plugin", d.plugin.clone()),
                     ("dependency", d.dependency.clone()),
