@@ -28,6 +28,10 @@
 - 配置持久化独立：UI 状态（主题、访问模式等 localStorage 项）与落盘配置（capability、语言）分离，互不牵制。
 - 可枚举的（如主题族）由 manifest 单一事实驱动，上游新增不自动进入，id 列表是唯一事实来源。
 
+## 验证
+
+- 修改前端代码后运行 `pnpm run lint`，并修复 lint 错误。
+
 ## 发布
 
 - **打 tag 前必须先备齐 `release-notes/v<X.Y.Z>.md`**：`build-release.yml` 在构建完成后强制校验该文件，缺失则整个发布失败。正确顺序：版本号四处同步（`package.json` / `src-tauri/tauri.conf.json` / `src-tauri/Cargo.toml` / `src-tauri/Cargo.lock`——最后一项由 cargo 在任意命令里就地改写，bump 前三处后跑一次 `cargo check` 再一并提交）→ release notes → release commit → tag → 推送。
