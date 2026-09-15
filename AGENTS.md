@@ -30,7 +30,9 @@
 
 ## 验证
 
-- 修改前端代码后运行 `pnpm run lint`，并修复 lint 错误。
+- 修改前端代码后运行 `pnpm run lint`，并修复 lint 错误；warning 也不得在新代码中无理由增加。
+- 业务 UI 必须优先复用 `src/shared/lib/ui.ts` 的共享配方和 `DESIGN.md` 定义的语义 token。禁止在业务 TSX 中引入原始调色板颜色、非布局 arbitrary value 或 JSX inline style。
+- `src/shared/components/**` 与 `src/shared/lib/ui.ts` 属于设计系统实现层；仅这里允许规则配置中声明的必要实现例外，业务层不得复制这些例外。
 
 ## 发布
 
