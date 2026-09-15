@@ -3,6 +3,7 @@
 // 候选列表由 useProviderModels 以 cache-first SWR 提供；连接指纹变化时旧结果立即失效。
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { BTN_DANGER_SM, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
@@ -279,7 +280,12 @@ export function ModelPanes({
           data-rendered-count={renderedCandidates.length}
         >
           {candidateWindow.top > 0 && (
-            <li aria-hidden="true" role="presentation" style={{ height: candidateWindow.top }} />
+            <li
+              aria-hidden="true"
+              role="presentation"
+              className="h-(--candidate-spacer-height)"
+              style={{ "--candidate-spacer-height": `${candidateWindow.top}px` } as CSSProperties}
+            />
           )}
           {renderedCandidates.map((e, offset) => {
             const checked = selectedIds.has(modelIdKey(e.id));
@@ -292,8 +298,7 @@ export function ModelPanes({
                 aria-setsize={candidates.length}
               >
                 <label
-                  className="flex cursor-pointer items-baseline gap-2 rounded px-1 py-1 text-sm hover:bg-accent"
-                  style={{ height: CANDIDATE_ROW_HEIGHT }}
+                  className="flex h-7 cursor-pointer items-baseline gap-2 rounded px-1 py-1 text-sm hover:bg-accent"
                 >
                   <input
                     type="checkbox"
@@ -311,7 +316,12 @@ export function ModelPanes({
             );
           })}
           {candidateWindow.bottom > 0 && (
-            <li aria-hidden="true" role="presentation" style={{ height: candidateWindow.bottom }} />
+            <li
+              aria-hidden="true"
+              role="presentation"
+              className="h-(--candidate-spacer-height)"
+              style={{ "--candidate-spacer-height": `${candidateWindow.bottom}px` } as CSSProperties}
+            />
           )}
           {candidates.length === 0 && isSearching && (
             <li className="px-1 py-2 text-xs opacity-60">{t("No matching models")}</li>

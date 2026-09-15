@@ -1,6 +1,21 @@
 @import "tailwindcss";
 @import "./themes.css";
 
+/* Semantic utility registrations used by application markup.
+   Keep visual behavior in the owning layout/feature CSS; these declarations
+   make the class contract explicit to Tailwind and @shadcn/lint. */
+@utility settings-section {
+  display: block;
+}
+
+@utility install-log {
+  display: block;
+}
+
+@utility app-page-width {
+  max-width: var(--app-page-max-width);
+}
+
 /* shadcn token → Tailwind utility 桥（ADR 0008）。
    inline = 工具类直接引用 var(--x)，token 只活在 [data-theme] 块里，随主题切换。 */
 @theme inline {

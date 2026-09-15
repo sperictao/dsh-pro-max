@@ -26,8 +26,7 @@ function Toast({ item }: { item: ToastItem }) {
   }, []);
   return (
     <div
-      className={`toast ${item.type}`}
-      style={fading ? { opacity: 0, transition: "opacity 0.3s" } : undefined}
+      className={`toast ${item.type} transition-opacity duration-300 ${fading ? "opacity-0" : ""}`}
     >
       {item.message}
     </div>
