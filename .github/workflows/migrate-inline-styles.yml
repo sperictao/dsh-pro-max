@@ -1,0 +1,96 @@
+name: Migrate inline styles
+
+on:
+  push:
+    branches: [chore/setup-shadcn-lint]
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: chore/setup-shadcn-lint
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: pnpm
+      - name: Replace inline presentation styles
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"expected text not found in {path}: {old!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace(
+              "src/features/updater/AboutSection.tsx",
+              'import { useTranslation } from "react-i18next";',
+              'import type { CSSProperties } from "react";\nimport { useTranslation } from "react-i18next";',
+          )
+          replace(
+              "src/features/updater/AboutSection.tsx",
+              '<div className="update-progress-bar" style={progressWidth ? { width: progressWidth } : undefined}></div>',
+              '<div\n                className="update-progress-bar w-(--update-progress-width)"\n                style={{ "--update-progress-width": progressWidth } as CSSProperties}\n              ></div>',
+          )
+
+          replace(
+              "src/features/models/ModelPanes.tsx",
+              'import { useEffect, useMemo, useRef, useState } from "react";',
+              'import { useEffect, useMemo, useRef, useState } from "react";\nimport type { CSSProperties } from "react";',
+          )
+          replace(
+              "src/features/models/ModelPanes.tsx",
+              '<li aria-hidden="true" role="presentation" style={{ height: candidateWindow.top }} />',
+              '<li\n              aria-hidden="true"\n              role="presentation"\n              className="h-(--candidate-spacer-height)"\n              style={{ "--candidate-spacer-height": `${candidateWindow.top}px` } as CSSProperties}\n            />',
+          )
+          replace(
+              "src/features/models/ModelPanes.tsx",
+              'className="flex cursor-pointer items-baseline gap-2 rounded px-1 py-1 text-sm hover:bg-accent"\n                  style={{ height: CANDIDATE_ROW_HEIGHT }}',
+              'className="flex h-7 cursor-pointer items-baseline gap-2 rounded px-1 py-1 text-sm hover:bg-accent"',
+          )
+          replace(
+              "src/features/models/ModelPanes.tsx",
+              '<li aria-hidden="true" role="presentation" style={{ height: candidateWindow.bottom }} />',
+              '<li\n              aria-hidden="true"\n              role="presentation"\n              className="h-(--candidate-spacer-height)"\n              style={{ "--candidate-spacer-height": `${candidateWindow.bottom}px` } as CSSProperties}\n            />',
+          )
+
+          replace(
+              "src/shared/components/Toaster.tsx",
+              'className={`toast ${item.type}`}\n      style={fading ? { opacity: 0, transition: "opacity 0.3s" } : undefined}',
+              'className={`toast ${item.type} transition-opacity duration-300 ${fading ? "opacity-0" : ""}`}',
+          )
+
+          replace(
+              ".oxlintrc.json",
+              '"shadcn/no-inline-styles": "warn"',
+              '"shadcn/no-inline-styles": "error"',
+          )
+          PY
+      - run: pnpm install
+      - name: Verify design-system lint
+        run: pnpm run lint
+      - name: Verify TypeScript
+        run: pnpm exec tsc --noEmit
+      - name: Verify tests
+        run: pnpm exec vitest run
+      - name: Commit migration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .oxlintrc.json src/features/updater/AboutSection.tsx src/features/models/ModelPanes.tsx src/shared/components/Toaster.tsx
+          git diff --cached --check
+          git commit -m "refactor: enforce inline style design rule"
+          git push origin HEAD:chore/setup-shadcn-lint
