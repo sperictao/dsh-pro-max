@@ -4,10 +4,10 @@
 import type { ReactNode } from "react";
 import { PANEL } from "@/shared/lib/ui";
 
-// 分组卡片：一组设置行的容器
+// 分组卡片：一组设置行的容器，宽度跟随设置右侧内容区（与外观页一致）
 export function SettingsCard({ children }: { children: ReactNode }) {
   return (
-    <div className={`flex max-w-2xl flex-col divide-y divide-border/60 ${PANEL} p-4`}>
+    <div className={`flex w-full flex-col divide-y divide-border/60 ${PANEL} p-4`}>
       {children}
     </div>
   );

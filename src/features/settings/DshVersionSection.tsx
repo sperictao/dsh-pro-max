@@ -81,7 +81,7 @@ export function DshVersionSection() {
         {t("dsh is the DeepSeek Harness CLI; this app bundles a verified compatibility stack (CLI + authorization plugins) for one-click local & remote access.")}
       </p>
 
-      <div className="flex max-w-2xl flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
+      <div className="flex w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
         <div className="flex items-center justify-between gap-3">
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
             <span className="shrink-0 text-sm font-medium">{t("Installed")}</span>
