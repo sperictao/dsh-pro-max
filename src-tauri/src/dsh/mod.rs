@@ -310,7 +310,10 @@ pub(crate) fn ready_timeline(remote: bool, s: &DshStatus) -> Vec<StepEvent> {
             .map(|(index, id)| {
                 let ok = match *id {
                     "node" => s.node_available,
-                    "install" => s.dsh_installed && s.dsh_compatible,
+                    // 本地链允许保留跨线更新版（KeepCrossLine）；安装节点只表示
+                    // dsh CLI 已安装。授权插件兼容性属于远程链路，不能把本地
+                    // 已完成的安装步骤在收尾 detect 后重新置为 pending。
+                    "install" => s.dsh_installed,
                     "start" | "ready" => s.dsh_running,
                     _ => false,
                 };
