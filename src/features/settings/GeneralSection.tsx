@@ -40,7 +40,7 @@ export function GeneralSection() {
     <section className="settings-section" id="section-general">
       <h2 className="mb-4 text-base font-semibold">{t("General")}</h2>
 
-      <div className="flex max-w-2xl flex-col gap-4">
+      <div className="flex w-full flex-col gap-4">
         <SettingsCard>
           <SettingRow
             label={t("Language")}
