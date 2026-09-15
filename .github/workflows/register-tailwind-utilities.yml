@@ -1,0 +1,53 @@
+name: Register Tailwind utilities
+
+on:
+  push:
+    branches: [chore/setup-shadcn-lint]
+
+permissions:
+  contents: write
+
+jobs:
+  register:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: chore/setup-shadcn-lint
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: pnpm
+      - name: Register semantic utilities
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/style.css")
+          text = path.read_text()
+          marker = '@import "./themes.css";\n'
+          utilities = '''\n/* Semantic utility registrations used by application markup.\n   Keep visual behavior in the owning layout/feature CSS; these declarations\n   make the class contract explicit to Tailwind and @shadcn/lint. */\n@utility settings-section {\n  display: block;\n}\n\n@utility install-log {\n  display: block;\n}\n\n@utility app-page-width {\n  max-width: var(--app-page-max-width);\n}\n'''
+          if "@utility settings-section" in text:
+              raise SystemExit("semantic utilities already registered")
+          if marker not in text:
+              raise SystemExit("style.css import marker not found")
+          path.write_text(text.replace(marker, marker + utilities, 1))
+          PY
+      - run: pnpm install
+      - name: Verify design-system lint
+        run: pnpm run lint
+      - name: Verify TypeScript
+        run: pnpm exec tsc --noEmit
+      - name: Commit utility registrations
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/style.css
+          git diff --cached --check
+          git commit -m "style: register semantic Tailwind utilities"
+          git push origin HEAD:chore/setup-shadcn-lint
