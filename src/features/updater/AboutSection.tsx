@@ -85,7 +85,7 @@ export function AboutSection() {
       </p>
 
       {/* 更新状态聚合卡 */}
-      <div className="mt-3 flex max-w-2xl flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
+      <div className="mt-3 flex w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
         <div className="flex items-center justify-between gap-3">
           <div className="text-sm font-medium">{t("Updates")}</div>
           <span className={`status-badge ${healthBadge.cls}`}>
@@ -156,7 +156,7 @@ export function AboutSection() {
         )}
       </div>
 
-      <div className="mt-3 flex max-w-2xl flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
+      <div className="mt-3 flex w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-card-foreground">
         <div className="flex items-center justify-between gap-3">
           <span className="text-sm font-medium">GitHub</span>
           <button
