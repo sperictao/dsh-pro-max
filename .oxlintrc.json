@@ -1,12 +1,15 @@
 {
   "jsPlugins": ["@shadcn/lint"],
   "rules": {
-    "shadcn/no-restyle": ["warn", { "allow": ["layout"] }],
+    "shadcn/no-restyle": ["error", { "allow": ["layout"] }],
     "shadcn/no-raw-colors": "error",
     "shadcn/no-arbitrary-values": ["error", { "allow": ["layout"] }],
-    "shadcn/no-inline-styles": "error",
-    "shadcn/require-static-classes": "warn",
-    "shadcn/no-unknown-classes": "warn"
+    "shadcn/no-inline-styles": "warn",
+    "shadcn/require-static-classes": "error",
+    "shadcn/no-unknown-classes": [
+      "error",
+      { "allow": ["settings-section", "install-log", "app-page-width"] }
+    ]
   },
   "overrides": [
     {
