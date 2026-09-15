@@ -20,7 +20,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const WEB_PORT: u16 = 3899;
 const CREDENTIALS_FILENAME: &str = ".credentials.yaml";
 const DOCUMENT_VERSION: i64 = 1;
-const LOCK_WAIT_MS: u64 = 2_000;
+/// 凭据文档的跨进程写锁等待预算。**必须跟 `dsh-credentials-local` 的
+/// `DOCUMENT_LOCK_WAIT_MS`（30s），而不是 `dsh-atomic-write` 的通用默认
+/// `DEFAULT_LOCK_WAIT_MS`（2s）**：同一把 `.credentials.yaml.lock`，宿主为
+/// 「持锁期间还要跑调用方决策」的记录写入显式放宽到 30s，Launcher 沿用通用
+/// 默认会在 dsh 正在启动或写记录时把自己的写入误判成超时。重试节奏
+/// （20ms 起步、×2、200ms 封顶）与宿主逐字一致，无需另设
+const LOCK_WAIT_MS: u64 = 30_000;
 const LOCK_RETRY_INITIAL_MS: u64 = 20;
 const LOCK_RETRY_MAX_MS: u64 = 200;
 const RPC_TIMEOUT_SECS: u64 = 5;
