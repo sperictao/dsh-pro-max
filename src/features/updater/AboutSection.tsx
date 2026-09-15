@@ -1,6 +1,7 @@
 // 关于分区（updater 域）：版本 + 更新状态聚合卡（源健康/版本对比/上次检查时间/失败原因持久展示）+ GitHub 链接
 // 进度行可见性 = store.downloadProgress 非空（事件到达即显示；安装结束清空即隐藏并归零，同旧 finally）
 
+import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
@@ -149,7 +150,10 @@ export function AboutSection() {
           <div className="flex items-center gap-3">
             <span className="shrink-0 text-xs font-medium">{t("Update Progress")}</span>
             <div className="update-progress-track">
-              <div className="update-progress-bar" style={progressWidth ? { width: progressWidth } : undefined}></div>
+              <div
+                className="update-progress-bar w-(--update-progress-width)"
+                style={{ "--update-progress-width": progressWidth } as CSSProperties}
+              ></div>
             </div>
             <span className="text-xs">{progressText}</span>
           </div>
