@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "dsh-pro-max"
-version = "0.8.17"
+version = "0.8.18"
 dependencies = [
  "libc",
  "log",
