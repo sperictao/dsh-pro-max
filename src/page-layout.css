@@ -1,0 +1,48 @@
+/*
+ * Shared content width for top-level workspaces.
+ *
+ * This is the single source of truth for the Home content width that used to be
+ * expressed as Tailwind's max-w-3xl / lg:max-w-4xl / xl:max-w-5xl /
+ * 2xl:max-w-6xl chain.
+ */
+:root {
+  --app-page-max-width: 48rem;
+}
+
+@media (min-width: 64rem) {
+  :root {
+    --app-page-max-width: 56rem;
+  }
+}
+
+@media (min-width: 80rem) {
+  :root {
+    --app-page-max-width: 64rem;
+  }
+}
+
+@media (min-width: 96rem) {
+  :root {
+    --app-page-max-width: 72rem;
+  }
+}
+
+.app-page-width {
+  max-width: var(--app-page-max-width);
+}
+
+/*
+ * Plugin panes are themselves the scroll containers. Keep those containers at
+ * full width so their scrollbars stay at the window edge, and constrain only
+ * the usable content area by growing horizontal padding after the shared max
+ * width is reached. Dialogs are excluded because they own their own sizing.
+ */
+#market-view > div:not([role="dialog"]),
+#models-view {
+  padding-inline: max(1.5rem, calc((100% - var(--app-page-max-width)) / 2));
+}
+
+/* Models already has an inner centered wrapper; make it follow the same source. */
+#models-view > .mx-auto {
+  max-width: var(--app-page-max-width);
+}
