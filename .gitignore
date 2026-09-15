@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+.pnpm-store/
 
 # Build outputs
 dist/
@@ -32,8 +33,16 @@ npm-debug.log*
 *~
 
 # Local agent working notes
+# 每个 agent CLI 在本仓库落下的本地状态（skills / hooks / 项目级配置）。
+# 与 .zcode、.impeccable 同类：机器本地，不进版本库。顺带让 oxlint 不再
+# 扫这些目录（oxlint 认 .gitignore），否则 `pnpm run lint` 会被本地 skill
+# 副本里的 21 个 error 判红，而 CI 干净检出上并不存在这些目录
 .zcode/
 .impeccable/
+.agents/
+.claude/
+.codex/
+.dsh/
 docs/agent/
 
 # OS metadata

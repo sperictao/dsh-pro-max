@@ -10,7 +10,7 @@
  *     --notes-file ./release-notes/v0.1.0.md
  */
 import { readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
-import { resolve, basename } from "node:path";
+import { resolve } from "node:path";
 
 function parseArgs() {
   const args = {};
@@ -27,15 +27,6 @@ function parseArgs() {
     process.exit(1);
   }
   return args;
-}
-
-function findFile(dir, pattern) {
-  const files = readdirSync(dir);
-  const matches = files.filter((f) => {
-    if (typeof pattern === "string") return f.includes(pattern);
-    return pattern.test(f);
-  });
-  return matches.length > 0 ? resolve(dir, matches[0]) : null;
 }
 
 function readSignature(dir, assetName) {

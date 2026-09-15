@@ -72,7 +72,7 @@ function validCustomSpecifier(s: string): boolean {
     !!s &&
     s.length <= 214 &&
     /^[A-Za-z0-9@/._#:-]+$/.test(s) &&
-    !/^[-#:.\/]/.test(s) &&
+    !/^[-#:./]/.test(s) &&
     !s.includes("..")
   );
 }
@@ -1096,7 +1096,7 @@ function InstallLogView({ log, failed }: { log: { specifier: string; lines: stri
       aria-busy={!failed}
     >
       <p className={`truncate font-mono ${MUTED}`}>
-        {first ?? `\$ dsh plugin --profile web add ${log.specifier}`}
+        {first ?? `$ dsh plugin --profile web add ${log.specifier}`}
       </p>
       <pre
         ref={boxRef}

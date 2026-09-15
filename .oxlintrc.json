@@ -1,5 +1,6 @@
 {
   "jsPlugins": ["@shadcn/lint"],
+  "ignorePatterns": ["vendor/**"],
   "rules": {
     "shadcn/no-restyle": ["error", { "allow": ["layout"] }],
     "shadcn/no-raw-colors": "error",

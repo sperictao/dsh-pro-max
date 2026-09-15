@@ -4,7 +4,7 @@
  * 从环境变量读取 updater 公钥和签名密钥，生成 Tauri CLI --config overlay 配置。
  * 该文件被 .gitignore 忽略，仅在构建时生成。
  */
-import { writeFileSync, existsSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
