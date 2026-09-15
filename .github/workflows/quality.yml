@@ -19,6 +19,8 @@ jobs:
           node-version: "22"
           cache: "pnpm"
       - run: pnpm install
+      - name: Design system lint
+        run: pnpm run lint
       - run: pnpm exec tsc --noEmit
       - run: pnpm exec vitest run
       - name: i18n coverage
