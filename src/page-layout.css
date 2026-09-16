@@ -50,8 +50,17 @@
  * the usable content area by growing horizontal padding after the shared max
  * width is reached. Dialogs are excluded because they own their own sizing.
  */
-#market-view > div:not([role="dialog"]),
+#market-view > div:not([role="dialog"]) {
+  padding-inline: max(var(--app-page-gutter), calc((100% - var(--app-page-max-width)) / 2));
+}
+
+/*
+ * Models owns one scroll container for both its loading and loaded states.
+ * Keep both axes on the same responsive gutter source so narrow windows use
+ * 16px breathing room and >=40rem windows use 24px consistently.
+ */
 #models-view {
+  padding-block: var(--app-page-gutter);
   padding-inline: max(var(--app-page-gutter), calc((100% - var(--app-page-max-width)) / 2));
 }
 
