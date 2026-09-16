@@ -39,10 +39,6 @@
   max-width: var(--app-page-max-width);
 }
 
-.app-page-padding {
-  padding-inline: var(--app-page-gutter);
-}
-
 /*
  * Plugin panes are themselves the scroll containers. Keep those containers at
  * full width so their scrollbars stay at the window edge, and constrain only
