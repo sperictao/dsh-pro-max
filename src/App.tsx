@@ -11,7 +11,14 @@ import { i18n } from "./shared/i18n";
 import { renderMessage } from "./shared/i18n/error";
 import { Toaster } from "./shared/components/Toaster";
 import { openRepo } from "./shared/lib/links";
-import { APP_BRAND, APP_HEADER, APP_NAV, APP_NAV_ITEM, APP_NAV_ITEM_ACTIVE } from "./shared/lib/ui";
+import {
+  APP_BRAND,
+  APP_HEADER,
+  APP_NAV,
+  APP_NAV_ITEM,
+  APP_NAV_ITEM_ACTIVE,
+  APP_NAV_ITEM_INACTIVE,
+} from "./shared/lib/ui";
 import { UpdateBadge } from "./features/updater/UpdateBadge";
 import { SettingsView } from "./features/settings/SettingsView";
 import { IntegrationView } from "./features/integration/IntegrationView";
@@ -139,7 +146,7 @@ export function App() {
               <button
                 key={item.view}
                 type="button"
-                className={`${APP_NAV_ITEM}${active ? ` ${APP_NAV_ITEM_ACTIVE}` : ""}`}
+                className={`${APP_NAV_ITEM} ${active ? APP_NAV_ITEM_ACTIVE : APP_NAV_ITEM_INACTIVE}`}
                 aria-current={active ? "page" : undefined}
                 title={item.view === "settings" ? t("Shortcut: Cmd/Ctrl + ,") : undefined}
                 onClick={() => navigate(item.view)}
