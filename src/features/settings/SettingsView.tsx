@@ -76,31 +76,36 @@ export function SettingsView() {
   const discardConfigDraft = useAppStore((s) => s.discardConfigDraft);
 
   return (
-    <main className="min-h-0 flex-1" id="settings-view">
-      <div className="flex h-full">
-        <nav className="flex w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-3">
+    <main className="min-h-0 min-w-0 flex-1" id="settings-view">
+      <div className="flex h-full min-w-0">
+        <nav className="flex w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-3" aria-label={t("Settings")}>
           {SECTION_GROUPS.map((g) => (
             <div className="flex flex-col gap-0.5" key={g.labelKey}>
               <div className={`px-2.5 pb-1 font-medium tracking-wide ${MUTED}`}>
                 {t(g.labelKey)}
               </div>
-              {g.sections.map((s) => (
-                <button
-                  key={s.id}
-                  className={`nav-item${section === s.id ? " active" : ""}`}
-                  onClick={() => setSettingsSection(s.id)}
-                >
-                  {s.icon}
-                  <span>{t(s.labelKey)}</span>
-                </button>
-              ))}
+              {g.sections.map((s) => {
+                const active = section === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    className={`nav-item${active ? " active" : ""}`}
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => setSettingsSection(s.id)}
+                  >
+                    {s.icon}
+                    <span>{t(s.labelKey)}</span>
+                  </button>
+                );
+              })}
             </div>
           ))}
         </nav>
 
         {/* key 随分区切换重挂载：滚动位置归位 */}
-        <div key={section} className="flex flex-1 flex-col overflow-y-auto">
-          <div className="flex-1 p-6">
+        <div key={section} className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+          <div className="flex-1 p-4 sm:p-6">
             {section === "general" && <GeneralSection />}
             {section === "appearance" && <AppearanceSection />}
             {section === "dsh-version" && <DshVersionSection />}
@@ -111,14 +116,15 @@ export function SettingsView() {
           {/* 全局脏状态保存条：有未落盘修改才出现，与所在分区无关 */}
           {dirty && (
             <div
-              className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-background/95 px-6 py-3 backdrop-blur"
+              className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6"
               id="settings-footer"
             >
               <span className="mr-auto text-xs opacity-70">{t("You have unsaved changes")}</span>
-              <button className={BTN} id="btn-discard-config" onClick={discardConfigDraft}>
+              <button type="button" className={BTN} id="btn-discard-config" onClick={discardConfigDraft}>
                 {t("Discard")}
               </button>
               <button
+                type="button"
                 className={BTN_PRIMARY}
                 id="btn-save-config"
                 disabled={saveBlocked}

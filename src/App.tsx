@@ -11,6 +11,14 @@ import { i18n } from "./shared/i18n";
 import { renderMessage } from "./shared/i18n/error";
 import { Toaster } from "./shared/components/Toaster";
 import { openRepo } from "./shared/lib/links";
+import {
+  APP_BRAND,
+  APP_HEADER,
+  APP_NAV,
+  APP_NAV_ITEM,
+  APP_NAV_ITEM_ACTIVE,
+  APP_NAV_ITEM_INACTIVE,
+} from "./shared/lib/ui";
 import { UpdateBadge } from "./features/updater/UpdateBadge";
 import { SettingsView } from "./features/settings/SettingsView";
 import { IntegrationView } from "./features/integration/IntegrationView";
@@ -119,30 +127,35 @@ export function App() {
 
   return (
     <>
-      <header className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2.5">
-        <div className="flex items-center gap-2">
+      <header className={APP_HEADER}>
+        <div className="flex min-w-0 items-center gap-2">
           <button
             type="button"
-            className="cursor-pointer rounded-md text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={APP_BRAND}
             title="GitHub"
             onClick={() => void openRepo()}
           >
-            DSH Pro Max
+            <span className="truncate">DSH Pro Max</span>
           </button>
           <UpdateBadge />
         </div>
-        <div className="flex items-center gap-1">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.view}
-              className={`header-btn${activeView === item.view ? " active" : ""}`}
-              title={item.view === "settings" ? t("Shortcut: Cmd/Ctrl + ,") : undefined}
-              onClick={() => navigate(item.view)}
-            >
-              {t(item.labelKey)}
-            </button>
-          ))}
-        </div>
+        <nav className={APP_NAV}>
+          {NAV_ITEMS.map((item) => {
+            const active = activeView === item.view;
+            return (
+              <button
+                key={item.view}
+                type="button"
+                className={`${APP_NAV_ITEM} ${active ? APP_NAV_ITEM_ACTIVE : APP_NAV_ITEM_INACTIVE}`}
+                aria-current={active ? "page" : undefined}
+                title={item.view === "settings" ? t("Shortcut: Cmd/Ctrl + ,") : undefined}
+                onClick={() => navigate(item.view)}
+              >
+                {t(item.labelKey)}
+              </button>
+            );
+          })}
+        </nav>
       </header>
 
       {activeView === "settings" && <SettingsView />}
