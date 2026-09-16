@@ -33,6 +33,7 @@
 - 修改前端代码后运行 `pnpm run lint`，并修复 lint 错误；warning 也不得在新代码中无理由增加。
 - 业务 UI 必须优先复用 `src/shared/lib/ui.ts` 的共享配方和 `DESIGN.md` 定义的语义 token。禁止在业务 TSX 中引入原始调色板颜色、非布局 arbitrary value 或 JSX inline style。
 - `src/shared/components/**` 与 `src/shared/lib/ui.ts` 属于设计系统实现层；仅这里允许规则配置中声明的必要实现例外，业务层不得复制这些例外。
+- 交互层 UI 改动（导航、事件绑定、a11y 层）tsc/lint/vitest/e2e 全绿**不算完成**：e2e 跑在无 Tauri IPC 的浏览器进程，覆盖不了 WKWebView 真机行为（2026-09-16 导航改版在 Chrome/WebKit 双引擎复现全过、真机顶栏 onClick 失效，整体回退）。必须在 `pnpm tauri dev` 真机点过关键路径后才算验证完成。
 
 ## 发布
 
