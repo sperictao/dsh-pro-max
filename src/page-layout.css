@@ -1,12 +1,20 @@
 /*
- * Shared content width for top-level workspaces.
+ * Shared content width and gutters for top-level workspaces.
  *
  * This is the single source of truth for the Home content width that used to be
  * expressed as Tailwind's max-w-3xl / lg:max-w-4xl / xl:max-w-5xl /
- * 2xl:max-w-6xl chain.
+ * 2xl:max-w-6xl chain. Keep horizontal breathing room here as well so Home,
+ * Plugins and Models react to narrow desktop windows consistently.
  */
 :root {
   --app-page-max-width: 48rem;
+  --app-page-gutter: 1rem;
+}
+
+@media (min-width: 40rem) {
+  :root {
+    --app-page-gutter: 1.5rem;
+  }
 }
 
 @media (min-width: 64rem) {
@@ -31,6 +39,10 @@
   max-width: var(--app-page-max-width);
 }
 
+.app-page-padding {
+  padding-inline: var(--app-page-gutter);
+}
+
 /*
  * Plugin panes are themselves the scroll containers. Keep those containers at
  * full width so their scrollbars stay at the window edge, and constrain only
@@ -39,7 +51,7 @@
  */
 #market-view > div:not([role="dialog"]),
 #models-view {
-  padding-inline: max(1.5rem, calc((100% - var(--app-page-max-width)) / 2));
+  padding-inline: max(var(--app-page-gutter), calc((100% - var(--app-page-max-width)) / 2));
 }
 
 /* Models already has an inner centered wrapper; make it follow the same source. */
