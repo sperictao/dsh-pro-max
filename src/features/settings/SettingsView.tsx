@@ -1,7 +1,14 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore, isConfigDirty, type SettingsSection } from "@/shared/store";
-import { BTN, BTN_PRIMARY, MUTED } from "@/shared/lib/ui";
+import {
+  BTN,
+  BTN_PRIMARY,
+  MUTED,
+  SETTINGS_NAV_ITEM,
+  SETTINGS_NAV_ITEM_ACTIVE,
+  SETTINGS_NAV_ITEM_INACTIVE,
+} from "@/shared/lib/ui";
 import { isValidCatalogUrl } from "./validation";
 import { GeneralSection } from "./GeneralSection";
 import { AppearanceSection } from "./AppearanceSection";
@@ -90,7 +97,7 @@ export function SettingsView() {
                   <button
                     key={s.id}
                     type="button"
-                    className={`nav-item${active ? " active" : ""}`}
+                    className={`${SETTINGS_NAV_ITEM} ${active ? SETTINGS_NAV_ITEM_ACTIVE : SETTINGS_NAV_ITEM_INACTIVE}`}
                     aria-current={active ? "page" : undefined}
                     onClick={() => setSettingsSection(s.id)}
                   >
