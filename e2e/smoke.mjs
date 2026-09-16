@@ -304,13 +304,36 @@ async function main() {
       assert.match(version, new RegExp(`v${APP_VERSION}`), `about version mismatch: ${version}`);
     });
 
-    await step("plugins: discover default tab, installed tab with managed badge", async () => {
+    await step("plugins: accessible tabs support keyboard navigation and installed state", async () => {
       await page.getByRole("button", { name: "Plugins" }).click();
       await expectVisible(page.locator("#market-view"));
-      // 默认落在发现页（二级导航：发现 / 已安装）
       await expectVisible(page.locator("#market-search"));
       await expectVisible(page.getByText("Manual install only"));
-      await page.getByRole("button", { name: "Installed" }).click();
+
+      const discoverTab = page.getByRole("tab", { name: "Discover" });
+      await expectVisible(discoverTab);
+      assert.equal(await discoverTab.getAttribute("aria-selected"), "true");
+      assert.equal(await discoverTab.getAttribute("tabindex"), "0");
+
+      await discoverTab.focus();
+      await page.keyboard.press("End");
+      await page.waitForFunction(
+        () => document.querySelector("#market-tab-diagnostics")?.getAttribute("aria-selected") === "true",
+      );
+      await page.keyboard.press("Home");
+      await page.waitForFunction(
+        () => document.querySelector("#market-tab-discover")?.getAttribute("aria-selected") === "true",
+      );
+      await page.keyboard.press("ArrowLeft");
+      await page.waitForFunction(
+        () => document.querySelector("#market-tab-diagnostics")?.getAttribute("aria-selected") === "true",
+      );
+      await page.keyboard.press("ArrowLeft");
+      const installedTab = page.getByRole("tab", { name: "Installed" });
+      await page.waitForFunction(
+        () => document.querySelector("#market-tab-installed")?.getAttribute("aria-selected") === "true",
+      );
+      assert.equal(await installedTab.getAttribute("tabindex"), "0");
       await expectVisible(page.locator("#market-installed"));
       await expectVisible(page.getByText("managed by launcher"));
     });
