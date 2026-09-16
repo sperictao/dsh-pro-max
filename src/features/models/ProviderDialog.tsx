@@ -71,6 +71,8 @@ export function ProviderDialog({
   const closeOriginRef = useRef<HTMLElement | null>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const keepEditingButtonRef = useRef<HTMLButtonElement>(null);
+  // 「选完服务把焦点送到下一步字段」的待触发定时器（见 focusNextField）
+  const focusTimerRef = useRef<number | null>(null);
   // Every connection/model edit invalidates the result of the request that was launched
   // for the previous draft. The revision also lets a repaired draft retry immediately
   // without an older in-flight request later overwriting the new state.
@@ -97,6 +99,14 @@ export function ProviderDialog({
     const initial = dialog.querySelector<HTMLElement>("[data-modal-initial-focus]");
     (initial ?? dialogFocusable(dialog)[0] ?? dialog).focus();
   }, []);
+
+  // 关闭时撤掉待触发的交焦：对话框已经卸载，再抢焦点会落到别的入口上
+  useEffect(
+    () => () => {
+      if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current);
+    },
+    [],
+  );
 
   // 保存失败属于刚刚那一版草稿。用户继续改任一 Provider 字段后，旧错误
   // 已经不再描述当前草稿，因此统一从唯一 patch 入口撤销，避免局部字段漏清。
@@ -228,6 +238,31 @@ export function ProviderDialog({
     }
   };
 
+  /// 选择服务后把焦点交给「下一步」字段。目标字段在本次渲染才挂载，故用 0ms
+  /// 定时器；但实测该定时器会晚 11–78ms 才跑（渲染器忙时更久），因此必须：
+  /// 1. 可取消——连续选服务时旧定时器不许再抢；
+  /// 2. 落地前复查焦点——若这期间焦点已离开「选择服务时的位置」（用户自己点了
+  ///    别的字段开始输入），就放弃这次交焦。硬抢的后果不是小事：正在输入的字符
+  ///    会被送进另一个输入框且没有任何提示。自动化侧更尖锐：Playwright 对
+  ///    password 输入的 fill 是「先 select 再 insertText」两段往返，这一抢正好
+  ///    落在两段之间，整串密钥会打进别的字段、目标框里空空如也
+  const focusNextField = (target: () => HTMLInputElement | null) => {
+    if (focusTimerRef.current !== null) window.clearTimeout(focusTimerRef.current);
+    const focusWhenPicked = document.activeElement;
+    focusTimerRef.current = window.setTimeout(() => {
+      focusTimerRef.current = null;
+      const input = target();
+      if (!input || input === document.activeElement) return;
+      const active = document.activeElement;
+      const typingElsewhere =
+        active instanceof HTMLElement &&
+        active !== focusWhenPicked &&
+        (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
+      if (typingElsewhere) return;
+      input.focus();
+    }, 0);
+  };
+
   const applyPreset = (preset: ModelPreset | null) => {
     setServiceChosen(true);
     setPickedPreset(preset);
@@ -241,7 +276,7 @@ export function ProviderDialog({
       // 自定义端点从干净连接配置开始；extra 等初始为空，不产生第二份事实。
       setDraft(emptyProvider());
       // Custom 的下一步是命名服务；与 PI-Desktop 一致，选择后直接把焦点交给名称。
-      window.setTimeout(() => displayNameInputRef.current?.focus(), 0);
+      focusNextField(() => displayNameInputRef.current);
       return;
     }
 
@@ -256,7 +291,7 @@ export function ProviderDialog({
     }));
 
     // 已知服务的下一步就是凭据；参考 PI-Desktop，选择服务后直接把焦点送到凭据字段。
-    window.setTimeout(() => apiKeyInputRef.current?.focus(), 0);
+    focusNextField(() => apiKeyInputRef.current);
   };
 
   const setModels = (models: ModelEntry[]) => {
