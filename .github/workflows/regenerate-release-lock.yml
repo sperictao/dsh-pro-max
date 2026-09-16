@@ -6,8 +6,6 @@ on:
       - release/v0.8.23
     paths:
       - .github/workflows/regenerate-release-lock.yml
-      - src-tauri/Cargo.toml
-      - src-tauri/Cargo.lock
 
 permissions:
   contents: write
@@ -19,17 +17,26 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: release/v0.8.23
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Refresh lockfile from manifest
-        run: cargo metadata --manifest-path src-tauri/Cargo.toml --format-version 1 --no-deps > /dev/null
-      - name: Commit generated lockfile
+      - name: Sync workspace package version in Cargo.lock
         run: |
-          if git diff --quiet -- src-tauri/Cargo.lock; then
-            echo "Cargo.lock already in sync"
-            exit 0
-          fi
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src-tauri/Cargo.lock")
+          text = path.read_text()
+          old = '[[package]]\nname = "dsh-pro-max"\nversion = "0.8.22"'
+          new = '[[package]]\nname = "dsh-pro-max"\nversion = "0.8.23"'
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"expected exactly one dsh-pro-max 0.8.22 block, found {count}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit synchronized lockfile
+        run: |
+          git diff --check
+          git diff -- src-tauri/Cargo.lock
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src-tauri/Cargo.lock
-          git commit -m "release: regenerate Cargo.lock for v0.8.23"
+          git commit -m "release: sync Cargo.lock to v0.8.23"
           git push origin HEAD:release/v0.8.23
