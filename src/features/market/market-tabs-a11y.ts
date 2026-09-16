@@ -31,8 +31,21 @@ function syncMarketTabSemantics(): void {
   if (tabs.length === 0) return;
 
   const activeIndex = activeTabIndex(tabs);
+  const activeId = MARKET_TAB_IDS[activeIndex] ?? `tab-${activeIndex}`;
+  const panel = nav.nextElementSibling instanceof HTMLElement ? nav.nextElementSibling : null;
+
   nav.setAttribute("role", "tablist");
   nav.setAttribute("aria-orientation", "horizontal");
+
+  let panelId: string | null = null;
+  if (panel) {
+    // Feature panes already own stable IDs such as `market-installed`. Preserve them:
+    // existing selectors and audit contracts must not be replaced by the ARIA layer.
+    if (!panel.id) panel.id = `market-tabpanel-${activeId}`;
+    panelId = panel.id;
+    panel.setAttribute("role", "tabpanel");
+    panel.tabIndex = 0;
+  }
 
   tabs.forEach((tab, index) => {
     const id = MARKET_TAB_IDS[index] ?? `tab-${index}`;
@@ -40,17 +53,15 @@ function syncMarketTabSemantics(): void {
     tab.setAttribute("role", "tab");
     tab.id = `market-tab-${id}`;
     tab.setAttribute("aria-selected", String(selected));
-    tab.setAttribute("aria-controls", "market-tabpanel");
     tab.tabIndex = selected ? 0 : -1;
+
+    // Only the mounted/selected panel can be referenced truthfully because MarketView
+    // conditionally mounts one pane at a time. Do not point inactive tabs at the wrong pane.
+    if (selected && panelId) tab.setAttribute("aria-controls", panelId);
+    else tab.removeAttribute("aria-controls");
   });
 
-  const panel = nav.nextElementSibling;
-  if (panel instanceof HTMLElement) {
-    panel.id = "market-tabpanel";
-    panel.setAttribute("role", "tabpanel");
-    panel.setAttribute("aria-labelledby", tabs[activeIndex].id);
-    panel.tabIndex = 0;
-  }
+  if (panel) panel.setAttribute("aria-labelledby", tabs[activeIndex].id);
 }
 
 /**
