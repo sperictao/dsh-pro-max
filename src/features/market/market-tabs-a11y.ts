@@ -1,4 +1,5 @@
-const MARKET_NAV_SELECTOR = "#market-view > nav";
+// segmented 盒子（nav 本体）嵌在整行分隔条 div 内，非 #market-view 直接子元素
+const MARKET_NAV_SELECTOR = "#market-view nav";
 const MARKET_TAB_IDS = ["discover", "favorites", "installed", "diagnostics"] as const;
 
 function marketTabs(nav: HTMLElement): HTMLButtonElement[] {
@@ -32,7 +33,9 @@ function syncMarketTabSemantics(): void {
 
   const activeIndex = activeTabIndex(tabs);
   const activeId = MARKET_TAB_IDS[activeIndex] ?? `tab-${activeIndex}`;
-  const panel = nav.nextElementSibling instanceof HTMLElement ? nav.nextElementSibling : null;
+  // pane 是整行分隔条（nav 的父级）的下一个兄弟，而非 nav 的
+  const host = nav.parentElement instanceof HTMLElement ? nav.parentElement : nav;
+  const panel = host.nextElementSibling instanceof HTMLElement ? host.nextElementSibling : null;
 
   nav.setAttribute("role", "tablist");
   nav.setAttribute("aria-orientation", "horizontal");

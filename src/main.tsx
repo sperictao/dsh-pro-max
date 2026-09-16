@@ -1,6 +1,5 @@
 import "./style.css";
 import "./page-layout.css";
-import "./features/market/market-navigation.css";
 import "./features/models/default-model-menu.css";
 import "./features/models/reasoning-effort.css";
 import "./features/models/advanced-settings.css";

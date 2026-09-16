@@ -36,14 +36,14 @@ export const APP_HEADER =
 export const APP_BRAND =
   "inline-flex min-w-0 cursor-pointer items-center rounded-md px-1 py-1 text-sm font-semibold tracking-tight text-foreground outline-none transition-[color,box-shadow,transform] duration-150 hover:text-foreground/75 active:not-disabled:translate-y-px focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
-// 顶级页面导航采用 segmented-control 结构。active/inactive 样式拆出独立常量，调用方只表达状态，
-// 避免同一元素同时存在 text-foreground / text-muted-foreground 时依赖 Tailwind 生成顺序。
+// 顶级页面导航 segmented-control：容器只留 muted 圆角底、不设边框——顶栏已有
+// border-b，再描一圈会形成双重框线。active/inactive 拆独立常量，调用方只表达状态。
 export const APP_NAV =
-  "flex w-full max-w-full items-center gap-1 overflow-x-auto rounded-lg border border-border bg-muted/40 p-1 sm:w-auto";
+  "flex w-full max-w-full items-center gap-1 overflow-x-auto rounded-lg bg-muted/60 p-1 sm:w-auto";
 export const APP_NAV_ITEM =
-  "inline-flex h-8 flex-1 shrink-0 cursor-pointer items-center justify-center rounded-md px-3 text-sm font-medium whitespace-nowrap outline-none transition-[background-color,color,box-shadow,transform] duration-150 hover:bg-background/70 hover:text-foreground active:not-disabled:translate-y-px focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex-none";
+  "inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-md px-3 text-sm font-medium whitespace-nowrap outline-none transition-[background-color,color,box-shadow] duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 export const APP_NAV_ITEM_ACTIVE = "bg-background text-foreground shadow-xs";
-export const APP_NAV_ITEM_INACTIVE = "text-muted-foreground";
+export const APP_NAV_ITEM_INACTIVE = "text-muted-foreground hover:text-foreground";
 
 // Settings 侧栏与应用壳层使用同一交互语义：状态色拆分，基础 recipe 只负责几何、
 // hover / focus-visible / pressed 行为。组件继续通过 aria-current 表达当前分区。

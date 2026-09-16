@@ -23,7 +23,7 @@ max-w-3xl 单列居中。本文件描述该次美化后的现状。）
 - Toggle：原生 checkbox + `TOGGLE`（设置侧）与 `TOGGLE_LABELED`（带状态文字胶囊，市场启停）配方，同一 `ui.ts` 事实来源。
 - 卡片：区块卡 `rounded-xl border border-border bg-card p-4`（`ui.ts` 的 `PANEL`）；行内盒 `rounded-lg border`；胶囊 `rounded-full border px-2.5 py-0.5 text-xs`；地址芯片 `rounded-full bg-primary/15 font-mono text-xs text-primary`。
 - 模态：遮罩/面板单一配方 `MODAL_OVERLAY`/`MODAL_PANEL`（`z-50` + `bg-black/50` + 面板 `rounded-xl border-border bg-card`）；同层多模态按 DOM 序叠放（后渲染者在上），Toaster 位于 App 树末位故 toast 恒浮于对话框上。z 阶梯唯一例外：ProviderDialog 高级设置叠层面板 `z-70`、关闭键 `z-80`（`advanced-settings.css`，scrim 同步 `rgb(0 0 0 / 0.5)`）。
-- 导航：`header-btn`（顶栏）/ `nav-item`（设置侧栏 w-52）；active 态 `bg-accent`。
+- 导航：顶栏与市场二级 tab 同用 `APP_NAV*` segmented（muted 圆角底无外框，active 白底 `shadow-xs`；二级嵌在整行分隔条内，激活态带无样式的 `active` 字面量类，是 market-tabs-a11y 的判定契约）；设置侧栏 `SETTINGS_NAV_ITEM`（w-52，ui.ts 配方），active 态 `bg-accent`。
 - 时间轴 `.timeline-node[data-state]`：done 绿✓ / pending 虚线圈 / running 黄脉冲 / failed 红✕ + problem/solution 盒（卡内 `border-t` 分隔，标题「Setup Progress」）。
 - Toggle：原生 checkbox + `TOGGLE` 配方（label 包裹）。
 

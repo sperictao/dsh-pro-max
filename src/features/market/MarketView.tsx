@@ -9,6 +9,10 @@ import { updateSpecifierFor } from "@/shared/store/slices/market";
 import * as cmd from "@/shared/commands";
 import { renderMessage, tErr } from "@/shared/i18n/error";
 import {
+  APP_NAV,
+  APP_NAV_ITEM,
+  APP_NAV_ITEM_ACTIVE,
+  APP_NAV_ITEM_INACTIVE,
   BTN,
   BTN_DANGER,
   BTN_OUTLINE,
@@ -209,17 +213,24 @@ function MarketViewInner() {
 
   return (
     <main className="flex min-h-0 flex-1 flex-col" id="market-view">
-      <nav className="flex shrink-0 items-center gap-1 border-b border-border px-4 py-1.5">
-        {MARKET_TABS.map((item) => (
-          <button
-            key={item.id}
-            className={`header-btn${tab === item.id ? " active" : ""}`}
-            onClick={() => setTab(item.id)}
-          >
-            {t(item.labelKey)}
-          </button>
-        ))}
-      </nav>
+      <div className="shrink-0 border-b border-border px-4 py-1.5">
+        <nav className={APP_NAV}>
+          {MARKET_TABS.map((item) => {
+            // 末尾的 " active" 字面量类是 market-tabs-a11y 的激活判定契约，无样式定义
+            const active = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`${APP_NAV_ITEM} ${active ? APP_NAV_ITEM_ACTIVE : APP_NAV_ITEM_INACTIVE}${active ? " active" : ""}`}
+                onClick={() => setTab(item.id)}
+              >
+                {t(item.labelKey)}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
       {tab === "discover" ? (
         <DiscoverPane />
       ) : tab === "favorites" ? (
