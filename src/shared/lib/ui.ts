@@ -24,6 +24,21 @@ export const BTN_OUTLINE =
 export const BTN_DANGER =
   "inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:bg-muted disabled:text-muted-foreground bg-destructive text-destructive-foreground hover:bg-destructive/90 h-9 px-4";
 
+// 应用壳层：顶栏保持轻量，窄窗口允许导航换行；背景使用语义 token，避免主题族分叉。
+export const APP_HEADER =
+  "flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-background/95 px-4 py-2.5 backdrop-blur sm:flex-nowrap";
+
+export const APP_BRAND =
+  "inline-flex min-w-0 cursor-pointer items-center rounded-md px-1 py-1 text-sm font-semibold tracking-tight text-foreground outline-none transition-colors hover:text-foreground/75 focus-visible:ring-2 focus-visible:ring-ring";
+
+// 顶级页面导航采用 segmented-control 结构。active 样式拆出独立常量，调用方只表达状态，
+// 不再依赖旧 header-btn CSS 的 opacity 状态机。
+export const APP_NAV =
+  "flex w-full max-w-full items-center gap-1 overflow-x-auto rounded-lg border border-border bg-muted/40 p-1 sm:w-auto";
+export const APP_NAV_ITEM =
+  "inline-flex h-8 flex-1 shrink-0 cursor-pointer items-center justify-center rounded-md px-3 text-sm font-medium whitespace-nowrap text-muted-foreground outline-none transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:flex-none";
+export const APP_NAV_ITEM_ACTIVE = "bg-background text-foreground shadow-xs";
+
 // 行内图标按钮（模型页服务行编辑/测试/拉取/删除共用）：图标方钮，危险变体
 // 在使用处以 ${ROW_ICON_BUTTON} 前缀追加 destructive 悬停色
 export const ROW_ICON_BUTTON =
