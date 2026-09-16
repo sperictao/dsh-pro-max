@@ -45,6 +45,13 @@ export const APP_NAV_ITEM =
 export const APP_NAV_ITEM_ACTIVE = "bg-background text-foreground shadow-xs";
 export const APP_NAV_ITEM_INACTIVE = "text-muted-foreground";
 
+// Settings 侧栏与应用壳层使用同一交互语义：状态色拆分，基础 recipe 只负责几何、
+// hover / focus-visible / pressed 行为。组件继续通过 aria-current 表达当前分区。
+export const SETTINGS_NAV_ITEM =
+  "flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm whitespace-nowrap outline-none transition-[background-color,color,box-shadow,transform] duration-150 hover:bg-accent hover:text-accent-foreground active:not-disabled:translate-y-px focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+export const SETTINGS_NAV_ITEM_ACTIVE = "bg-accent font-medium text-accent-foreground";
+export const SETTINGS_NAV_ITEM_INACTIVE = "text-muted-foreground";
+
 // 行内图标按钮（模型页服务行编辑/测试/拉取/删除共用）：图标方钮，危险变体
 // 在使用处以 ${ROW_ICON_BUTTON} 前缀追加 destructive 悬停色
 export const ROW_ICON_BUTTON =
