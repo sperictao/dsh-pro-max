@@ -1,4 +1,5 @@
-//! 极简语义版本比较（semver 子集）：仅用于「是否有更新」判断。
+//! 极简语义版本比较（semver 子集）：用于「是否有更新」判断与插件声明的
+//! dsh 版本范围判定（satisfies_range）。
 //! 支持可选的 v 前缀、`-prerelease` 后缀，忽略 `+build` 元数据。
 //! 由 fastctx 与 dsh 两个 npm 包版本检测共用（唯一实现，避免逻辑分叉）。
 
@@ -123,6 +124,131 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     }
 }
 
+/// 范围比较子操作符
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RangeOp {
+    Exact,
+    Gte,
+    Lte,
+    Gt,
+    Lt,
+    Caret,
+    Tilde,
+}
+
+/// 单个比较子 →（操作符, 目标版本原文）。操作符与其版本被空白拆开的形态
+/// （`>= 0.1.1`）由 satisfies_range 先合并 token，这里目标恒非空
+fn parse_comparator(part: &str) -> (RangeOp, &str) {
+    for (prefix, op) in [
+        (">=", RangeOp::Gte),
+        ("<=", RangeOp::Lte),
+        ("^", RangeOp::Caret),
+        ("~", RangeOp::Tilde),
+        (">", RangeOp::Gt),
+        ("<", RangeOp::Lt),
+    ] {
+        if let Some(rest) = part.strip_prefix(prefix) {
+            return (op, rest);
+        }
+    }
+    (RangeOp::Exact, part)
+}
+
+/// ^ 的上界：进位到下一个非零段的进位点（^1.2.3 → <2.0.0、^0.1.2 → <0.2.0、
+/// ^0.0.2 → <0.0.3）。u64 末端饱和，不因畸形超大版本 panic
+fn caret_upper(t: &Version) -> Version {
+    if t.major > 0 {
+        Version {
+            major: t.major.saturating_add(1),
+            minor: 0,
+            patch: 0,
+            pre: Vec::new(),
+        }
+    } else if t.minor > 0 {
+        Version {
+            major: 0,
+            minor: t.minor.saturating_add(1),
+            patch: 0,
+            pre: Vec::new(),
+        }
+    } else {
+        Version {
+            major: 0,
+            minor: 0,
+            patch: t.patch.saturating_add(1),
+            pre: Vec::new(),
+        }
+    }
+}
+
+/// ~ 的上界：minor 进位（~1.2.3 → <1.3.0）
+fn tilde_upper(t: &Version) -> Version {
+    Version {
+        major: t.major,
+        minor: t.minor.saturating_add(1),
+        patch: 0,
+        pre: Vec::new(),
+    }
+}
+
+/// 一个比较子的判定。读不懂（残缺段、x-range 部分形式）返回 None
+fn comparator_matches(v: &Version, part: &str) -> Option<bool> {
+    if matches!(part, "*" | "x" | "X") {
+        return Some(true);
+    }
+    let (op, target) = parse_comparator(part);
+    let t = parse_version(target)?;
+    Some(match op {
+        RangeOp::Exact => v == &t,
+        RangeOp::Gte => v >= &t,
+        RangeOp::Lte => v <= &t,
+        RangeOp::Gt => v > &t,
+        RangeOp::Lt => v < &t,
+        RangeOp::Caret => v >= &t && v < &caret_upper(&t),
+        RangeOp::Tilde => v >= &t && v < &tilde_upper(&t),
+    })
+}
+
+/// 插件声明的 dsh 版本范围判定（npm range 子集，语义对齐官方市场 dsh-market
+/// discovery 门禁的 satisfiesRange）：
+/// - `||` 分支任一命中即满足；分支内空白分隔的比较子全部满足才满足；
+///   操作符与其版本被空白拆开时（`>= 0.1.1`）并入前一个 token。
+/// - 比较子：`^` `~` `>=` `<=` `>` `<`、裸版本（精确匹配）、`*`/`x`（恒真）。
+/// - prerelease 按纯序参与比较，不设 npm 的「同元组 prerelease 比较子」
+///   准入门：dsh 发布线全是 prerelease，严格门会把跨线升级大面积误杀
+///   （与 `>=X` 时代「0.1.2-rc.2 满足 >=0.1.0-rc.8」的既定语义一致）。
+///
+/// 读不懂的形态（残缺段、悬空 `||` 产生的空分支、未知协议前缀）一律
+/// false——读不懂的声明约束不能装作满足（fail closed）
+pub fn satisfies_range(version: &str, range: &str) -> bool {
+    let Some(v) = parse_version(version) else {
+        return false;
+    };
+    range.split("||").any(|alt| {
+        // 悬空 `||` 的空分支不按空合取恒真处理
+        let mut parts = alt.split_whitespace().peekable();
+        if parts.peek().is_none() {
+            return false;
+        }
+        // 操作符与其版本被空白拆开时并入前一个 token；畸形串（连续操作符、
+        // 孤立操作符结尾）自然变成读不懂的目标 → None → false
+        let mut merged: Vec<String> = Vec::new();
+        for part in parts {
+            match merged.last_mut() {
+                Some(last) if matches!(last.as_str(), ">=" | "<=" | ">" | "<" | "^" | "~") => {
+                    last.push_str(part);
+                }
+                _ => merged.push(part.to_string()),
+            }
+        }
+        merged
+            .iter()
+            .map(|part| comparator_matches(&v, part))
+            .collect::<Option<Vec<_>>>()
+            .is_some_and(|results| results.iter().all(|&r| r))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,5 +349,63 @@ mod tests {
         assert!(!is_newer("0.1.0-rc.6", "0.1.0-rc.6"));
         // 标识符少者旧：rc.6 < rc.6.1
         assert!(is_newer("0.1.0-rc.6.1", "0.1.0-rc.6"));
+    }
+
+    #[test]
+    fn satisfies_range_caret_and_tilde() {
+        // npm caret 上界：进位到下一个非零段
+        assert!(satisfies_range("0.1.9", "^0.1.2"));
+        assert!(!satisfies_range("0.2.0", "^0.1.2"));
+        assert!(satisfies_range("1.9.9", "^1.2.3"));
+        assert!(!satisfies_range("2.0.0", "^1.2.3"));
+        // 0.0.x 线：patch 位即进位点，^0.0.2 只容 0.0.2 自身
+        assert!(satisfies_range("0.0.2", "^0.0.2"));
+        assert!(!satisfies_range("0.0.3", "^0.0.2"));
+        // tilde 上界：minor 进位
+        assert!(satisfies_range("0.1.9", "~0.1.2"));
+        assert!(!satisfies_range("0.2.0", "~0.1.2"));
+    }
+
+    #[test]
+    fn satisfies_range_prerelease_plain_order() {
+        // 同元组：prerelease 与声明同版本即满足
+        assert!(satisfies_range("0.1.6-alpha.1", "^0.1.6-alpha.1"));
+        // 跨线更高 prerelease 照纯序放行（npm 严格门会拒——刻意不设）
+        assert!(satisfies_range("0.1.2-rc.2", ">=0.1.0-rc.8"));
+        // prerelease < 同元组发布版：0.2.0-rc.1 < 0.2.0，落在 ^0.1.x 上界内
+        // （includePrerelease 的既定代价，与 dsh-market discovery 对齐）
+        assert!(satisfies_range("0.2.0-rc.1", "^0.1.5"));
+    }
+
+    #[test]
+    fn satisfies_range_union_and_conjunction() {
+        assert!(satisfies_range("0.1.2", "^0.1.0 || ^0.2.0"));
+        assert!(satisfies_range("0.2.1", "^0.1.0 || ^0.2.0"));
+        assert!(!satisfies_range("0.3.0", "^0.1.0 || ^0.2.0"));
+        // 分支内空白合取
+        assert!(satisfies_range("0.1.5", ">=0.1.2-rc.1 <0.2.0"));
+        assert!(!satisfies_range("0.2.0", ">=0.1.2-rc.1 <0.2.0"));
+        // `*` 恒真（宿主可解析为前提）
+        assert!(satisfies_range("0.1.6-alpha.1", "*"));
+        // 操作符与版本写开：token 合并后照常求值
+        assert!(satisfies_range("0.1.5", ">= 0.1.1 < 0.2.0"));
+    }
+
+    #[test]
+    fn satisfies_range_exact_and_fail_closed() {
+        // 裸版本按精确匹配
+        assert!(satisfies_range("0.1.2", "0.1.2"));
+        assert!(!satisfies_range("0.1.3", "0.1.2"));
+        assert!(!satisfies_range("0.1.2-rc.1", "0.1.2"));
+        // 读不懂 → fail closed：宿主不可解析 / 残缺段 / 未知协议 / 悬空 ||
+        assert!(!satisfies_range("not-a-version", "*"));
+        assert!(!satisfies_range("0.1.2", "1.2"));
+        assert!(!satisfies_range("0.1.2", "workspace:^0.1.2"));
+        assert!(!satisfies_range("0.1.2", "catalog:default"));
+        assert!(!satisfies_range("0.1.1", "^0.1.2 ||"));
+        assert!(!satisfies_range("0.1.2", ""));
+        // 孤立操作符结尾 / 连续操作符：目标读不懂
+        assert!(!satisfies_range("0.1.2", "0.1.1 >="));
+        assert!(!satisfies_range("0.1.2", ">= <0.2.0"));
     }
 }

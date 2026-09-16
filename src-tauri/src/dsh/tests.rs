@@ -1040,10 +1040,24 @@ fn meets_dsh_minimum_gates_declared_requirements() {
     // 宿主低于要求 / 声明更高 rc
     assert!(!meets_dsh_minimum(Some("0.1.0-rc.6"), ">=0.1.1"));
     assert!(!meets_dsh_minimum(Some("0.1.2-rc.1"), ">=0.1.2-rc.5"));
-    // 不支持的声明形态 / 宿主不可得 / 任一侧解析失败 → fail closed
+    // ^ / ~ 是真语法：0.1.2-rc.1 落在 ^0.1.1（>=0.1.1 <0.2.0）内
+    assert!(meets_dsh_minimum(Some("0.1.2-rc.1"), "^0.1.1"));
+    assert!(meets_dsh_minimum(Some("0.1.3"), "~0.1.2"));
+    assert!(!meets_dsh_minimum(Some("0.2.0"), "~0.1.2"));
+    // 裸版本按精确匹配
+    assert!(meets_dsh_minimum(Some("0.1.2"), "0.1.2"));
     assert!(!meets_dsh_minimum(Some("0.1.2-rc.1"), "0.1.1"));
-    assert!(!meets_dsh_minimum(Some("0.1.2-rc.1"), "^0.1.1"));
+    // 真机回归（mars-sea/dsh-commandcode-provider 0.11.2 的声明）：
+    // 宿主 0.1.6-alpha.1 满足首个 ^ 分支，更新按钮不得禁用
+    assert!(meets_dsh_minimum(
+        Some("0.1.6-alpha.1"),
+        "^0.1.6-alpha.1 || ^0.1.5-rc.2 || ^0.1.5-rc.1 || ^0.1.5-alpha.1 || ^0.1.3-alpha.2 || ^0.1.3-alpha.1 || ^0.1.2-rc.1"
+    ));
+    // 读不懂的声明形态 / 宿主不可得 / 任一侧解析失败 → fail closed
     assert!(!meets_dsh_minimum(Some("0.1.2-rc.1"), ""));
+    assert!(!meets_dsh_minimum(Some("0.1.1"), "^0.1.2 ||"));
+    assert!(!meets_dsh_minimum(Some("0.1.2-rc.1"), "workspace:^0.1.2"));
+    assert!(!meets_dsh_minimum(Some("0.1.2-rc.1"), "1.2"));
     assert!(!meets_dsh_minimum(None, ">=0.1.1"));
     assert!(!meets_dsh_minimum(Some("not-a-version"), ">=0.1.1"));
 }

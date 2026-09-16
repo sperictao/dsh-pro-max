@@ -23,7 +23,7 @@
 use super::components::{pnpm_bin, resolve_dsh_bin, web_profile_package_path};
 use super::process::{run_capture_lines, run_capture_lines_env};
 use crate::i18n::{Message, MessageArg};
-use crate::version::{is_newer, parse_version};
+use crate::version::{is_newer, parse_version, satisfies_range};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -582,19 +582,12 @@ pub(crate) fn dsh_requirement_from_manifest(body: &serde_json::Value) -> Option<
         .map(str::to_string)
 }
 
-/// 宿主 dsh 是否满足声明的最低版本。仅支持 `>=X.Y.Z[-pre]` 单比较子形态：
-/// 其它形态（裸版本 / ^ ~/范围组）与宿主版本不可得、任一侧解析失败一律
-/// false——读不懂的声明约束不能装作满足（fail closed）
+/// 宿主 dsh 是否满足声明的版本范围（npm range 子集：^ ~ >= <= > < 精确 *
+/// 与 || 联合，求值语义见 version::satisfies_range）。宿主版本不可得、声明
+/// 读不懂一律 false——读不懂的声明约束不能装作满足（fail closed）
 pub(crate) fn meets_dsh_minimum(host: Option<&str>, minimum: &str) -> bool {
     let Some(host) = host else { return false };
-    let Some(rest) = minimum.trim().strip_prefix(">=") else {
-        return false;
-    };
-    let rest = rest.trim().trim_start_matches('v');
-    match (parse_version(host), parse_version(rest)) {
-        (Some(h), Some(m)) => h >= m,
-        _ => false,
-    }
+    satisfies_range(host, minimum)
 }
 
 /// registry /latest 响应 → latest 版本与声明的 dsh 最低版本。version 字段
