@@ -1,0 +1,32 @@
+name: Publish v0.8.23 tag
+
+on:
+  push:
+    branches:
+      - release/v0.8.23
+    paths:
+      - .github/workflows/publish-v0.8.23-tag.yml
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Create release tag
+        run: |
+          set -euo pipefail
+          expected="9a36675d05646baf9728c65ce077a38757e9cb3e"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$expected"
+          if git ls-remote --exit-code --tags origin refs/tags/v0.8.23 >/dev/null 2>&1; then
+            echo "v0.8.23 already exists"
+            exit 0
+          fi
+          git tag v0.8.23 "$expected"
+          git push origin refs/tags/v0.8.23
