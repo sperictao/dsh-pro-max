@@ -16,7 +16,7 @@ use std::fs;
 
 use std::time::Duration;
 
-use crate::i18n::keyf;
+use crate::i18n::Message;
 
 // ============ 更新 ============
 
@@ -35,19 +35,19 @@ pub(crate) fn runtime_auth_context() -> (Option<String>, Option<String>) {
 
 /// 修复 Launcher 跟随的 dsh + 授权插件兼容栈；若 web 正在运行则重启。
 #[tauri::command]
-pub async fn dsh_update(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn dsh_update(app: tauri::AppHandle) -> Result<String, Message> {
     super::ipc_blocking(move || dsh_update_once(&app)).await
 }
 
-fn dsh_update_once(app: &tauri::AppHandle) -> Result<String, String> {
+fn dsh_update_once(app: &tauri::AppHandle) -> Result<String, Message> {
     let was_running = port_listening(WEB_PORT);
     let version = install_supported_dsh().map_err(|error| {
         log::error!("[dsh 修复] 安装 dsh 失败: {}", error);
-        keyf("Repair failed: {error}", &[("error", error)])
+        Message::localized("Repair failed: {{error}}", &[("error", error)])
     })?;
     install_auth_plugins(app).map_err(|error| {
         log::error!("[dsh 修复] 安装授权插件失败: {}", error);
-        keyf("Repair failed: {error}", &[("error", error)])
+        Message::localized("Repair failed: {{error}}", &[("error", error)])
     })?;
     if was_running {
         let (login, fqdn) = runtime_auth_context();
@@ -121,11 +121,11 @@ pub(crate) fn clear_web_profile_compat_entry() {
 /// 直接返回。卸载后远程授权链路失效，状态链如实停在「插件未安装」；
 /// 纯本地访问不受影响（授权插件只服务远程链路）。
 #[tauri::command]
-pub async fn dsh_remove_plugins() -> Result<(), String> {
+pub async fn dsh_remove_plugins() -> Result<(), Message> {
     super::ipc_blocking(dsh_remove_plugins_once).await
 }
 
-fn dsh_remove_plugins_once() -> Result<(), String> {
+fn dsh_remove_plugins_once() -> Result<(), Message> {
     // 幂等：profile 里两个插件条目都不存在时直接返回（plugin remove 是
     // pnpm 透传，remove 不存在的包虽不会报错，但会无意义地重写 lockfile）
     if !web_profile_has_auth_plugins() {
@@ -145,16 +145,14 @@ fn dsh_remove_plugins_once() -> Result<(), String> {
     ) {
         Ok((_, _, true)) if !web_profile_has_auth_plugins() => {}
         Ok((_, err, true)) => {
-            let e = keyf(
-                "dsh plugin remove completed but auth plugins remain in the web profile: {error}",
+            let e = Message::localized("dsh plugin remove completed but auth plugins remain in the web profile: {{error}}",
                 &[("error", err)],
             );
             log::error!("[dsh 插件] 卸载后残留: {}", e);
             return Err(e);
         }
         Ok((_, err, false)) => {
-            let e = keyf(
-                "Failed to remove dsh auth plugins: {error}",
+            let e = Message::localized("Failed to remove dsh auth plugins: {{error}}",
                 &[(
                     "error",
                     if err.is_empty() {
@@ -213,7 +211,7 @@ pub struct DshLatestInfo {
     /// Launcher 验证过的最低兼容版本（插件栈锁定）
     pub supported_version: String,
     /// 查询失败原因（网络不通 / npm 不可用 / 输出无法解析）
-    pub error: Option<String>,
+    pub error: Option<Message>,
 }
 
 /// 查询 npm registry 上 dsh 的所有 dist-tag（latest/next 各自指向的版本），
@@ -221,11 +219,11 @@ pub struct DshLatestInfo {
 /// run_capture 无超时机制，npm view 走网络可能挂住，故放独立线程 + 超时回收；
 /// 线程泄漏只发生在 npm 挂死路径（下次查询新建线程，进程退出即清）
 #[tauri::command]
-pub async fn dsh_check_latest() -> Result<DshLatestInfo, String> {
+pub async fn dsh_check_latest() -> Result<DshLatestInfo, Message> {
     super::ipc_blocking(dsh_check_latest_once).await
 }
 
-fn dsh_check_latest_once() -> Result<DshLatestInfo, String> {
+fn dsh_check_latest_once() -> Result<DshLatestInfo, Message> {
     let installed = dsh_version();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -237,8 +235,7 @@ fn dsh_check_latest_once() -> Result<DshLatestInfo, String> {
     });
     let queried = match rx.recv_timeout(Duration::from_secs(15)) {
         Ok(Ok((out, _, true))) => parse_dist_tag_query(&out),
-        Ok(Ok((_, err, false))) => Err(keyf(
-            "npm query failed: {error}",
+        Ok(Ok((_, err, false))) => Err(Message::localized("npm query failed: {{error}}",
             &[(
                 "error",
                 if err.is_empty() {
@@ -250,7 +247,7 @@ fn dsh_check_latest_once() -> Result<DshLatestInfo, String> {
         )),
         Ok(Err(error)) => Err(error),
         Err(_) => {
-            Err("npm query timed out (15s); check your network or npm registry mirror".to_string())
+            Err(Message::key("npm query timed out (15s); check your network or npm registry mirror"))
         }
     };
     let (mut tag_pairs, publish_times, error) = match queried {
@@ -314,11 +311,10 @@ pub(crate) struct DistTagQuery {
 ///
 /// tag 值过滤非 semver（防御 registry 返回杂质）；time 表的 created/modified
 /// 等非版本键无需清理——只按 tag 指向的版本查表，永不命中
-pub(crate) fn parse_dist_tag_query(out: &str) -> Result<DistTagQuery, String> {
+pub(crate) fn parse_dist_tag_query(out: &str) -> Result<DistTagQuery, Message> {
     let cannot_parse = || {
-        keyf(
-            "Cannot parse npm dist-tags output: {output}",
-            &[("output", out.chars().take(200).collect())],
+        Message::localized("Cannot parse npm dist-tags output: {{output}}",
+            &[("output", out.chars().take(200).collect::<String>())],
         )
     };
     let cleaned = out.trim_start_matches('\u{feff}').trim();
@@ -389,14 +385,13 @@ pub(crate) fn sort_tag_pairs_by_publish_time(
 /// 标记（incompatible/above_supported），不做安装拦截；跨线版本的风险由
 /// 前端红字披露，装上后授权插件失效走启动失败诊断兜底。
 #[tauri::command]
-pub async fn dsh_install_version(version: String) -> Result<String, String> {
+pub async fn dsh_install_version(version: String) -> Result<String, Message> {
     super::ipc_blocking(move || dsh_install_version_once(&version)).await
 }
 
-fn dsh_install_version_once(version: &str) -> Result<String, String> {
+fn dsh_install_version_once(version: &str) -> Result<String, Message> {
     if parse_version(version).is_none() {
-        return Err(keyf(
-            "Invalid dsh version: {version}",
+        return Err(Message::localized("Invalid dsh version: {{version}}",
             &[("version", version.to_string())],
         ));
     }
@@ -412,7 +407,7 @@ fn dsh_install_version_once(version: &str) -> Result<String, String> {
                 err
             };
             log::error!("[dsh 安装] npm install -g {} 失败: {}", package, error);
-            return Err(keyf("Install failed: {error}", &[("error", error)]));
+            return Err(Message::localized("Install failed: {{error}}", &[("error", error)]));
         }
         Err(error) => {
             log::error!("[dsh 安装] 执行 npm install 失败: {}", error);
@@ -425,8 +420,7 @@ fn dsh_install_version_once(version: &str) -> Result<String, String> {
         err
     })?;
     if parse_version(&actual) != parse_version(version) {
-        let err = keyf(
-            "Installed dsh version {actual}, expected {expected}",
+        let err = Message::localized("Installed dsh version {{actual}}, expected {{expected}}",
             &[("actual", actual), ("expected", version.to_string())],
         );
         log::error!("[dsh 安装] 版本校验失败: {}", err);

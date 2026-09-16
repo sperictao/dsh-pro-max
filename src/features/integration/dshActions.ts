@@ -93,7 +93,7 @@ async function settleDshFlow(succeeded: boolean): Promise<void> {
     st.setDshStatus(status);
     if (succeeded) st.setDshTimeline(status.readyTimeline);
   } catch (e) {
-    store().toast(i18n.t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
+    store().toast(i18n.t("dsh detection failed: {{error}}", { error: tErr(e) }), "error");
   }
 }
 
@@ -126,7 +126,7 @@ async function runStartFlow(): Promise<void> {
     succeeded = true;
   } catch (e) {
     // 远程失败详情已由 dsh-step 事件渲染在时间轴节点上
-    if (!isRemote) s.toast(i18n.t("dsh start failed: {{error}}", { error: tErr(String(e)) }), "error");
+    if (!isRemote) s.toast(i18n.t("dsh start failed: {{error}}", { error: tErr(e) }), "error");
   }
   await settleDshFlow(succeeded);
 }
@@ -169,7 +169,7 @@ export async function restartDshWeb(): Promise<void> {
   } catch (e) {
     // stop 阶段失败时流程根本没跑起来，回到状态驱动视图，不留半吊子时间轴
     store().setDshHasRunSetup(false);
-    store().toast(i18n.t("Restart failed: {{error}}", { error: tErr(String(e)) }), "error");
+    store().toast(i18n.t("Restart failed: {{error}}", { error: tErr(e) }), "error");
     await settleDshFlow(false);
   } finally {
     store().setDshRestartBusy(false);
@@ -185,7 +185,7 @@ export async function stopDshWeb(): Promise<void> {
     await cmd.dshStop();
     store().toast(i18n.t("dsh web stopped"), "info");
   } catch (e) {
-    store().toast(i18n.t("Stop failed: {{error}}", { error: tErr(String(e)) }), "error");
+    store().toast(i18n.t("Stop failed: {{error}}", { error: tErr(e) }), "error");
   } finally {
     store().setDshStopBusy(false);
     // 停止后回到状态驱动时间轴，避免事件时间轴残留「已就绪」的历史状态
@@ -197,7 +197,7 @@ export async function stopDshWeb(): Promise<void> {
       st.setDshStatus(status);
       st.setDshTimeline(status.readyTimeline);
     } catch (e) {
-      store().toast(i18n.t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
+      store().toast(i18n.t("dsh detection failed: {{error}}", { error: tErr(e) }), "error");
     }
   }
 }

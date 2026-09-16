@@ -72,7 +72,7 @@ export const createConfigSlice: Slice<ConfigSlice> = (set, get) => ({
       await i18n.changeLanguage(resolved === "zh-CN" ? "zh-CN" : "en");
       document.documentElement.lang = currentLanguage();
     } catch (e) {
-      get().toast(i18n.t("Save failed: {{error}}", { error: tErr(String(e)) }), "error");
+      get().toast(i18n.t("Save failed: {{error}}", { error: tErr(e) }), "error");
     }
   },
 
@@ -83,7 +83,7 @@ export const createConfigSlice: Slice<ConfigSlice> = (set, get) => ({
       set({ persistedConfig: draft });
       get().toast(i18n.t("Settings saved"), "success");
     } catch (e) {
-      get().toast(i18n.t("Save failed: {{error}}", { error: tErr(String(e)) }), "error");
+      get().toast(i18n.t("Save failed: {{error}}", { error: tErr(e) }), "error");
     }
   },
 
@@ -98,7 +98,7 @@ export const createConfigSlice: Slice<ConfigSlice> = (set, get) => ({
       await cmd.autostartSet(next);
     } catch (e) {
       set({ autostart: !next });
-      get().toast(tErr(String(e)), "error");
+      get().toast(tErr(e), "error");
     }
   },
 

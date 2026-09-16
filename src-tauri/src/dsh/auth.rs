@@ -8,7 +8,7 @@ use super::{
 use std::time::Duration;
 
 use crate::config;
-use crate::i18n::keyf;
+use crate::i18n::Message;
 
 // ============ 远程授权配置 ============
 
@@ -66,7 +66,7 @@ impl AuthConfig {
 /// 校验 capability 的域名段（Tailscale `{domain}/{name}` 规则的域名部分）：
 /// ASCII 字母数字、`-`、`.`，至少含一个 `.`，且不以 `-`/`.` 开头或结尾。
 /// 合法返回 trim 后的域名；非法返回友好错误。
-pub(crate) fn validate_cap_domain(domain: &str) -> Result<String, String> {
+pub(crate) fn validate_cap_domain(domain: &str) -> Result<String, Message> {
     let trimmed = domain.trim();
     let valid = !trimmed.is_empty()
         && trimmed.contains('.')
@@ -78,8 +78,7 @@ pub(crate) fn validate_cap_domain(domain: &str) -> Result<String, String> {
     if valid {
         Ok(trimmed.to_string())
     } else {
-        Err(keyf(
-            "Invalid capability domain: {domain}. Use a domain you control (e.g. example.com)",
+        Err(Message::localized("Invalid capability domain: {{domain}}. Use a domain you control (e.g. example.com)",
             &[("domain", domain.to_string())],
         ))
     }
@@ -87,7 +86,7 @@ pub(crate) fn validate_cap_domain(domain: &str) -> Result<String, String> {
 
 /// 解析「额外允许的登录名」设置：逗号分隔、trim、去空、去重，
 /// 并沿用 Tailscale 登录名的字符白名单校验。
-pub(crate) fn parse_extra_logins(raw: &str) -> Result<Vec<String>, String> {
+pub(crate) fn parse_extra_logins(raw: &str) -> Result<Vec<String>, Message> {
     let mut seen = Vec::new();
     for item in raw.split(',') {
         let login = item.trim();
@@ -98,7 +97,7 @@ pub(crate) fn parse_extra_logins(raw: &str) -> Result<Vec<String>, String> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "@._+-".contains(c))
         {
-            return Err("Tailscale login name contains unsupported characters".to_string());
+            return Err(Message::key("Tailscale login name contains unsupported characters"));
         }
         if !seen.iter().any(|existing| existing == login) {
             seen.push(login.to_string());
@@ -108,7 +107,7 @@ pub(crate) fn parse_extra_logins(raw: &str) -> Result<Vec<String>, String> {
 }
 
 /// 从设置解析远程授权配置。域名非法时返回 Err（调用方在时间轴 fail 并给方案）。
-pub(crate) fn resolve_auth_config() -> Result<AuthConfig, String> {
+pub(crate) fn resolve_auth_config() -> Result<AuthConfig, Message> {
     let config = config::load_config()?;
     Ok(AuthConfig {
         extra_allowed_logins: parse_extra_logins(&config.dsh_extra_allowed_logins)?,
@@ -133,10 +132,9 @@ pub(crate) fn resolve_auth_config() -> Result<AuthConfig, String> {
     })
 }
 
-pub(crate) fn tailscale_login_from_status_json(raw: &str) -> Result<String, String> {
+pub(crate) fn tailscale_login_from_status_json(raw: &str) -> Result<String, Message> {
     let status: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
-        let err = keyf(
-            "Cannot parse Tailscale status: {error}",
+        let err = Message::localized("Cannot parse Tailscale status: {{error}}",
             &[("error", e.to_string())],
         );
         log::error!("[dsh tailscale] 解析 status 失败: {}", err);
@@ -150,7 +148,7 @@ pub(crate) fn tailscale_login_from_status_json(raw: &str) -> Result<String, Stri
         _ => {
             let err = "Tailscale status does not contain the current user ID".to_string();
             log::error!("[dsh tailscale] {}", err);
-            return Err(err);
+            return Err(err.into());
         }
     };
     // Tailscale 客户端演进后 User 表的 key 与条目内 ID 字段不再一致
@@ -184,17 +182,16 @@ pub(crate) fn tailscale_login_from_status_json(raw: &str) -> Result<String, Stri
     {
         let err = "Tailscale login name contains unsupported characters".to_string();
         log::error!("[dsh tailscale] {}", err);
-        return Err(err);
+        return Err(err.into());
     }
     Ok(login.to_string())
 }
 
-pub(crate) fn resolve_tailscale_login(ts: &str) -> Result<String, String> {
+pub(crate) fn resolve_tailscale_login(ts: &str) -> Result<String, Message> {
     match run_capture(ts, &["status", "--json"]) {
         Ok((out, _, true)) => tailscale_login_from_status_json(&out),
         Ok((_, err, false)) => {
-            let e = keyf(
-                "Cannot read the current Tailscale identity: {error}",
+            let e = Message::localized("Cannot read the current Tailscale identity: {{error}}",
                 &[(
                     "error",
                     if err.is_empty() {

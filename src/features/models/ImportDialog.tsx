@@ -42,7 +42,7 @@ export function ImportDialog({
           );
         }
       } catch (e) {
-        if (!disposed) setError(tErr(String(e)));
+        if (!disposed) setError(tErr(e));
       }
     })();
     return () => {
@@ -80,7 +80,7 @@ export function ImportDialog({
       onImported(result);
       onClose();
     } catch (e) {
-      setError(tErr(String(e)));
+      setError(tErr(e));
       setRunning(false);
     }
   };

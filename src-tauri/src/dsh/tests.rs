@@ -24,7 +24,7 @@ use super::setup::{
 };
 use super::update::remove_web_profile_compat_entry;
 use super::{RemoteRpcAccess, RemoteUrlAccess, SUPPORTED_DSH_VERSION};
-use crate::i18n::set_current;
+use crate::i18n::{set_current, Message};
 use crate::version::parse_version;
 use std::path::Path;
 
@@ -190,15 +190,26 @@ fn dsh_version_compatible_pins_to_supported_line() {
 
 #[test]
 fn verification_checks_are_separated_for_readability() {
+    // 每条检查各自是一个 key（独立过词典），容器消息只负责按行拼接：英文原文
+    // 等于逐行填好参数后的结果
     let checks = vec![
-        "dsh web is not responding on 127.0.0.1:3899".to_string(),
-        "HTTPS endpoint is not responding: https://example.ts.net".to_string(),
-        "WebSocket handshake failed: https://example.ts.net/api/remote.mux".to_string(),
+        Message::key("dsh web is not responding on 127.0.0.1:3899"),
+        Message::localized(
+            "HTTPS endpoint is not responding: {{url}}",
+            &[("url", "https://example.ts.net".to_string())],
+        ),
+        Message::localized(
+            "WebSocket handshake failed: {{url}}/api/remote.mux",
+            &[("url", "https://example.ts.net".to_string())],
+        ),
     ];
+    let joined = format_verification_checks(&checks);
     assert_eq!(
-            format_verification_checks(&checks),
+            joined.to_english(),
             "dsh web is not responding on 127.0.0.1:3899\nHTTPS endpoint is not responding: https://example.ts.net\nWebSocket handshake failed: https://example.ts.net/api/remote.mux",
         );
+    // 容器 key 只由占位符与换行组成：里面若含成品句子，中文界面下整段恒为英文
+    assert_eq!(joined.key, "{{check0}}\n{{check1}}\n{{check2}}");
 }
 
 #[test]
@@ -1336,11 +1347,11 @@ fn timeout_failure_message_is_static_and_action_specific() {
     set_current("en");
     assert_eq!(
         super::market::timeout_failure_message("add"),
-        "Plugin install timed out and was terminated. Check your network and retry."
+        Message::key("Plugin install timed out and was terminated. Check your network and retry.")
     );
     assert_eq!(
         super::market::timeout_failure_message("remove"),
-        "Plugin removal timed out and was terminated."
+        Message::key("Plugin removal timed out and was terminated.")
     );
     set_current("en");
 }
@@ -2551,23 +2562,23 @@ fn snapshot_falls_back_to_network_error_when_snapshot_also_fails() {
     let dir = std::env::temp_dir().join(format!("dsh-pro-max-snapfail-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("snapshot.json");
-    let net_err = || "Failed to fetch plugin catalog: HTTP 502".to_string();
+    let net_err = || Message::key("Failed to fetch plugin catalog: HTTP 502");
     // 快照不存在 → 原始网络错误（它比"没有快照"更有行动价值）
     assert_eq!(
-        catalog_snapshot_decision(&path, net_err()).err().as_deref(),
-        Some(net_err().as_str())
+        catalog_snapshot_decision(&path, net_err()).err(),
+        Some(net_err())
     );
     // 快照 JSON 损坏 → 同上
     std::fs::write(&path, "{not json").unwrap();
     assert_eq!(
-        catalog_snapshot_decision(&path, net_err()).err().as_deref(),
-        Some(net_err().as_str())
+        catalog_snapshot_decision(&path, net_err()).err(),
+        Some(net_err())
     );
     // 旧契约快照不认识 → 同上（坏快照不掩盖在线数据的问题）
     std::fs::write(&path, catalog_fixture()).unwrap();
     assert_eq!(
-        catalog_snapshot_decision(&path, net_err()).err().as_deref(),
-        Some(net_err().as_str())
+        catalog_snapshot_decision(&path, net_err()).err(),
+        Some(net_err())
     );
     // 好快照（投影格式）→ 降级成功（from_snapshot 标记 + updated 供横幅标注）
     write_projected_snapshot(&path);
@@ -2655,11 +2666,11 @@ fn install_failure_message_detects_allowbuilds_block() {
     // 普通失败走原模板
     assert_eq!(
         install_failure_message("add", "boom"),
-        "Failed to install plugin: boom"
+        Message::localized("Failed to install plugin: {{error}}", &[("error", "boom".to_string())])
     );
     assert_eq!(
         install_failure_message("remove", "boom"),
-        "Failed to remove plugin: boom"
+        Message::localized("Failed to remove plugin: {{error}}", &[("error", "boom".to_string())])
     );
 }
 
@@ -3089,8 +3100,8 @@ fn install_decision_elevates_blocked_builds_to_needs_approval() {
     let outcome = super::market::install_decision(
         "node-pty",
         Err((
-            "Ignored build scripts: node-pty@1.1.0".to_string(),
-            "display".to_string(),
+            Message::key("Ignored build scripts: node-pty@1.1.0"),
+            Message::key("display"),
         )),
         None,
         None,
@@ -3111,16 +3122,16 @@ fn install_decision_elevates_blocked_builds_to_needs_approval() {
     let err = super::market::install_decision(
         "pkg",
         Err((
-            "boom".to_string(),
-            "Failed to install plugin: boom".to_string(),
+            Message::key("boom"),
+            Message::key("Failed to install plugin: boom"),
         )),
         None,
         None,
         Some("/p/x.yaml".to_string()),
     )
     .expect_err("plain failure");
-    assert_eq!(err.0, "boom");
-    assert_eq!(err.1, "Failed to install plugin: boom");
+    assert_eq!(err.0, Message::key("boom"));
+    assert_eq!(err.1, Message::key("Failed to install plugin: boom"));
     set_current("en");
 }
 
@@ -3132,7 +3143,7 @@ fn install_decision_elevates_git_prepare_block_to_needs_approval() {
     let raw = "[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] The git-hosted package \"dsh-advisor@0.3.1\" needs to execute build scripts but is not in the \"allowBuilds\" allowlist.\nallowBuilds:\n  dsh-advisor@git+https://github.com/btspoony/dsh-advisor.git#1eda7b: true";
     let outcome = super::market::install_decision(
         "github:btspoony/dsh-advisor",
-        Err((raw.to_string(), "hint".to_string())),
+        Err((Message::key(raw), Message::key("hint"))),
         None,
         None,
         Some("/p/pnpm-workspace.yaml".to_string()),
@@ -3151,15 +3162,15 @@ fn install_decision_elevates_git_prepare_block_to_needs_approval() {
     let err = super::market::install_decision(
         "github:owner/repo",
         Err((
-            "ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED no example line".to_string(),
-            "hint".to_string(),
+            Message::key("ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED no example line"),
+            Message::key("hint"),
         )),
         None,
         None,
         Some("/p/x.yaml".to_string()),
     )
     .expect_err("plain failure");
-    assert_eq!(err.1, "hint");
+    assert_eq!(err.1, Message::key("hint"));
     set_current("en");
 }
 
@@ -3174,7 +3185,7 @@ fn install_decision_elevates_store_drift_to_needs_store_repair() {
     ] {
         let outcome = super::market::install_decision(
             "@scope/pkg@1.0.0",
-            Err((raw.to_string(), "hint".to_string())),
+            Err((Message::key(raw), Message::key("hint"))),
             None,
             None,
             Some("/p/pnpm-workspace.yaml".to_string()),
@@ -3189,8 +3200,8 @@ fn install_decision_elevates_store_drift_to_needs_store_repair() {
     let outcome = super::market::install_decision(
         "node-pty",
         Err((
-            "Ignored build scripts: node-pty@1.1.0".to_string(),
-            "display".to_string(),
+            Message::key("Ignored build scripts: node-pty@1.1.0"),
+            Message::key("display"),
         )),
         None,
         None,
@@ -3201,15 +3212,15 @@ fn install_decision_elevates_store_drift_to_needs_store_repair() {
     let err = super::market::install_decision(
         "pkg",
         Err((
-            "boom".to_string(),
-            "Failed to install plugin: boom".to_string(),
+            Message::key("boom"),
+            Message::key("Failed to install plugin: boom"),
         )),
         None,
         None,
         Some("/p/x.yaml".to_string()),
     )
     .expect_err("plain failure");
-    assert_eq!(err.1, "Failed to install plugin: boom");
+    assert_eq!(err.1, Message::key("Failed to install plugin: boom"));
     set_current("en");
 }
 
@@ -3939,9 +3950,12 @@ fn peer_preflight_warning_lines_cap_at_three_then_fold() {
         missing: vec!["decodeStorageRecord".to_string()],
     };
     let lines = super::compat::preflight_warning_lines(&[drift("a"), drift("b"), drift("c")]);
-    assert_eq!(lines.matches('\n').count(), 2);
-    assert!(lines.contains("Incompatible plugin a:"));
-    assert!(lines.contains("does not export decodeStorageRecord"));
+    // 三行各自成条：不再是拼接后的单个字符串（拼接会让整段命不中词典模板）
+    assert_eq!(lines.len(), 3);
+    assert!(lines.iter().any(|line| line.contains("Incompatible plugin a:")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("does not export decodeStorageRecord")));
     let folded = super::compat::preflight_warning_lines(&[
         drift("a"),
         drift("b"),
@@ -3949,7 +3963,7 @@ fn peer_preflight_warning_lines_cap_at_three_then_fold() {
         drift("d"),
         drift("e"),
     ]);
-    assert!(folded.contains("… and 2 more"));
+    assert!(folded.iter().any(|line| line.contains("… and 2 more")));
 }
 
 // ============ 模型目录 + 远端拉取 + 原子写（Top3）============

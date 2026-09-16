@@ -137,7 +137,7 @@ describe("DshVersionSection compatibility facts", () => {
       installedCompatible: true,
       installedAboveSupported: false,
       supportedVersion: "0.1.0-rc.6",
-      error: "npm query timed out (15s)",
+      error: { key: "npm query timed out (15s)", args: {} },
     };
     const check = vi.spyOn(cmd, "dshCheckLatest").mockResolvedValue(failed);
     const user = userEvent.setup();

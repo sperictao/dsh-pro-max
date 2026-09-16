@@ -25,7 +25,7 @@ them locally before pushing:
 | --- | --- |
 | `pnpm exec tsc --noEmit` | TypeScript types (also keeps the zh-CN dictionary in sync with en at compile time) |
 | `pnpm exec vitest run` | Frontend unit tests |
-| `node scripts/check-i18n.mjs` | i18n coverage: every `t("...")` / Rust `tr(...)` key must exist, and no dictionary entry is unreachable (frontend literals ∪ Rust-produced diagnostics ∪ the dynamic `step.<id>` family). Keys written as `{{name}}` templates are reported, not failed: Rust diagnostics currently interpolate before crossing IPC, so those templates only become live once the payload carries key + args |
+| `node scripts/check-i18n.mjs` | i18n coverage: frontend `t("...")` and Rust `Message` / `tr` / `trf` literals must exist in the dictionary, and no dictionary entry may be unreachable |
 | `pnpm run test:e2e` | Browser smoke test over a mocked Tauri IPC (needs Chrome) |
 | `cargo clippy --all-targets -- -D warnings` | Rust lints, warnings are errors |
 | `cargo test` | Rust unit tests (in `src-tauri`) |
@@ -45,12 +45,20 @@ A practical shortcut: `pnpm test` runs the theme tests plus vitest.
   (see `dsh/mod.rs` for the map); frontend features live under `src/features/`
   with shared infrastructure in `src/shared/`. All IPC command names appear
   only in `src/shared/commands.ts` and `src-tauri/src` `#[tauri::command]`s.
-- **i18n**: user-visible strings come from `src/shared/i18n/en.ts` (frontend)
-  and the `zh_cn` table in `src-tauri/src/i18n.rs` (shell/tray/errors). Both
-  are scan-checked by `check-i18n.mjs`. Strings produced by Rust (timeline
-  `detail` / `problem` / `solution`, `Err` payloads) are keys too: render them
-  through `tErr` / `tDiagnostic` so the dictionary is actually consulted, and
-  add the entry to both dictionaries when you add such a string.
+- **i18n**: the frontend dictionary `src/shared/i18n/en.ts` (+ `zh-CN.ts`) is the
+  single source of truth for translations. User-visible text produced by Rust
+  crosses IPC as a `Message { key, args }` (`src-tauri/src/i18n.rs`): `key` is the
+  English original, possibly with `{{name}}` placeholders, and `args` carries the
+  values **as data** — never interpolate in Rust. Render it with `tErr` /
+  `renderMessage` (`src/shared/i18n/error.ts`); a dictionary hit interpolates the
+  translation, a miss fills the English original in place. When you add such a
+  string, add the entry to both dictionaries.
+  The one exception is text Rust hands straight to an OS API (tray menu titles,
+  system notifications): there is no frontend render point, so those use
+  `i18n::trf(key, args)` and the small `zh_cn` table in `src-tauri/src/i18n.rs`.
+  `check-i18n.mjs` enforces all four directions: frontend `t("...")` ⊆ dictionary,
+  Rust `Message::key/localized` literals ⊆ dictionary, `tr/trf` ⊆ tray table, and
+  no unreachable dictionary entry.
 
 ## Updating the pinned dsh plugins
 

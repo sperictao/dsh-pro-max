@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
 use tokio::time::sleep;
 
-use crate::i18n::keyf;
+use crate::i18n::Message;
 
 const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(20);
 const UPDATE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60 * 15);
@@ -29,7 +29,7 @@ pub struct UpdateInfo {
     pub available_version: Option<String>,
     pub has_update: bool,
     pub release_notes: Option<String>,
-    pub message: Option<String>,
+    pub message: Option<Message>,
 }
 
 #[derive(Debug, Serialize, ts_rs::TS)]
@@ -37,7 +37,7 @@ pub struct UpdateInfo {
 #[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct UpdaterConfigHealth {
     pub configured: bool,
-    pub message: String,
+    pub message: Message,
 }
 
 #[derive(Debug, Serialize, ts_rs::TS)]
@@ -122,14 +122,13 @@ fn is_retryable(err: &UpdaterError) -> bool {
 async fn fetch_remote_update(
     app: &AppHandle,
     state: &PendingUpdateState,
-) -> Result<Option<Update>, String> {
+) -> Result<Option<Update>, Message> {
     let updater = app
         .updater_builder()
         .timeout(UPDATE_CHECK_TIMEOUT)
         .build()
         .map_err(|e| {
-            keyf(
-                "Update source not configured or unavailable: {error}",
+            Message::localized("Update source not configured or unavailable: {{error}}",
                 &[("error", map_updater_error(e))],
             )
         })?;
@@ -137,8 +136,7 @@ async fn fetch_remote_update(
         .check()
         .await
         .map_err(|e| {
-            keyf(
-                "Failed to check for updates: {error}",
+            Message::localized("Failed to check for updates: {{error}}",
                 &[("error", map_updater_error(e))],
             )
         })?
@@ -150,7 +148,7 @@ async fn fetch_remote_update(
     Ok(maybe)
 }
 
-async fn download_with_retry(app: &AppHandle, update: &Update) -> Result<Vec<u8>, String> {
+async fn download_with_retry(app: &AppHandle, update: &Update) -> Result<Vec<u8>, Message> {
     let mut last_err: Option<String> = None;
     let mut attempts_used = 1usize;
     for attempt in 1..=UPDATE_DOWNLOAD_MAX_ATTEMPTS {
@@ -199,8 +197,7 @@ async fn download_with_retry(app: &AppHandle, update: &Update) -> Result<Vec<u8>
     } else {
         String::new()
     };
-    Err(keyf(
-        "Download failed{note}: {error}",
+    Err(Message::localized("Download failed{{note}}: {{error}}",
         &[("note", note), ("error", last_err.unwrap_or_default())],
     ))
 }
@@ -213,7 +210,7 @@ fn metadata_changed(prev: &Update, next: &Update) -> bool {
 }
 
 /// 定位 updater 配置指南（开发仓库内可用，向上逐级查找）
-fn resolve_help_paths() -> Result<(PathBuf, PathBuf), String> {
+fn resolve_help_paths() -> Result<(PathBuf, PathBuf), Message> {
     let mut roots = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
         roots.push(cwd);
@@ -241,12 +238,12 @@ fn resolve_help_paths() -> Result<(PathBuf, PathBuf), String> {
     }
     Err(
         "Updater guide files not found; please run this feature from the source repository"
-            .to_string(),
+            .into(),
     )
 }
 
 #[tauri::command]
-pub fn get_updater_help_paths() -> Result<UpdaterHelpPaths, String> {
+pub fn get_updater_help_paths() -> Result<UpdaterHelpPaths, Message> {
     let (docs, template) = resolve_help_paths()?;
     Ok(UpdaterHelpPaths {
         docs_path: docs.to_string_lossy().to_string(),
@@ -259,12 +256,11 @@ pub fn get_updater_config_health(app: AppHandle) -> UpdaterConfigHealth {
     match app.updater() {
         Ok(_) => UpdaterConfigHealth {
             configured: true,
-            message: "Updater configuration is ready".to_string(),
+            message: "Updater configuration is ready".into(),
         },
         Err(e) => UpdaterConfigHealth {
             configured: false,
-            message: keyf(
-                "Update source not configured or unavailable: {error}",
+            message: Message::localized("Update source not configured or unavailable: {{error}}",
                 &[("error", map_updater_error(e))],
             ),
         },
@@ -275,14 +271,14 @@ pub fn get_updater_config_health(app: AppHandle) -> UpdaterConfigHealth {
 pub async fn check_update(
     app: AppHandle,
     state: State<'_, PendingUpdateState>,
-) -> Result<UpdateInfo, String> {
+) -> Result<UpdateInfo, Message> {
     match fetch_remote_update(&app, state.inner()).await {
         Ok(Some(u)) => Ok(UpdateInfo {
             current_version: u.current_version.clone(),
             available_version: Some(u.version.clone()),
             has_update: true,
             release_notes: u.body.clone(),
-            message: Some("Update available".to_string()),
+            message: Some("Update available".into()),
         }),
         Ok(None) => Ok(UpdateInfo {
             current_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -309,7 +305,7 @@ pub async fn install_update(
     app: AppHandle,
     state: State<'_, PendingUpdateState>,
     expected_version: Option<String>,
-) -> Result<String, String> {
+) -> Result<String, Message> {
     // 优先用 check 阶段缓存的更新；版本对不上则重新拉取
     let cached = lock_pending(state.inner()).clone();
     let expected = expected_version
@@ -357,8 +353,7 @@ pub async fn install_update(
     emit_progress(&app, "installing", &update.version, total, Some(total), 1);
     let version = update.version.clone();
     update.install(bytes).map_err(|e| {
-        keyf(
-            "Failed to install update: {error}",
+        Message::localized("Failed to install update: {{error}}",
             &[("error", map_updater_error(e))],
         )
     })?;

@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import * as cmd from "@/shared/commands";
 import { BTN, BTN_SM, MUTED } from "@/shared/lib/ui";
-import { tErr } from "@/shared/i18n/error";
+import { tErr, toMessage } from "@/shared/i18n/error";
 
 // 已装版本相对验证栈的状态胶囊（颜色即语义）；调用方保证已安装
 function installedPill(compatible: boolean, aboveSupported: boolean): { key: string; cls: string } {
@@ -40,7 +40,7 @@ export function DshVersionSection() {
         installedCompatible: false,
         installedAboveSupported: false,
         supportedVersion: "",
-        error: String(e),
+        error: toMessage(e),
       });
     } finally {
       setCheckBusy(false);
@@ -63,7 +63,7 @@ export function DshVersionSection() {
       if (incompatible) toast(t("Authorization plugins may be incompatible; if local & remote access break, use startup diagnostics to disable them"), "info");
       await check();
     } catch (e) {
-      toast(t("Install failed: {{error}}", { error: tErr(String(e)) }), "error");
+      toast(t("Install failed: {{error}}", { error: tErr(e) }), "error");
     } finally {
       setInstalling(null);
     }

@@ -1,29 +1,77 @@
-// shared/i18n 错误面：Rust 命令的 Err 过 IPC 时是「本地化前的稳定 key（可含
-// 已插值的技术细节）」；前端 i18n.t 是唯一解析点。Rust 用户可见文案的 key
-// 与其英文原文相同，因此 en 界面原样可读、zh-CN 查表翻译、缺失落回原文。
+// shared/i18n 错误面：Rust 的用户可见文案过 IPC 时一律是「模板 key + 参数」
+// （bindings/Message）。前端是唯一解析点：
+//   - 命中词典 → 用 args 插值成译文（zh-CN 词典是唯一事实来源）
+//   - miss     → 用同一组 args 就地填出英文原文（en 兜底，不能露出 {{name}}）
+// 技术性文案（路径、原始 stderr）整串就是 key、args 为空，原样显示。
 //
-// 「key 即英文原文」是两侧的共同契约：en 词典恒等映射，zh-CN 词典按同 key
-// 提供中文。词典 miss 时 i18next 回退 key 原文（英文）——漂移从「静默双语
-// 混杂」变为「可查到的 key miss」。
+// 为什么不再有「先把值插进句子」的形态：成品句子永远命不中词典里的模板 key，
+// 那正是中文界面下带值诊断恒为英文的成因。参数必须作为数据随 key 一起过线。
 
+import type { Message } from "../bindings/Message";
+import type { MessageArg } from "../bindings/MessageArg";
 import { i18n } from "./index";
 
-/// 渲染 Rust 命令错误（Err(String) / 状态载荷中的错误字段）。
-/// 语义 = i18n.t(key)：key 即英文原文，zh-CN 命中即中文，未命中如实显示原文。
-/// 先 exists 再 t：未命中时直接 t() 会把文案里可能出现的 `{{...}}`（JSON 片段、
-/// 模板串）当插值模板吃掉，把原始报错改成空串
-export function tErr(rustError: string): string {
-  return i18n.exists(rustError) ? i18n.t(rustError) : rustError;
+export type { Message, MessageArg };
+
+function isMessage(value: unknown): value is Message {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { key?: unknown }).key === "string"
+  );
 }
 
-/// 渲染 Rust 产出的诊断载荷（时间轴节点的 detail / problem / solution）。
-/// detail 是多行拼接（基线行 + 追加的披露行），故逐行解析：命中词典即本地化，
-/// 未命中原样保留。Rust 已把技术细节（路径/版本/原始 stderr）插值进文案，
-/// 这类行构造不出词典 key，如实显示英文就是设计的兜底；而只有固定文案的
-/// 诊断行（如 pnpm 缺失提示）能整行命中词典，中文界面因此不必再看英文
-export function tDiagnostic(rustText: string): string {
-  return rustText
-    .split("\n")
-    .map((line) => (i18n.exists(line) ? i18n.t(line) : line))
-    .join("\n");
+/// bindings 把 args 定为 `{ [key in string]?: MessageArg }`（Rust 总是序列化，
+/// 但值可缺省），这里统一成可迭代形态
+function argsOf(message: Message): Record<string, MessageArg | undefined> {
+  return message.args ?? {};
+}
+
+/// 英文兜底：把 {{name}} 就地换成参数值（嵌套消息先各自渲染）。
+/// 只有词典 miss 才走这里——命中词典时插值由 i18next 完成
+function fillEnglish(key: string, args: Record<string, string>): string {
+  return key.replace(/\{\{(\w+)\}\}/g, (whole, name: string) =>
+    name in args ? args[name] : whole,
+  );
+}
+
+/// 把参数渲染成 i18next 可插值的纯字符串：嵌套消息先递归解析，
+/// 否则 i18next 会把对象插值成 "[object Object]"
+function flattenArgs(message: Message): Record<string, string> {
+  const flat: Record<string, string> = {};
+  for (const [name, value] of Object.entries(argsOf(message))) {
+    if (value === undefined) continue;
+    flat[name] = typeof value === "string" ? value : renderMessage(value);
+  }
+  return flat;
+}
+
+/// 把任意抛出值规整成 Message。用于类型就是 Message 的**状态字段**：存原文
+/// （不预先渲染），渲染点仍走 renderMessage —— 语言切换时这些字段随重渲染
+/// 一起换语言，而不是把当时的语言定格在字符串里
+export function toMessage(value: unknown): Message {
+  if (isMessage(value)) return value;
+  if (typeof value === "string") return { key: value, args: {} };
+  return { key: value === null || value === undefined ? "" : String(value), args: {} };
+}
+
+/// 渲染一条 Rust 消息（或历史遗留的纯字符串载荷）。
+/// 先 exists 再 t：未命中时直接 t() 会把文案里可能出现的 `{{...}}` 当插值
+/// 模板吃掉，把原始报错改成缺值的句子
+export function renderMessage(value: unknown): string {
+  if (typeof value === "string") {
+    return i18n.exists(value) ? i18n.t(value) : value;
+  }
+  if (!isMessage(value)) {
+    // 规整失败也不吞掉信息：如实显示，便于定位契约漂移
+    return value === null || value === undefined ? "" : String(value);
+  }
+  const flat = flattenArgs(value);
+  return i18n.exists(value.key) ? i18n.t(value.key, flat) : fillEnglish(value.key, flat);
+}
+
+/// 渲染 Rust 命令错误（Err）与状态载荷里的错误字段。
+/// 参数是 unknown：IPC 拒绝值可能是 Message、也可能是本地抛出的 Error/字符串
+export function tErr(rustError: unknown): string {
+  return renderMessage(rustError);
 }

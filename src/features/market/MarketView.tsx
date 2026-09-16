@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import { updateSpecifierFor } from "@/shared/store/slices/market";
 import * as cmd from "@/shared/commands";
-import { tErr } from "@/shared/i18n/error";
+import { renderMessage, tErr } from "@/shared/i18n/error";
 import {
   BTN,
   BTN_DANGER,
@@ -1485,7 +1485,7 @@ function DiagnosticsPane() {
         if (alive) setDiag(d);
       })
       .catch((e) => {
-        if (alive) setError(String(e));
+        if (alive) setError(renderMessage(e));
       })
       .finally(() => {
         if (alive) setBusy(false);
@@ -1501,7 +1501,7 @@ function DiagnosticsPane() {
     setError(null);
     cmd.marketDiagnostics()
       .then((d) => setDiag(d))
-      .catch((e) => setError(String(e)))
+      .catch((e) => setError(renderMessage(e)))
       .finally(() => setBusy(false));
   };
 

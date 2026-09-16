@@ -1,6 +1,7 @@
 //! Internal secret resolution for Launcher-originated provider probes.
 //! No function in this module is a Tauri command; secret values never cross IPC.
 
+use crate::i18n::Message;
 use serde_yaml::Value as Yaml;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,12 +15,12 @@ fn valid_ref(name: &str) -> bool {
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
-fn dsh_dir() -> Result<PathBuf, String> {
+fn dsh_dir() -> Result<PathBuf, Message> {
     Ok(crate::config::home_dir()?.join(".dsh"))
 }
 
 #[cfg(unix)]
-fn assert_owner_only(path: &Path) -> Result<(), String> {
+fn assert_owner_only(path: &Path) -> Result<(), Message> {
     use std::os::unix::fs::PermissionsExt;
     let Ok(metadata) = fs::metadata(path) else {
         return Ok(());
@@ -30,17 +31,17 @@ fn assert_owner_only(path: &Path) -> Result<(), String> {
     } else {
         Err(
             "Credentials file is readable beyond its owner; run chmod 600 before continuing"
-                .to_string(),
+                .into(),
         )
     }
 }
 
 #[cfg(not(unix))]
-fn assert_owner_only(_path: &Path) -> Result<(), String> {
+fn assert_owner_only(_path: &Path) -> Result<(), Message> {
     Ok(())
 }
 
-fn file_value(path: &Path, name: &str) -> Result<Option<String>, String> {
+fn file_value(path: &Path, name: &str) -> Result<Option<String>, Message> {
     if !path.exists() {
         return Ok(None);
     }
@@ -54,7 +55,7 @@ fn file_value(path: &Path, name: &str) -> Result<Option<String>, String> {
         .map_err(|_| "Failed to parse the credentials file".to_string())?;
     let map = root
         .as_mapping()
-        .ok_or_else(|| "Credentials file must be a mapping".to_string())?;
+        .ok_or_else(|| Message::key("Credentials file must be a mapping"))?;
     let version_key = Yaml::String("version".into());
     let version = map.get(&version_key);
     if version.is_none() {
@@ -65,7 +66,7 @@ fn file_value(path: &Path, name: &str) -> Result<Option<String>, String> {
             .map(str::to_string));
     }
     if version.and_then(Yaml::as_i64) != Some(1) {
-        return Err("Credentials file declares an unsupported version".to_string());
+        return Err(Message::key("Credentials file declares an unsupported version"));
     }
     Ok(map
         .get(Yaml::String("refs".into()))
@@ -116,11 +117,11 @@ fn resolve_from_sources(
     credentials: &Path,
     project_env: Option<&Path>,
     user_env: &Path,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, Message> {
     let name = raw.trim();
     if !valid_ref(name) {
         return Err(
-            "Credential reference must be a POSIX-style environment variable name".to_string(),
+            "Credential reference must be a POSIX-style environment variable name".into(),
         );
     }
     if let Ok(value) = std::env::var(name) {
@@ -142,7 +143,7 @@ fn resolve_from_sources(
     Ok(None)
 }
 
-pub(crate) fn resolve(raw: &str) -> Result<Option<String>, String> {
+pub(crate) fn resolve(raw: &str) -> Result<Option<String>, Message> {
     let home = dsh_dir()?;
     let project_env = std::env::current_dir().ok().map(|cwd| cwd.join(".env"));
     resolve_from_sources(

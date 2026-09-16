@@ -19,7 +19,7 @@ import {
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
 
 const stepDone = (index: number, id: string): DshStepEvent => ({
-  index, id, state: "done", detail: null, problem: null, solution: null, actionPlugin: null, titleKey: `step.${id}`,
+  index, id, state: "done", detail: [], problem: null, solution: null, actionPlugin: null, titleKey: `step.${id}`,
 });
 const remoteReadyTimeline: DshStepEvent[] =
   ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"].map((id, i) => stepDone(i, id));
@@ -89,7 +89,7 @@ beforeEach(() => {
   vi.spyOn(cmd, "dshStepSchema").mockImplementation(async (remote: boolean) =>
     (remote ? ["node","install","plugins","tailscale","magicdns","start","serve","verify"]
             : ["node","install","start","ready"])
-      .map((id, index) => ({ index, id, state: "pending" as const, detail: null, problem: null, solution: null, actionPlugin: null, titleKey: `step.${id}` })),
+      .map((id, index) => ({ index, id, state: "pending" as const, detail: [], problem: null, solution: null, actionPlugin: null, titleKey: `step.${id}` })),
   );
 });
 
@@ -282,9 +282,9 @@ describe("start failure log disclosure", () => {
     index: 2,
     id: "start",
     state: "failed" as const,
-    detail: null,
-    problem: "dsh web failed to start; log says:\nError: boom",
-    solution: "Check the log at ~/.dsh/dsh-web.log",
+    detail: [],
+    problem: { key: "dsh web failed to start; log says:\nError: boom", args: {} },
+    solution: { key: "Check the log at ~/.dsh/dsh-web.log", args: {} },
     actionPlugin: null,
     titleKey: null,
   };
@@ -354,7 +354,7 @@ describe("start failure log disclosure", () => {
 
     const thirdParty = {
       ...failedStart,
-      problem: "dsh web failed to start; plugin @vendor/bad-plugin failed to load:\nctx.x is not a function",
+      problem: { key: "dsh web failed to start; plugin @vendor/bad-plugin failed to load:\nctx.x is not a function", args: {} },
       actionPlugin: "@vendor/bad-plugin",
     };
     useAppStore.setState({ dshTimeline: [thirdParty] });
@@ -375,7 +375,7 @@ describe("start failure log disclosure", () => {
         index: 2,
         id: "start",
         state: "done" as const,
-        detail: "dsh web is running on 127.0.0.1:3899\nIncompatible plugin dsh-rewind-plugin: @deepseek-ai/dsh-session does not export decodeStorageRecord; the plugin will not load, and dsh aborts startup if its entry is required",
+        detail: [{ key: "dsh web is running on 127.0.0.1:3899", args: {} }, { key: "Incompatible plugin dsh-rewind-plugin: @deepseek-ai/dsh-session does not export decodeStorageRecord; the plugin will not load, and dsh aborts startup if its entry is required", args: {} }],
         problem: null,
         solution: null,
         actionPlugin: "dsh-rewind-plugin",
@@ -401,7 +401,7 @@ describe("start failure log disclosure", () => {
         index: 2,
         id: "start",
         state: "done" as const,
-        detail: "dsh web is running on 127.0.0.1:3899",
+        detail: [{ key: "dsh web is running on 127.0.0.1:3899", args: {} }],
         problem: null,
         solution: null,
         actionPlugin: null,
@@ -422,7 +422,7 @@ describe("start failure log disclosure", () => {
       dshStatus: { ...ready, dshRunning: false },
       dshTimeline: [{
         ...failedStart,
-        problem: "dsh web failed to start; plugin @vendor/bad-plugin failed to load:\nboom",
+        problem: { key: "dsh web failed to start; plugin @vendor/bad-plugin failed to load:\nboom", args: {} },
         actionPlugin: "@vendor/bad-plugin",
       }],
     });
@@ -451,7 +451,7 @@ describe("start failure log disclosure", () => {
       dshStatus: { ...ready, dshRunning: false },
       dshTimeline: [{
         ...failedStart,
-        problem: "dsh web failed to start; plugin @vendor/bad-plugin failed to load:\nboom",
+        problem: { key: "dsh web failed to start; plugin @vendor/bad-plugin failed to load:\nboom", args: {} },
         actionPlugin: "@vendor/bad-plugin",
       }],
     });
@@ -479,7 +479,7 @@ describe("tray echo keeps the timeline on the event stream", () => {
     useAppStore.setState({
       dshHasRunSetup: false,
       dshTimeline: [
-        { index: 0, id: "node", state: "done", detail: "old", problem: null, solution: null, actionPlugin: null, titleKey: null },
+        { index: 0, id: "node", state: "done", detail: [{ key: "old", args: {} }], problem: null, solution: null, actionPlugin: null, titleKey: null },
       ],
     });
     vi.spyOn(cmd, "dshStartWeb").mockResolvedValue("http://127.0.0.1:3899");
@@ -491,7 +491,7 @@ describe("tray echo keeps the timeline on the event stream", () => {
     const tl = useAppStore.getState().dshTimeline;
     expect(tl).toEqual(ready.readyTimeline);
     // 成功收尾后被就绪视图覆盖；此处只断言骨架确实被重置过（非残留的 done）
-    expect(tl.some((s) => s.detail === "old")).toBe(false);
+    expect(tl.some((s) => s.detail.some((line) => line.key === "old"))).toBe(false);
   });
 
   it("a re-entrant startDshWeb claims the timeline for events without resetting it", async () => {
@@ -529,7 +529,7 @@ describe("tray echo keeps the timeline on the event stream", () => {
       index: 0,
       id: "node",
       state: "running",
-      detail: "Checking Node.js & npm…",
+      detail: [{ key: "Checking Node.js & npm…", args: {} }],
       problem: null,
       solution: null,
       actionPlugin: null,
@@ -547,7 +547,7 @@ describe("tray echo keeps the timeline on the event stream", () => {
       index: 0,
       id: "node",
       state: "done",
-      detail: "Node.js is available",
+      detail: [{ key: "Node.js is available", args: {} }],
       problem: null,
       solution: null,
       actionPlugin: null,
@@ -564,9 +564,9 @@ describe("cross-page state preservation", () => {
       index: 0,
       id: "node",
       state: "failed" as const,
-      detail: "detail",
-      problem: "problem",
-      solution: "solution",
+      detail: [{ key: "detail", args: {} }],
+      problem: { key: "problem", args: {} },
+      solution: { key: "solution", args: {} },
       actionPlugin: null,
     titleKey: null,
   };

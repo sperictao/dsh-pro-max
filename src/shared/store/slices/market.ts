@@ -2,7 +2,7 @@
 // 更新检测与收藏。catalog 跨页保留：27MB 目录解析结果不随切页重拉
 
 import { i18n } from "../../i18n";
-import { tErr } from "../../i18n/error";
+import { renderMessage, tErr } from "../../i18n/error";
 import * as cmd from "../../commands";
 import type { StoreApi } from "zustand";
 import type {
@@ -277,7 +277,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       set({ marketCatalog: await cmd.marketFetch() });
     } catch (e) {
       if (force || !get().marketCatalog) {
-        get().toast(i18n.t("Failed to load plugin catalog: {{error}}", { error: tErr(String(e)) }), "error");
+        get().toast(i18n.t("Failed to load plugin catalog: {{error}}", { error: tErr(e) }), "error");
       }
     } finally {
       set({ marketCatalogBusy: false });
@@ -290,7 +290,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
     try {
       set({ marketInstalled: await cmd.marketInstalled() });
     } catch (e) {
-      get().toast(i18n.t("Failed to list installed plugins: {{error}}", { error: tErr(String(e)) }), "error");
+      get().toast(i18n.t("Failed to list installed plugins: {{error}}", { error: tErr(e) }), "error");
     } finally {
       set({ marketInstalledBusy: false });
     }
@@ -327,8 +327,8 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       set({ marketInstallLog: null });
       await get().refreshMarketInstalled();
     } catch (e) {
-      set({ marketInstallError: { specifier, message: String(e) } });
-      get().toast(i18n.t("Failed to install plugin: {{error}}", { error: tErr(String(e)) }), "error");
+      set({ marketInstallError: { specifier, message: renderMessage(e) } });
+      get().toast(i18n.t("Failed to install plugin: {{error}}", { error: tErr(e) }), "error");
     } finally {
       set({ marketInstalling: null });
     }
@@ -395,13 +395,13 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
         await get().resumeMarketUpdateAll();
       }
     } catch (e) {
-      set({ marketInstallError: { specifier, message: String(e) } });
+      set({ marketInstallError: { specifier, message: renderMessage(e) } });
       get().toast(
         i18n.t(
           pending.operation === "update"
             ? "Failed to update plugin: {{error}}"
             : "Failed to install plugin: {{error}}",
-          { error: tErr(String(e)) },
+          { error: tErr(e) },
         ),
         "error",
       );
@@ -438,7 +438,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       get().toast(i18n.t("Plugin removed: {{name}}", { name }), "success");
       await get().refreshMarketInstalled();
     } catch (e) {
-      get().toast(i18n.t("Failed to remove plugin: {{error}}", { error: tErr(String(e)) }), "error");
+      get().toast(i18n.t("Failed to remove plugin: {{error}}", { error: tErr(e) }), "error");
     } finally {
       set({ marketRemoving: null });
     }
@@ -466,7 +466,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       }
       await get().refreshMarketInstalled();
     } catch (e) {
-      get().toast(i18n.t("Failed to toggle plugin: {{error}}", { error: tErr(String(e)) }), "error");
+      get().toast(i18n.t("Failed to toggle plugin: {{error}}", { error: tErr(e) }), "error");
     }
   },
 
@@ -480,7 +480,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       const infos = await cmd.marketCheckUpdates();
       set({ marketUpdates: Object.fromEntries(infos.map((i) => [i.name, i])) });
     } catch (e) {
-      get().toast(i18n.t("Failed to check plugin updates: {{error}}", { error: tErr(String(e)) }), "error");
+      get().toast(i18n.t("Failed to check plugin updates: {{error}}", { error: tErr(e) }), "error");
     } finally {
       set({ marketUpdatesBusy: false });
     }
@@ -560,7 +560,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       if (!silent) void get().refreshMarketUpdates();
       return true;
     } catch (e) {
-      if (!silent) get().toast(i18n.t("Failed to update plugin: {{error}}", { error: tErr(String(e)) }), "error");
+      if (!silent) get().toast(i18n.t("Failed to update plugin: {{error}}", { error: tErr(e) }), "error");
       return false;
     } finally {
       set({ marketUpdating: null, marketInstallLog: null });

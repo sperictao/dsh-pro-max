@@ -75,7 +75,7 @@ describe("StatusBall states", () => {
   });
 
   it("shows failed when detection reports an error", () => {
-    useAppStore.setState({ dshStatus: { ...ready, dshRunning: false, error: "boom" } });
+    useAppStore.setState({ dshStatus: { ...ready, dshRunning: false, error: { key: "boom", args: {} } } });
     render(createElement(StatusBall));
     expect(ballElement().className).toContain("failed");
   });

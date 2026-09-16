@@ -6,7 +6,7 @@ use super::components::{dsh_dir, tailscale_path};
 #[cfg(target_os = "macos")]
 use super::AUTOSTART_PREFIX;
 use crate::config;
-use crate::i18n::keyf;
+use crate::i18n::Message;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -113,7 +113,7 @@ pub(crate) fn probe_path() -> String {
 }
 
 /// 跑命令并捕获 (stdout, stderr, 成功)。命令经 probe PATH 执行
-pub(crate) fn run_capture(program: &str, args: &[&str]) -> Result<(String, String, bool), String> {
+pub(crate) fn run_capture(program: &str, args: &[&str]) -> Result<(String, String, bool), Message> {
     run_capture_lines(program, args, |_| {}, None, None).map(|(o, e, ok, _)| (o, e, ok))
 }
 
@@ -173,7 +173,7 @@ pub(crate) fn run_capture_lines(
     on_line: impl Fn(&str) + Send + Sync + 'static,
     timeout: Option<Duration>,
     cancel: Option<&std::sync::atomic::AtomicBool>,
-) -> Result<(String, String, bool, bool), String> {
+) -> Result<(String, String, bool, bool), Message> {
     run_capture_lines_env(program, args, on_line, timeout, cancel, &[])
 }
 
@@ -186,7 +186,7 @@ pub(crate) fn run_capture_lines_env(
     timeout: Option<Duration>,
     cancel: Option<&std::sync::atomic::AtomicBool>,
     extra_env: &[(&str, &str)],
-) -> Result<(String, String, bool, bool), String> {
+) -> Result<(String, String, bool, bool), Message> {
     let mut child = cli_command(program, args)
         .env("PATH", probe_path())
         .envs(extra_env.iter().copied())
@@ -195,8 +195,7 @@ pub(crate) fn run_capture_lines_env(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| {
-            keyf(
-                "Cannot execute {program}: {error}",
+            Message::localized("Cannot execute {{program}}: {{error}}",
                 &[("program", program.to_string()), ("error", e.to_string())],
             )
         })?;
@@ -231,7 +230,7 @@ pub(crate) fn run_capture_lines_env(
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Err(e.to_string().into()),
         }
     }
     if timed_out {
@@ -346,12 +345,11 @@ pub(crate) fn spawn_detached(
     args: &[&str],
     envs: &[(&str, &str)],
     log: &Path,
-) -> Result<u32, String> {
+) -> Result<u32, Message> {
     let dir = log.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(dir).map_err(|e| {
         log::error!("[dsh 启动] 创建日志目录失败: {}", e);
-        keyf(
-            "Failed to create directory: {error}",
+        Message::localized("Failed to create directory: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
@@ -361,7 +359,7 @@ pub(crate) fn spawn_detached(
         .open(log)
         .map_err(|e| {
             log::error!("[dsh 启动] 打开日志文件失败: {}", e);
-            keyf("Cannot open log file: {error}", &[("error", e.to_string())])
+            Message::localized("Cannot open log file: {{error}}", &[("error", e.to_string())])
         })?;
     let mut cmd = cli_command(program, args);
     cmd.env("PATH", probe_path())
@@ -377,7 +375,7 @@ pub(crate) fn spawn_detached(
     }
     let child = cmd.spawn().map_err(|e| {
         log::error!("[dsh 启动] 启动子进程失败: {}", e);
-        keyf("Cannot start process: {error}", &[("error", e.to_string())])
+        Message::localized("Cannot start process: {{error}}", &[("error", e.to_string())])
     })?;
     Ok(child.id())
 }
@@ -594,7 +592,7 @@ pub(crate) fn stop_supervised_services() {
 }
 
 #[tauri::command]
-pub fn dsh_stop() -> Result<(), String> {
+pub fn dsh_stop() -> Result<(), Message> {
     // 先停自启监管再杀进程，避免 KeepAlive/Restart 立即拉活。
     stop_supervised_services();
     // 兜底：未经自启机制、由一键启动直接拉起的游离进程。

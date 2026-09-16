@@ -10,6 +10,7 @@
 //! 扫描源缺失/损坏一律静默跳过：导入是便利功能，来源工具未装不是错误。
 
 use crate::config::home_dir;
+use crate::i18n::Message;
 use super::models::{
     load_model_config_at, save_model_config_at, settings_path, ModelEntry, ProviderConfig,
 };
@@ -788,7 +789,7 @@ pub(crate) fn run_at(
     home: &Path,
     settings: &Path,
     keys: &[String],
-) -> Result<ImportRunResult, String> {
+) -> Result<ImportRunResult, Message> {
     let selected: Vec<ImportCandidate> = scan_at(home)
         .into_iter()
         .flat_map(|g| g.entries)
@@ -842,20 +843,20 @@ pub(crate) fn run_at(
     Ok(result)
 }
 
-fn import_scan() -> Result<Vec<ImportGroup>, String> {
+fn import_scan() -> Result<Vec<ImportGroup>, Message> {
     Ok(scan_at(&home_dir()?))
 }
 
-fn import_run(keys: Vec<String>) -> Result<ImportRunResult, String> {
+fn import_run(keys: Vec<String>) -> Result<ImportRunResult, Message> {
     run_at(&home_dir()?, &settings_path()?, &keys)
 }
 
 #[tauri::command]
-pub async fn model_config_import_scan() -> Result<Vec<ImportGroup>, String> {
+pub async fn model_config_import_scan() -> Result<Vec<ImportGroup>, Message> {
     super::ipc_blocking(import_scan).await
 }
 
 #[tauri::command]
-pub async fn model_config_import_run(keys: Vec<String>) -> Result<ImportRunResult, String> {
+pub async fn model_config_import_run(keys: Vec<String>) -> Result<ImportRunResult, Message> {
     super::ipc_blocking(move || import_run(keys)).await
 }

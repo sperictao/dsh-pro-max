@@ -5,7 +5,7 @@
 //! 由 dsh 自己处理 precedence、writer lock 与热更新；dsh 未运行时才直接读写
 //! `~/.dsh/.credentials.yaml`，并复用 dsh 的 `<file>.lock` writer 协议。
 
-use crate::i18n::keyf;
+use crate::i18n::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use serde_yaml::{Mapping, Value as Yaml};
@@ -44,11 +44,11 @@ pub struct ModelCredentialInfo {
     pub writable: bool,
 }
 
-fn dsh_dir() -> Result<PathBuf, String> {
+fn dsh_dir() -> Result<PathBuf, Message> {
     Ok(crate::config::home_dir()?.join(".dsh"))
 }
 
-fn credentials_path() -> Result<PathBuf, String> {
+fn credentials_path() -> Result<PathBuf, Message> {
     Ok(dsh_dir()?.join(CREDENTIALS_FILENAME))
 }
 
@@ -69,12 +69,12 @@ fn valid_credential_ref(name: &str) -> bool {
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
-fn checked_ref(raw: &str) -> Result<String, String> {
+fn checked_ref(raw: &str) -> Result<String, Message> {
     let name = raw.trim();
     if valid_credential_ref(name) {
         Ok(name.to_string())
     } else {
-        Err("Credential reference must be a POSIX-style environment variable name".to_string())
+        Err(Message::key("Credential reference must be a POSIX-style environment variable name"))
     }
 }
 
@@ -86,13 +86,13 @@ fn mapping_key(name: &str) -> Yaml {
     Yaml::String(name.to_string())
 }
 
-fn document_from_text(text: &str, filename: &Path) -> Result<Mapping, String> {
+fn document_from_text(text: &str, filename: &Path) -> Result<Mapping, Message> {
     if text.trim().is_empty() {
         return Ok(Mapping::new());
     }
     let root: Yaml = serde_yaml::from_str(text).map_err(|error| {
         crate::logging::warn("解析 credentials 文件失败", &error.to_string());
-        keyf("Failed to parse the credentials file", &[])
+        Message::key("Failed to parse the credentials file")
     })?;
     let mut root = root
         .as_mapping()
@@ -104,13 +104,13 @@ fn document_from_text(text: &str, filename: &Path) -> Result<Mapping, String> {
         let mut refs = Mapping::new();
         for (key, value) in root.clone() {
             let Some(name) = key.as_str() else {
-                return Err("Credentials file uses an unsupported unversioned layout".to_string());
+                return Err(Message::key("Credentials file uses an unsupported unversioned layout"));
             };
             let Some(secret) = value.as_str() else {
-                return Err("Credentials file uses an unsupported unversioned layout".to_string());
+                return Err(Message::key("Credentials file uses an unsupported unversioned layout"));
             };
             if !valid_credential_ref(name) || secret.is_empty() {
-                return Err("Credentials file uses an unsupported unversioned layout".to_string());
+                return Err(Message::key("Credentials file uses an unsupported unversioned layout"));
             }
             refs.insert(Yaml::String(name.to_string()), Yaml::String(secret.to_string()));
         }
@@ -127,30 +127,37 @@ fn document_from_text(text: &str, filename: &Path) -> Result<Mapping, String> {
     let version = root
         .get(mapping_key("version"))
         .and_then(Yaml::as_i64)
-        .ok_or_else(|| "Credentials file is missing a numeric version".to_string())?;
+        .ok_or_else(|| Message::key("Credentials file is missing a numeric version"))?;
     if version != DOCUMENT_VERSION {
-        return Err(format!(
-            "Credentials file declares unsupported version {version}; expected {DOCUMENT_VERSION}"
+        return Err(Message::localized(
+            "Credentials file declares unsupported version {{version}}; expected {{expected}}",
+            &[
+                ("version", version.to_string()),
+                ("expected", DOCUMENT_VERSION.to_string()),
+            ],
         ));
     }
     for key in root.keys() {
         let Some(name) = key.as_str() else {
-            return Err("Credentials file contains a non-string top-level key".to_string());
+            return Err(Message::key("Credentials file contains a non-string top-level key"));
         };
         if !matches!(name, "version" | "refs" | "records") {
-            return Err(format!("Credentials file contains unknown top-level key \"{name}\""));
+            return Err(Message::localized(
+                "Credentials file contains unknown top-level key \"{{name}}\"",
+                &[("name", name.to_string())],
+            ));
         }
     }
     validate_refs(root.get(mapping_key("refs")))?;
     if let Some(records) = root.get(mapping_key("records")) {
         if !records.is_null() && records.as_mapping().is_none() {
-            return Err("Credentials file records section must be a mapping".to_string());
+            return Err(Message::key("Credentials file records section must be a mapping"));
         }
     }
     Ok(root)
 }
 
-fn validate_refs(value: Option<&Yaml>) -> Result<(), String> {
+fn validate_refs(value: Option<&Yaml>) -> Result<(), Message> {
     let Some(value) = value else {
         return Ok(());
     };
@@ -159,26 +166,35 @@ fn validate_refs(value: Option<&Yaml>) -> Result<(), String> {
     }
     let refs = value
         .as_mapping()
-        .ok_or_else(|| "Credentials file refs section must be a mapping".to_string())?;
+        .ok_or_else(|| Message::key("Credentials file refs section must be a mapping"))?;
     for (key, value) in refs {
         let name = key
             .as_str()
-            .ok_or_else(|| "Credential reference names must be strings".to_string())?;
+            .ok_or_else(|| Message::key("Credential reference names must be strings"))?;
         if !valid_credential_ref(name) {
-            return Err(format!("Credential reference \"{name}\" is invalid"));
+            return Err(Message::localized(
+                "Credential reference \"{{name}}\" is invalid",
+                &[("name", name.to_string())],
+            ));
         }
-        let secret = value
-            .as_str()
-            .ok_or_else(|| format!("Credential \"{name}\" must contain a string value"))?;
+        let secret = value.as_str().ok_or_else(|| {
+            Message::localized(
+                "Credential \"{{name}}\" must contain a string value",
+                &[("name", name.to_string())],
+            )
+        })?;
         if secret.is_empty() {
-            return Err(format!("Credential \"{name}\" is empty; remove it instead"));
+            return Err(Message::localized(
+                "Credential \"{{name}}\" is empty; remove it instead",
+                &[("name", name.to_string())],
+            ));
         }
     }
     Ok(())
 }
 
 #[cfg(unix)]
-fn assert_owner_only(path: &Path) -> Result<(), String> {
+fn assert_owner_only(path: &Path) -> Result<(), Message> {
     use std::os::unix::fs::PermissionsExt;
     let Ok(metadata) = fs::metadata(path) else {
         return Ok(());
@@ -187,32 +203,34 @@ fn assert_owner_only(path: &Path) -> Result<(), String> {
     if mode & 0o077 == 0 {
         Ok(())
     } else {
-        Err(format!(
-            "Credentials file {} is readable beyond its owner (mode {:o}); run chmod 600 before continuing",
-            path.display(),
-            mode
+        Err(Message::localized(
+            "Credentials file {{path}} is readable beyond its owner (mode {{mode}}); run chmod 600 before continuing",
+            &[
+                ("path", path.display().to_string()),
+                ("mode", format!("{mode:o}")),
+            ],
         ))
     }
 }
 
 #[cfg(not(unix))]
-fn assert_owner_only(_path: &Path) -> Result<(), String> {
+fn assert_owner_only(_path: &Path) -> Result<(), Message> {
     Ok(())
 }
 
-fn load_document(path: &Path) -> Result<Mapping, String> {
+fn load_document(path: &Path) -> Result<Mapping, Message> {
     if !path.exists() {
         return Ok(Mapping::new());
     }
     assert_owner_only(path)?;
     let text = fs::read_to_string(path).map_err(|error| {
         crate::logging::warn("读取 credentials 文件失败", &error.to_string());
-        keyf("Failed to read the credentials file", &[])
+        Message::key("Failed to read the credentials file")
     })?;
     document_from_text(&text, path)
 }
 
-fn file_ref_value(path: &Path, name: &str) -> Result<Option<String>, String> {
+fn file_ref_value(path: &Path, name: &str) -> Result<Option<String>, Message> {
     let root = load_document(path)?;
     Ok(root
         .get(mapping_key("refs"))
@@ -260,7 +278,7 @@ fn dotenv_value(path: &Path, name: &str) -> Option<String> {
     None
 }
 
-fn offline_describe_one(name: &str, path: &Path) -> Result<ModelCredentialInfo, String> {
+fn offline_describe_one(name: &str, path: &Path) -> Result<ModelCredentialInfo, Message> {
     if non_empty_process_env(name).is_some() {
         return Ok(ModelCredentialInfo {
             configured: true,
@@ -301,16 +319,16 @@ fn offline_describe_one(name: &str, path: &Path) -> Result<ModelCredentialInfo, 
 }
 
 #[cfg(unix)]
-fn private_create_dir_all(path: &Path) -> Result<(), String> {
+fn private_create_dir_all(path: &Path) -> Result<(), Message> {
     use std::os::unix::fs::DirBuilderExt;
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true).mode(0o700);
-    builder.create(path).map_err(|error| error.to_string())
+    builder.create(path).map_err(|error| Message::key(error.to_string()))
 }
 
 #[cfg(not(unix))]
-fn private_create_dir_all(path: &Path) -> Result<(), String> {
-    fs::create_dir_all(path).map_err(|error| error.to_string())
+fn private_create_dir_all(path: &Path) -> Result<(), Message> {
+    fs::create_dir_all(path).map_err(|error| Message::key(error.to_string()))
 }
 
 fn private_open_new(path: &Path) -> std::io::Result<fs::File> {
@@ -334,10 +352,10 @@ impl Drop for CredentialLock {
     }
 }
 
-fn acquire_writer_lock(path: &Path) -> Result<CredentialLock, String> {
+fn acquire_writer_lock(path: &Path) -> Result<CredentialLock, Message> {
     let parent = path
         .parent()
-        .ok_or_else(|| "Credentials file has no parent directory".to_string())?;
+        .ok_or_else(|| Message::key("Credentials file has no parent directory"))?;
     private_create_dir_all(parent)?;
     let lock_path = PathBuf::from(format!("{}.lock", path.display()));
     let deadline = Instant::now() + Duration::from_millis(LOCK_WAIT_MS);
@@ -346,7 +364,7 @@ fn acquire_writer_lock(path: &Path) -> Result<CredentialLock, String> {
         match private_open_new(&lock_path) {
             Ok(mut file) => {
                 file.write_all(format!("{}\n", std::process::id()).as_bytes())
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|error| Message::key(error.to_string()))?;
                 let _ = file.sync_all();
                 return Ok(CredentialLock { path: lock_path });
             }
@@ -356,15 +374,15 @@ fn acquire_writer_lock(path: &Path) -> Result<CredentialLock, String> {
                         && lock_path.exists()) =>
             {
                 if Instant::now() >= deadline {
-                    return Err(format!(
-                        "Timed out waiting for the credentials writer lock at {}",
-                        lock_path.display()
+                    return Err(Message::localized(
+                        "Timed out waiting for the credentials writer lock at {{path}}",
+                        &[("path", lock_path.display().to_string())],
                     ));
                 }
                 thread::sleep(Duration::from_millis(delay));
                 delay = (delay * 2).min(LOCK_RETRY_MAX_MS);
             }
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(Message::key(error.to_string())),
         }
     }
 }
@@ -384,7 +402,7 @@ fn temp_sibling(path: &Path, attempt: u32) -> PathBuf {
 }
 
 #[cfg(windows)]
-fn replace_file(temp: &Path, target: &Path) -> Result<(), String> {
+fn replace_file(temp: &Path, target: &Path) -> Result<(), Message> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::Storage::FileSystem::{
@@ -398,19 +416,19 @@ fn replace_file(temp: &Path, target: &Path) -> Result<(), String> {
             PCWSTR(to.as_ptr()),
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| Message::key(error.to_string()))
     }
 }
 
 #[cfg(not(windows))]
-fn replace_file(temp: &Path, target: &Path) -> Result<(), String> {
-    fs::rename(temp, target).map_err(|error| error.to_string())
+fn replace_file(temp: &Path, target: &Path) -> Result<(), Message> {
+    fs::rename(temp, target).map_err(|error| Message::key(error.to_string()))
 }
 
-fn write_private_atomic(path: &Path, text: &str) -> Result<(), String> {
+fn write_private_atomic(path: &Path, text: &str) -> Result<(), Message> {
     let parent = path
         .parent()
-        .ok_or_else(|| "Credentials file has no parent directory".to_string())?;
+        .ok_or_else(|| Message::key("Credentials file has no parent directory"))?;
     private_create_dir_all(parent)?;
     let mut last_error = None;
     for attempt in 0..8 {
@@ -419,8 +437,9 @@ fn write_private_atomic(path: &Path, text: &str) -> Result<(), String> {
             Ok(mut file) => {
                 let result = (|| {
                     file.write_all(text.as_bytes())
-                        .map_err(|error| error.to_string())?;
-                    file.sync_all().map_err(|error| error.to_string())?;
+                        .map_err(|error| Message::key(error.to_string()))?;
+                    file.sync_all()
+                        .map_err(|error| Message::key(error.to_string()))?;
                     drop(file);
                     replace_file(&temp, path)
                 })();
@@ -432,20 +451,23 @@ fn write_private_atomic(path: &Path, text: &str) -> Result<(), String> {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 last_error = Some(error.to_string());
             }
-            Err(error) => return Err(error.to_string()),
+            Err(error) => return Err(Message::key(error.to_string())),
         }
     }
-    Err(last_error.unwrap_or_else(|| "Cannot allocate an atomic credentials temp file".to_string()))
+    Err(Message::key(
+        last_error.unwrap_or_else(|| "Cannot allocate an atomic credentials temp file".to_string()),
+    ))
 }
 
-fn mutate_credential_ref_at(path: &Path, name: &str, value: Option<&str>) -> Result<(), String> {
+fn mutate_credential_ref_at(path: &Path, name: &str, value: Option<&str>) -> Result<(), Message> {
     if non_empty_process_env(name).is_some() {
-        return Err(format!(
-            "Credential {name} is supplied by the launch environment and is read-only; update the environment and restart DSH"
+        return Err(Message::localized(
+            "Credential {{name}} is supplied by the launch environment and is read-only; update the environment and restart DSH",
+            &[("name", name.to_string())],
         ));
     }
     if value == Some("") {
-        return Err("Credential value cannot be empty; remove the credential instead".to_string());
+        return Err(Message::key("Credential value cannot be empty; remove the credential instead"));
     }
 
     let _lock = acquire_writer_lock(path)?;
@@ -475,16 +497,16 @@ fn mutate_credential_ref_at(path: &Path, name: &str, value: Option<&str>) -> Res
     }
     let text = serde_yaml::to_string(&Yaml::Mapping(root)).map_err(|error| {
         crate::logging::error("序列化 credentials 文件失败", &error.to_string());
-        keyf("Failed to serialize the credentials file", &[])
+        Message::key("Failed to serialize the credentials file")
     })?;
     write_private_atomic(path, &text)
 }
 
-fn rpc_call(method: &str, args: serde_json::Value) -> Result<serde_json::Value, String> {
+fn rpc_call(method: &str, args: serde_json::Value) -> Result<serde_json::Value, Message> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(RPC_TIMEOUT_SECS))
         .build()
-        .map_err(|_| keyf("Cannot initialize the HTTP client", &[]))?;
+        .map_err(|_| Message::key("Cannot initialize the HTTP client"))?;
     let url = format!("http://127.0.0.1:{WEB_PORT}/api/{method}");
     let response = client
         .post(&url)
@@ -495,19 +517,19 @@ fn rpc_call(method: &str, args: serde_json::Value) -> Result<serde_json::Value, 
             "payload": { "args": args }
         }))
         .send()
-        .map_err(|_| "Cannot reach the running DSH credential service".to_string())?;
+        .map_err(|_| Message::key("Cannot reach the running DSH credential service"))?;
     if !response.status().is_success() {
-        return Err(format!(
-            "Running DSH rejected the credential request (HTTP {})",
-            response.status().as_u16()
+        return Err(Message::localized(
+            "Running DSH rejected the credential request (HTTP {{status}})",
+            &[("status", response.status().as_u16().to_string())],
         ));
     }
     let body: serde_json::Value = response
         .json()
-        .map_err(|_| "Running DSH returned an invalid credential response".to_string())?;
+        .map_err(|_| Message::key("Running DSH returned an invalid credential response"))?;
     let result = body
         .get("result")
-        .ok_or_else(|| "Running DSH returned an invalid credential response".to_string())?;
+        .ok_or_else(|| Message::key("Running DSH returned an invalid credential response"))?;
     if result.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
         return Ok(result
             .get("value")
@@ -518,24 +540,25 @@ fn rpc_call(method: &str, args: serde_json::Value) -> Result<serde_json::Value, 
         .pointer("/error/message")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("Running DSH rejected the credential request");
-    Err(message.to_string())
+    // 文本来自运行中的 DSH（另一个进程的错误原文），无法本地化，整串当 key
+    Err(message.into())
 }
 
-fn rpc_describe(names: &[String]) -> Result<BTreeMap<String, ModelCredentialInfo>, String> {
+fn rpc_describe(names: &[String]) -> Result<BTreeMap<String, ModelCredentialInfo>, Message> {
     let value = rpc_call("credentials/describe", json!({ "refs": names }))?;
     serde_json::from_value(value)
-        .map_err(|_| "Running DSH returned an invalid credential description".to_string())
+        .map_err(|_| Message::key("Running DSH returned an invalid credential description"))
 }
 
-fn rpc_set(name: &str, value: &str) -> Result<(), String> {
+fn rpc_set(name: &str, value: &str) -> Result<(), Message> {
     rpc_call("credentials/set", json!({ "ref": name, "value": value })).map(|_| ())
 }
 
-fn rpc_unset(name: &str) -> Result<(), String> {
+fn rpc_unset(name: &str) -> Result<(), Message> {
     rpc_call("credentials/unset", json!({ "ref": name })).map(|_| ())
 }
 
-fn describe_many(names: Vec<String>) -> Result<BTreeMap<String, ModelCredentialInfo>, String> {
+fn describe_many(names: Vec<String>) -> Result<BTreeMap<String, ModelCredentialInfo>, Message> {
     let names = names
         .into_iter()
         .map(|name| checked_ref(&name))
@@ -553,29 +576,29 @@ fn describe_many(names: Vec<String>) -> Result<BTreeMap<String, ModelCredentialI
         .collect()
 }
 
-fn set_one(name: String, value: String) -> Result<ModelCredentialInfo, String> {
+fn set_one(name: String, value: String) -> Result<ModelCredentialInfo, Message> {
     let name = checked_ref(&name)?;
     if value.is_empty() {
-        return Err("Credential value cannot be empty".to_string());
+        return Err(Message::key("Credential value cannot be empty"));
     }
     if port_listening(WEB_PORT) {
         rpc_set(&name, &value)?;
         return rpc_describe(std::slice::from_ref(&name))?
             .remove(&name)
-            .ok_or_else(|| "Running DSH did not describe the stored credential".to_string());
+            .ok_or_else(|| Message::key("Running DSH did not describe the stored credential"));
     }
     let path = credentials_path()?;
     mutate_credential_ref_at(&path, &name, Some(&value))?;
     offline_describe_one(&name, &path)
 }
 
-fn unset_one(name: String) -> Result<ModelCredentialInfo, String> {
+fn unset_one(name: String) -> Result<ModelCredentialInfo, Message> {
     let name = checked_ref(&name)?;
     if port_listening(WEB_PORT) {
         rpc_unset(&name)?;
         return rpc_describe(std::slice::from_ref(&name))?
             .remove(&name)
-            .ok_or_else(|| "Running DSH did not describe the removed credential".to_string());
+            .ok_or_else(|| Message::key("Running DSH did not describe the removed credential"));
     }
     let path = credentials_path()?;
     mutate_credential_ref_at(&path, &name, None)?;
@@ -585,7 +608,7 @@ fn unset_one(name: String) -> Result<ModelCredentialInfo, String> {
 #[tauri::command]
 pub async fn model_credential_describe(
     names: Vec<String>,
-) -> Result<BTreeMap<String, ModelCredentialInfo>, String> {
+) -> Result<BTreeMap<String, ModelCredentialInfo>, Message> {
     crate::dsh::ipc_blocking(move || describe_many(names)).await
 }
 
@@ -593,12 +616,12 @@ pub async fn model_credential_describe(
 pub async fn model_credential_set(
     name: String,
     value: String,
-) -> Result<ModelCredentialInfo, String> {
+) -> Result<ModelCredentialInfo, Message> {
     crate::dsh::ipc_blocking(move || set_one(name, value)).await
 }
 
 #[tauri::command]
-pub async fn model_credential_unset(name: String) -> Result<ModelCredentialInfo, String> {
+pub async fn model_credential_unset(name: String) -> Result<ModelCredentialInfo, Message> {
     crate::dsh::ipc_blocking(move || unset_one(name)).await
 }
 

@@ -8,6 +8,7 @@ import * as cmd from "@/shared/commands";
 import { SelectCard } from "@/shared/components/SelectCard";
 import { BTN, INPUT_MONO, TOGGLE } from "@/shared/lib/ui";
 import { SettingsCard, SettingField, SettingRow } from "./SettingRow";
+import { renderMessage } from "@/shared/i18n/error";
 import { isValidCatalogUrl } from "./validation";
 
 const LANG_OPTIONS = [
@@ -30,7 +31,7 @@ export function GeneralSection() {
     try {
       await openUrl(await cmd.getLogDir());
     } catch (e) {
-      toast(String(e), "error");
+      toast(renderMessage(e), "error");
     }
   };
 

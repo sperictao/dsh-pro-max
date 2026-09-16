@@ -1,22 +1,11 @@
-// Rust 诊断载荷的本地化解析点回归。
+// Rust 消息（模板 key + 参数）的解析点回归。
 //
-// 这些用例锁定的是「词典里有译文、渲染点却从不查表」这一类缺陷：时间轴的
-// detail / problem / solution 由 Rust 产出，固定文案的行必须能整行命中词典
-// 翻成中文，而带技术细节（已插值）的行必须原样显示——直接 t() 会把其中的
-// `{{...}}` 当插值模板吃掉，把原始报错变成缺值的句子。
+// 锁定的语义：命中词典用译文并按参数插值；miss 时用同一组参数就地填出英文
+// 原文（绝不能把 {{name}} 露给用户）；嵌套参数继续走词典；纯字符串载荷（技术
+// 文案 / 尚未迁移的旧契约）原样显示，且其中的 `{{...}}` 不被当成插值模板吃掉。
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { i18n } from "./index";
-import { tDiagnostic, tErr } from "./error";
-
-// 词典里确有其译文的两条固定文案（Rust 侧同文产出）
-const PNPM_MISSING =
-  'pnpm was not found. Install it once ("corepack enable pnpm" or "npm install -g pnpm") and restart dsh, then retry.';
-const STARTED = "dsh web is running on 127.0.0.1:3899";
-// 含已插值细节的行：构造不出词典 key，必须原样保留
-const DRIFT_LINE =
-  "Incompatible plugin dsh-rewind-plugin: @deepseek-ai/dsh-session does not export decodeStorageRecord; the plugin will not load, and dsh aborts startup if its entry is required";
-// 含 `{{` 的原始报错：不得被当成插值模板
-const BRACE_BEARING = 'Failed to parse {"refs":{{}}}';
+import { renderMessage, tErr } from "./error";
 
 beforeAll(async () => {
   await i18n.changeLanguage("zh-CN");
@@ -26,29 +15,53 @@ afterAll(async () => {
   await i18n.changeLanguage("en");
 });
 
-describe("tDiagnostic", () => {
-  it("fixed-text diagnostics resolve to the dictionary translation", () => {
-    expect(tDiagnostic(PNPM_MISSING)).toBe(
-      '找不到 pnpm。请安装一次（"corepack enable pnpm" 或 "npm install -g pnpm"）并重启 dsh，然后重试。',
-    );
-    expect(tDiagnostic(STARTED)).toBe("dsh Web 已运行在 127.0.0.1:3899");
+describe("renderMessage", () => {
+  it("resolves a dictionary template and interpolates its args", () => {
+    expect(
+      renderMessage({ key: "Failed to read config file: {{error}}", args: { error: "ENOENT" } }),
+    ).toBe("读取配置文件失败: ENOENT");
+    expect(
+      renderMessage({
+        key: "Installed dsh version {{actual}}, but this Launcher requires {{expected}}",
+        args: { actual: "0.1.6", expected: "0.1.6-alpha.1" },
+      }),
+    ).toBe("已安装 dsh 0.1.6，但当前 Launcher 需要 0.1.6-alpha.1");
   });
 
-  it("localizes per line so appended disclosure lines keep their raw text", () => {
-    expect(tDiagnostic(`${STARTED}\n${DRIFT_LINE}`)).toBe(
-      `dsh Web 已运行在 127.0.0.1:3899\n${DRIFT_LINE}`,
+  it("falls back to filled-in English when the dictionary has no entry", () => {
+    // 词典 miss 也必须填参：露 {{name}} 比不翻译更糟
+    expect(
+      renderMessage({ key: "Vendor probe failed: {{detail}}", args: { detail: "EIO" } }),
+    ).toBe("Vendor probe failed: EIO");
+  });
+
+  it("renders nested messages through the dictionary too", () => {
+    // 外层无译文，内层是词典里有的固定文案 → 内层仍要翻成中文
+    expect(
+      renderMessage({
+        key: "Rollback: {{reason}}",
+        args: { reason: { key: "dsh web is running on 127.0.0.1:3899", args: {} } },
+      }),
+    ).toBe("Rollback: dsh Web 已运行在 127.0.0.1:3899");
+  });
+
+  it("leaves plain strings untouched and never interpolates them", () => {
+    // 技术性文案整串即 key：词典 miss → 原样（含 {{...}} 的技术片段）
+    expect(renderMessage('Failed to parse {"refs":{{}}}')).toBe('Failed to parse {"refs":{{}}}');
+    expect(renderMessage("dsh web is running on 127.0.0.1:3899")).toBe(
+      "dsh Web 已运行在 127.0.0.1:3899",
     );
   });
 
-  it("leaves unknown text byte-identical instead of interpolating it away", () => {
-    expect(tDiagnostic(DRIFT_LINE)).toBe(DRIFT_LINE);
-    expect(tDiagnostic(BRACE_BEARING)).toBe(BRACE_BEARING);
+  it("accepts the legacy string shape and tolerates junk", () => {
+    expect(renderMessage(null)).toBe("");
+    expect(renderMessage(undefined)).toBe("");
   });
 });
 
 describe("tErr", () => {
-  it("translates dictionary keys and passes unknown text through untouched", () => {
-    expect(tErr(PNPM_MISSING)).toContain("找不到 pnpm");
-    expect(tErr(BRACE_BEARING)).toBe(BRACE_BEARING);
+  it("renders both the Message shape and bare strings", () => {
+    expect(tErr({ key: "Repair failed: {{error}}", args: { error: "denied" } })).toContain("denied");
+    expect(tErr("Untranslated technical text")).toBe("Untranslated technical text");
   });
 });

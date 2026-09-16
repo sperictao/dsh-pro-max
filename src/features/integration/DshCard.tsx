@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
-import { tDiagnostic, tErr } from "@/shared/i18n/error";
+import { renderMessage, tErr } from "@/shared/i18n/error";
 import * as cmd from "@/shared/commands";
 import { BTN_DANGER, BTN_OUTLINE, BTN_PRIMARY, BTN_SM, PANEL, TOGGLE } from "@/shared/lib/ui";
 import type { DshAccessMode, DshStepEvent } from "@/shared/types";
@@ -66,7 +66,7 @@ function StartLogDisclosure() {
     try {
       setLog(await cmd.dshWebLog());
     } catch (e) {
-      setLoadError(String(e));
+      setLoadError(renderMessage(e));
     }
     setOpen(true);
   };
@@ -123,7 +123,7 @@ function DisableRetryButton({ plugin, disabled }: { plugin: string; disabled: bo
             await cmd.marketSetPluginEnabled(plugin, false);
             toast(t("Plugin {{plugin}} disabled", { plugin }), "success");
           } catch (e) {
-            toast(t("Failed to disable {{plugin}}: {{error}}", { plugin, error: tErr(String(e)) }), "error");
+            toast(t("Failed to disable {{plugin}}: {{error}}", { plugin, error: tErr(e) }), "error");
             return;
           } finally {
             setDisabling(false);
@@ -199,7 +199,7 @@ export function DshCard() {
         setDshTimeline(s.readyTimeline);
       }
     } catch (e) {
-      toast(t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
+      toast(t("dsh detection failed: {{error}}", { error: tErr(e) }), "error");
     }
   }, [hasRunSetup, isRemote, setDshTimeline, setStatus, t, toast]);
 
@@ -224,7 +224,7 @@ export function DshCard() {
       setStatus(s);
       setDshTimeline(s.readyTimeline);
     } catch (e) {
-      toast(t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
+      toast(t("dsh detection failed: {{error}}", { error: tErr(e) }), "error");
     } finally {
       setRecheckBusy(false);
     }
@@ -274,7 +274,7 @@ export function DshCard() {
       }
       toast(t(statusTextKey(s)), "error");
     } catch (e) {
-      toast(t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
+      toast(t("dsh detection failed: {{error}}", { error: tErr(e) }), "error");
     } finally {
       setRecheckBusy(false);
     }
@@ -287,7 +287,7 @@ export function DshCard() {
       const version = await cmd.dshUpdate();
       toast(t("dsh integration repaired for {{version}}", { version }), "success");
     } catch (e) {
-      toast(t("dsh integration repair failed: {{error}}", { error: tErr(String(e)) }), "error");
+      toast(t("dsh integration repair failed: {{error}}", { error: tErr(e) }), "error");
     } finally {
       setStartBusy(false);
       // 更新流程不走 dsh-step 事件流：回到状态驱动时间轴
@@ -297,7 +297,7 @@ export function DshCard() {
         setStatus(s);
         setDshTimeline(s.readyTimeline);
       } catch (e) {
-        toast(t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
+        toast(t("dsh detection failed: {{error}}", { error: tErr(e) }), "error");
       }
     }
   };
@@ -311,7 +311,7 @@ export function DshCard() {
       await cmd.dshRemovePlugins();
       toast(t("Authorization plugins removed"), "success");
     } catch (e) {
-      toast(t("Failed to remove authorization plugins: {{error}}", { error: tErr(String(e)) }), "error");
+      toast(t("Failed to remove authorization plugins: {{error}}", { error: tErr(e) }), "error");
     } finally {
       setStartBusy(false);
       setHasRunSetup(false);
@@ -320,7 +320,7 @@ export function DshCard() {
         setStatus(s);
         setDshTimeline(s.readyTimeline);
       } catch (e) {
-        toast(t("dsh detection failed: {{error}}", { error: tErr(String(e)) }), "error");
+        toast(t("dsh detection failed: {{error}}", { error: tErr(e) }), "error");
       }
     }
   };
@@ -525,11 +525,16 @@ export function DshCard() {
                 </div>
                 <div className="timeline-content">
                   <div className="timeline-title">{t(stepTitleKey(step))}</div>
-                  {step.detail && <div className="timeline-detail">{tDiagnostic(step.detail)}</div>}
+                  {/* detail 是行列表（首行基线 + 追加披露行），逐行独立本地化 */}
+                  {step.detail.map((line, lineIndex) => (
+                    <div className="timeline-detail" key={lineIndex}>
+                      {renderMessage(line)}
+                    </div>
+                  ))}
                   {step.state === "failed" && (step.problem || step.solution) && (
                     <div className="timeline-issue">
-                      {step.problem && <div className="timeline-problem">{tDiagnostic(step.problem)}</div>}
-                      {step.solution && <div className="timeline-solution">{tDiagnostic(step.solution)}</div>}
+                      {step.problem && <div className="timeline-problem">{renderMessage(step.problem)}</div>}
+                      {step.solution && <div className="timeline-solution">{renderMessage(step.solution)}</div>}
                       {(step.id === "start" || step.id === "ready") && <StartLogDisclosure />}
                       {step.actionPlugin && (
                         <DisableRetryButton plugin={step.actionPlugin} disabled={busy} />

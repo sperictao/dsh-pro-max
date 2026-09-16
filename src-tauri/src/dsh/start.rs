@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use std::time::Duration;
 
-use crate::i18n::keyf;
+use crate::i18n::Message;
 
 // ============ 一键启动 dsh（纯本地链路） ============
 
@@ -181,7 +181,7 @@ fn verify_local_ready(
     steps: [&'static str; 4],
     pid: u32,
     log_offset: usize,
-) -> Result<String, String> {
+) -> Result<String, Message> {
     let ctx = StepCtx {
         app,
         index: 3,
@@ -218,13 +218,13 @@ fn verify_local_ready(
 /// 真实就绪验证（HTTP 应答 + 进程存活），boot 后崩溃会以失败节点带上日志里
 /// 的具体报错
 #[tauri::command]
-pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, String> {
+pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, Message> {
     // 全程阻塞 I/O（npm 安装、进程拉起、最长 60s 端口等待 + 10s token 轮询）：
     // 走统一 adapter，事件经 move 进去的 AppHandle 照常 emit
     super::ipc_blocking(move || dsh_start_web_once(&app)).await
 }
 
-fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
+fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, Message> {
     let steps = LOCAL_STEPS;
     let remaining_after = |cur: usize| -> Vec<(&'static str, usize)> {
         steps
@@ -264,26 +264,23 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
         match decide_pinned_dsh(current.as_deref()) {
             PinnedDshDecision::KeepCurrent => {
                 // 显示实际版本而非锁定版本（同 dsh_setup 的修复）
-                ctx.done(&keyf(
-                    "Compatible dsh is installed: {version}",
+                ctx.done(Message::localized("Compatible dsh is installed: {{version}}",
                     &[("version", current.clone().unwrap_or_default())],
                 ));
             }
             PinnedDshDecision::KeepCrossLine => {
                 // 跨线但高于下限：用户装过比验证栈更新的版本，保留不降级；
                 // 本地访问走 dsh 原生 token 不依赖授权插件，如实披露插件风险即可
-                ctx.done(&keyf(
-                    "{version} is newer than the verified stack; authorization plugins may be incompatible",
+                ctx.done(Message::localized("{{version}} is newer than the verified stack; authorization plugins may be incompatible",
                     &[("version", current.clone().unwrap_or_default())],
                 ));
             }
             PinnedDshDecision::InstallPinned => {
-                ctx.running(&keyf(
-                    "Installing the pinned dsh ({version})…",
+                ctx.running(Message::localized("Installing the pinned dsh ({{version}})…",
                     &[("version", SUPPORTED_DSH_VERSION.to_string())],
                 ));
                 match install_supported_dsh() {
-                    Ok(version) => ctx.done(&keyf("Installed {version}", &[("version", version)])),
+                    Ok(version) => ctx.done(Message::localized("Installed {{version}}", &[("version", version)])),
                     Err(error) => {
                         return ctx.fail_err(
                             &error,
@@ -325,7 +322,7 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
                 Ok(pid) => {
                     let (detail, action) =
                         done_detail_with_preflight("dsh web is running on 127.0.0.1:3899");
-                    ctx.done_noting(&detail, action);
+                    ctx.done_noting(detail, action);
                     pid
                 }
                 Err(error) => {
@@ -362,6 +359,6 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, String> {
         return ctx.fail_err_diagnosis(&failure, &remaining_after(start_idx));
     }
     let (detail, action) = done_detail_with_preflight("dsh web is running on 127.0.0.1:3899");
-    ctx.done_noting(&detail, action);
+    ctx.done_noting(detail, action);
     verify_local_ready(app, steps, pid, log_offset)
 }

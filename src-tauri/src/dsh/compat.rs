@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::i18n::keyf;
+use crate::i18n::Message;
 
 /// 一条漂移：插件从宿主包具名导入的若干导出在宿主实际产物中不存在
 #[derive(Debug, Clone, PartialEq)]
@@ -255,15 +255,14 @@ pub(crate) fn preflight_export_drift() -> Vec<ExportDrift> {
 
 /// 漂移披露行（追加在 start 步骤 done 文案后，风格同诊断 problem 的多行）；
 /// 超过 3 条折叠为计数，防长列表淹没节点
-pub(crate) fn preflight_warning_lines(drifts: &[ExportDrift]) -> String {
-    let mut lines: Vec<String> = drifts
+pub(crate) fn preflight_warning_lines(drifts: &[ExportDrift]) -> Vec<Message> {
+    let mut lines: Vec<Message> = drifts
         .iter()
         .take(3)
         .map(|d| {
             let mut missing = d.missing.clone();
             missing.sort();
-            keyf(
-                "Incompatible plugin {plugin}: {dependency} does not export {names}; the plugin will not load, and dsh aborts startup if its entry is required",
+            Message::localized("Incompatible plugin {{plugin}}: {{dependency}} does not export {{names}}; the plugin will not load, and dsh aborts startup if its entry is required",
                 &[
                     ("plugin", d.plugin.clone()),
                     ("dependency", d.dependency.clone()),
@@ -273,31 +272,32 @@ pub(crate) fn preflight_warning_lines(drifts: &[ExportDrift]) -> String {
         })
         .collect();
     if drifts.len() > 3 {
-        lines.push(keyf(
-            "… and {count} more",
+        lines.push(Message::localized("… and {{count}} more",
             &[("count", (drifts.len() - 3).to_string())],
         ));
     }
-    lines.join("\n")
+    lines
 }
 
-/// start 步骤的 done 文案组装：基线文案追加漂移披露行，并给出可一键禁用
-/// 的第三方插件（受管授权插件不给按钮——它的既定恢复路径是 Repair dsh
-/// stack，与启动失败诊断同一规则）。无漂移时原样返回、不带动作
-pub(crate) fn done_detail_with_preflight(base: &str) -> (String, Option<String>) {
+/// start 步骤的 done 明细组装：基线文案在前，漂移披露行随后逐行追加，并给出
+/// 可一键禁用的第三方插件（受管授权插件不给按钮——它的既定恢复路径是 Repair
+/// dsh stack，与启动失败诊断同一规则）。无漂移时只有基线行、不带动作。
+///
+/// 返回行数组而非拼接后的整句：`step.detail` 是 `Vec<Message>`，每行各自过
+/// 词典；先拼成成品句子就再也命不中词典里的模板 key
+pub(crate) fn done_detail_with_preflight(base: &str) -> (Vec<Message>, Option<String>) {
     let drifts = preflight_export_drift();
     if drifts.is_empty() {
-        return (base.to_string(), None);
+        return (vec![Message::key(base)], None);
     }
     let action = drifts
         .iter()
         .map(|d| d.plugin.as_str())
         .find(|p| *p != AUTH_PLUGIN_PACKAGE && *p != CONNECTION_PLUGIN_PACKAGE)
         .map(str::to_string);
-    (
-        format!("{base}\n{}", preflight_warning_lines(&drifts)),
-        action,
-    )
+    let mut detail = vec![Message::key(base)];
+    detail.extend(preflight_warning_lines(&drifts));
+    (detail, action)
 }
 
 #[cfg(test)]

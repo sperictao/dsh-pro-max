@@ -4,7 +4,7 @@
 //! `/models` HTTP 探测与最小推理测试。凭据值只在 Rust 内解析或作为一次性
 //! write-only 请求参数进入，绝不从 IPC 返回前端。
 
-use crate::i18n::keyf;
+use crate::i18n::Message;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -37,7 +37,7 @@ struct ProviderModelsCacheFile {
     entries: BTreeMap<String, ProviderModelsCacheEntry>,
 }
 
-fn provider_models_cache_path() -> Result<PathBuf, String> {
+fn provider_models_cache_path() -> Result<PathBuf, Message> {
     Ok(crate::config::home_dir()?
         .join(".dsh-pro-max")
         .join("cache")
@@ -88,13 +88,13 @@ fn load_provider_models_cache() -> ProviderModelsCacheFile {
     }
 }
 
-fn save_provider_models_cache(cache: &ProviderModelsCacheFile) -> Result<(), String> {
+fn save_provider_models_cache(cache: &ProviderModelsCacheFile) -> Result<(), Message> {
     let path = provider_models_cache_path()?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        fs::create_dir_all(parent).map_err(|error| Message::key(error.to_string()))?;
     }
-    let raw = serde_json::to_string_pretty(cache).map_err(|error| error.to_string())?;
-    fs::write(path, raw).map_err(|error| error.to_string())
+    let raw = serde_json::to_string_pretty(cache).map_err(|error| Message::key(error.to_string()))?;
+    fs::write(path, raw).map_err(|error| Message::key(error.to_string()))
 }
 
 fn cached_provider_models(
@@ -135,7 +135,7 @@ fn remember_provider_models(
         ProviderModelsCacheEntry { models: models.to_vec(), fetched_at },
     );
     if let Err(error) = save_provider_models_cache(&cache) {
-        crate::logging::warn("写入 Provider 模型缓存失败", &error);
+        crate::logging::warn("写入 Provider 模型缓存失败", &error.to_english());
     }
 }
 
@@ -143,25 +143,22 @@ fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn request_api_key(api_key: Option<&str>, api_key_env: Option<&str>) -> Result<Option<String>, String> {
+fn request_api_key(api_key: Option<&str>, api_key_env: Option<&str>) -> Result<Option<String>, Message> {
     if let Some(value) = non_empty(api_key) {
         if !value.bytes().all(|byte| (0x21..=0x7e).contains(&byte)) {
-            return Err(keyf("API key contains invalid characters", &[]));
+            return Err(Message::key("API key contains invalid characters"));
         }
         return Ok(Some(value.to_string()));
     }
     let Some(reference) = non_empty(api_key_env) else { return Ok(None) };
     let value = crate::model_credential_resolver::resolve(reference)?;
-    value.map(Some).ok_or_else(|| keyf("API key is not configured", &[]))
+    value.map(Some).ok_or_else(|| Message::key("API key is not configured"))
 }
 
-fn remote_models_url(base_url: &str, api: Option<&str>) -> Result<String, String> {
+fn remote_models_url(base_url: &str, api: Option<&str>) -> Result<String, Message> {
     let base = base_url.trim().trim_end_matches('/');
     if base.is_empty() {
-        return Err(keyf(
-            "Provider base URL is required to fetch models",
-            &[],
-        ));
+        return Err(Message::key("Provider base URL is required to fetch models"));
     }
     if api == Some("anthropic-messages") {
         Ok(format!("{base}/v1/models"))
@@ -217,7 +214,7 @@ fn fetch_remote_models(
     api_key_env: Option<&str>,
     api_key: Option<&str>,
     headers: Option<&BTreeMap<String, String>>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, Message> {
     // Transient write-only key wins for an unsaved draft; otherwise resolve the stored
     // reference using the same precedence as DSH credentials-local.
     let key = request_api_key(api_key, api_key_env)?;
@@ -229,7 +226,7 @@ fn fetch_remote_models(
         .build()
         .map_err(|e| {
             crate::logging::error("HTTP client 初始化失败", &e.to_string());
-            keyf("Cannot initialize the HTTP client", &[])
+            Message::key("Cannot initialize the HTTP client")
         })?;
 
     let mut request = client.get(&url);
@@ -248,29 +245,26 @@ fn fetch_remote_models(
 
     let response = request.send().map_err(|e| {
         crate::logging::error("拉取模型列表失败", &format!("{url}: {e}"));
-        keyf("Failed to reach the provider models endpoint", &[])
+        Message::key("Failed to reach the provider models endpoint")
     })?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
         crate::logging::warn("上游模型列表请求失败", &format!("HTTP {status}: {url}"));
-        return Err(keyf(
-            "The provider models endpoint returned an HTTP error",
-            &[],
-        ));
+        return Err(Message::key("The provider models endpoint returned an HTTP error"));
     }
 
     let text = response
         .text()
-        .map_err(|_| keyf("Failed to read the models response", &[]))?;
+        .map_err(|_| Message::key("Failed to read the models response"))?;
     Ok(parse_remote_models(&text))
 }
 
 /// 按 wire 协议拼真实推理端点。连接测试刻意不依赖 /models：一些兼容服务
 /// 可以正常推理但没有模型列表接口。
-fn provider_inference_url(base_url: &str, api: &str) -> Result<String, String> {
+fn provider_inference_url(base_url: &str, api: &str) -> Result<String, Message> {
     let base = base_url.trim().trim_end_matches('/');
     if base.is_empty() {
-        return Err(keyf("Provider base URL is required to test the connection", &[]));
+        return Err(Message::key("Provider base URL is required to test the connection"));
     }
     match api {
         "openai-completions" => Ok(format!("{base}/chat/completions")),
@@ -282,16 +276,16 @@ fn provider_inference_url(base_url: &str, api: &str) -> Result<String, String> {
                 Ok(format!("{base}/v1/messages"))
             }
         }
-        _ => Err(keyf("Provider wire protocol is required to test the connection", &[])),
+        _ => Err(Message::key("Provider wire protocol is required to test the connection")),
     }
 }
 
 /// 最小真实请求：只要求模型返回最多 16 个 token，既验证模型路由/认证，又避免
 /// 把 Test Connection 变成一次正常对话。
-fn provider_test_body(api: &str, model: &str) -> Result<serde_json::Value, String> {
+fn provider_test_body(api: &str, model: &str) -> Result<serde_json::Value, Message> {
     let model = model.trim();
     if model.is_empty() {
-        return Err(keyf("Provider model is required to test the connection", &[]));
+        return Err(Message::key("Provider model is required to test the connection"));
     }
     match api {
         "openai-completions" => Ok(serde_json::json!({
@@ -309,7 +303,7 @@ fn provider_test_body(api: &str, model: &str) -> Result<serde_json::Value, Strin
             "max_tokens": 16,
             "messages": [{ "role": "user", "content": "Reply OK." }]
         })),
-        _ => Err(keyf("Provider wire protocol is required to test the connection", &[])),
+        _ => Err(Message::key("Provider wire protocol is required to test the connection")),
     }
 }
 
@@ -320,7 +314,7 @@ fn test_provider_connection(
     api_key: Option<&str>,
     headers: Option<&BTreeMap<String, String>>,
     model: &str,
-) -> Result<(), String> {
+) -> Result<(), Message> {
     let key = request_api_key(api_key, api_key_env)?;
     let url = provider_inference_url(base_url, api)?;
     let body = provider_test_body(api, model)?;
@@ -330,7 +324,7 @@ fn test_provider_connection(
         .build()
         .map_err(|e| {
             crate::logging::error("HTTP client 初始化失败", &e.to_string());
-            keyf("Cannot initialize the HTTP client", &[])
+            Message::key("Cannot initialize the HTTP client")
         })?;
 
     let mut request = client.post(&url);
@@ -346,7 +340,7 @@ fn test_provider_connection(
 
     let response = request.send().map_err(|e| {
         crate::logging::error("模型服务连接测试失败", &format!("{url}: {e}"));
-        keyf("Failed to reach the provider inference endpoint", &[])
+        Message::key("Failed to reach the provider inference endpoint")
     })?;
     if response.status().is_success() {
         return Ok(());
@@ -354,14 +348,12 @@ fn test_provider_connection(
 
     let status = response.status().as_u16();
     crate::logging::warn("模型服务连接测试返回错误", &format!("HTTP {status}: {url}"));
-    Err(keyf(
-        match status {
+    Err(Message::key(match status {
             401 | 403 => "Provider authentication failed",
             404 | 405 => "Provider endpoint or wire protocol is invalid",
             429 => "Provider connection test was rate limited",
             _ => "Provider connection test failed",
         },
-        &[],
     ))
 }
 
@@ -371,7 +363,7 @@ pub async fn model_remote_cache_get(
     api: Option<String>,
     api_key_env: Option<String>,
     headers: Option<BTreeMap<String, String>>,
-) -> Result<Option<ProviderModelsCacheEntry>, String> {
+) -> Result<Option<ProviderModelsCacheEntry>, Message> {
     crate::dsh::ipc_blocking(move || {
         Ok(cached_provider_models(
             &base_url,
@@ -391,7 +383,7 @@ pub async fn model_test_connection(
     headers: Option<BTreeMap<String, String>>,
     model: String,
     api_key: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), Message> {
     crate::dsh::ipc_blocking(move || {
         test_provider_connection(
             &base_url,
@@ -412,7 +404,7 @@ pub async fn model_remote_list_with_headers(
     api_key_env: Option<String>,
     headers: Option<BTreeMap<String, String>>,
     api_key: Option<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, Message> {
     crate::dsh::ipc_blocking(move || {
         let models = fetch_remote_models(
             &base_url,

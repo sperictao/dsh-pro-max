@@ -27,6 +27,8 @@
 
 use serde::Serialize;
 
+use crate::i18n::Message;
+
 mod auth;
 mod autostart;
 mod compat;
@@ -96,8 +98,8 @@ reexport_commands! {
 /// 命令签名保持 async。market 路径首先落地此形态（pnpm 下载是首个真实痛点），
 /// 现收敛为全模块唯一 adapter
 pub(crate) async fn ipc_blocking<T: Send + 'static>(
-    task: impl FnOnce() -> Result<T, String> + Send + 'static,
-) -> Result<T, String> {
+    task: impl FnOnce() -> Result<T, Message> + Send + 'static,
+) -> Result<T, Message> {
     tauri::async_runtime::spawn_blocking(task)
         .await
         .map_err(|e| format!("ipc task failed: {e}"))?
@@ -162,7 +164,7 @@ pub struct DshStatus {
     pub serve_configured: bool,
     pub autostart_enabled: bool,
     /// 检测过程中的错误信息（无则 None）
-    pub error: Option<String>,
+    pub error: Option<Message>,
     /// 按本次检测推导的就绪时间轴（步骤序列 + 完成态）：前端未跑流程时的
     /// 初始视图直接渲染它，不再自行从状态布尔重推导步骤编排
     pub ready_timeline: Vec<StepEvent>,
@@ -213,11 +215,14 @@ pub struct StepEvent {
     /// running | done | failed | skipped | pending（pending 只见于派生时间轴/前端骨架）
     #[ts(type = r#""running" | "done" | "failed" | "skipped" | "pending""#)]
     pub state: String,
-    pub detail: Option<String>,
+    /// 明细行：首行是基线文案，其后是追加的披露行（每行独立本地化，
+    /// 前端逐行渲染；空列表即无明细）
+    #[serde(default)]
+    pub detail: Vec<Message>,
     /// 问题描述（失败节点展示）
-    pub problem: Option<String>,
+    pub problem: Option<Message>,
     /// 解决方案（失败节点展示）
-    pub solution: Option<String>,
+    pub solution: Option<Message>,
     /// 可一键禁用重试的第三方插件包名（仅启动失败的插件归因节点携带；
     /// 受管授权插件为 None——其恢复路径是 Repair dsh stack）
     pub action_plugin: Option<String>,
@@ -254,7 +259,7 @@ fn pending_step(index: usize, id: &str) -> StepEvent {
         index,
         id: id.to_string(),
         state: "pending".to_string(),
-        detail: None,
+        detail: Vec::new(),
         problem: None,
         solution: None,
         action_plugin: None,

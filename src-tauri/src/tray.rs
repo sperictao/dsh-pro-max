@@ -6,6 +6,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::Emitter;
 
 use crate::i18n;
+use crate::i18n::Message;
 use crate::window;
 
 /// 托盘 dsh 三键的状态镜像 (running, busy)：前端 store 是唯一事实来源，
@@ -43,7 +44,7 @@ fn build_tray_menu(
 }
 
 /// 托盘重建菜单的共用路径：按当前语言与 TRAY_DSH_STATE 重建并替换
-pub(crate) fn rebuild_tray_menu(app: &tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn rebuild_tray_menu(app: &tauri::AppHandle) -> Result<(), Message> {
     if let Some(tray) = app.tray_by_id("main") {
         let menu = build_tray_menu(app).map_err(|e| {
             log::error!("[rebuild_tray_menu] 重建托盘菜单失败: {}", e);
@@ -64,7 +65,7 @@ pub(crate) fn sync_tray_dsh_actions(
     app: tauri::AppHandle,
     running: bool,
     busy: bool,
-) -> Result<(), String> {
+) -> Result<(), Message> {
     if let Ok(mut state) = TRAY_DSH_STATE.lock() {
         if *state == (running, busy) {
             return Ok(());

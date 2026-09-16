@@ -20,6 +20,7 @@ mod version;
 mod window;
 
 use config::LauncherConfig;
+use i18n::Message;
 
 /// 进程事故通知需要的全局 AppHandle（setup 时填充）
 static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
@@ -32,17 +33,20 @@ pub(crate) fn notify_process_failure(name: &str, message: &str) {
     let _ = app
         .notification()
         .builder()
-        .title(i18n::keyf("{name} failed", &[("name", name.to_string())]))
+        // 系统通知由 OS 直产、前端无从渲染：走 trf 查 Rust 小表
+        .title(i18n::trf("{name} failed", &[("name", name.to_string())]))
         .body(message)
         .show();
 }
 
 /// 命令错误适配的统一实现：记错误日志后把错误文本交给前端 toast。
-/// 薄命令适配器删不掉（Tauri 要求 #[tauri::command] 签名），但日志+转串
-/// 的样板只写一次
-fn command_err(e: impl std::fmt::Display) -> String {
+/// 薄命令适配器删不掉（Tauri 要求 #[tauri::command] 签名），但日志+转消息
+/// 的样板只写一次。
+/// 返回 [`Message`] 而非 `String`：错误文本来自 Tauri 插件，是技术性文案
+/// （没有可套的模板），整串当 key 过 IPC——词典 miss 时前端原样显示
+fn command_err(e: impl std::fmt::Display) -> Message {
     log::error!("{}", e);
-    e.to_string()
+    Message::key(e.to_string())
 }
 
 /// 开机自启动开关：事实来源是 OS 注册项（插件），不在 LauncherConfig 里存布尔值
@@ -53,7 +57,7 @@ fn autostart_is_enabled(app: tauri::AppHandle) -> bool {
 }
 
 #[tauri::command]
-fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<(), Message> {
     use tauri_plugin_autostart::ManagerExt;
     let r = if enabled {
         app.autolaunch().enable()
@@ -65,7 +69,7 @@ fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
 
 /// 日志目录路径（设置页「打开日志目录」按钮用）
 #[tauri::command]
-fn get_log_dir(app: tauri::AppHandle) -> Result<String, String> {
+fn get_log_dir(app: tauri::AppHandle) -> Result<String, Message> {
     app.path()
         .app_log_dir()
         .map(|p| p.to_string_lossy().to_string())
@@ -74,7 +78,7 @@ fn get_log_dir(app: tauri::AppHandle) -> Result<String, String> {
 
 /// 加载配置
 #[tauri::command]
-async fn load_config() -> Result<LauncherConfig, String> {
+async fn load_config() -> Result<LauncherConfig, Message> {
     config::load_config()
 }
 
@@ -87,20 +91,20 @@ fn get_resolved_language() -> String {
 /// 语言设置变更：重新解析并用新语言重建托盘菜单
 /// （config 由前端经 update_settings 落盘，这里只切运行时状态）
 #[tauri::command]
-fn set_language(app: tauri::AppHandle, setting: String) -> Result<(), String> {
+fn set_language(app: tauri::AppHandle, setting: String) -> Result<(), Message> {
     i18n::set_current(i18n::resolve_language(&setting));
     tray::rebuild_tray_menu(&app)
 }
 
 /// 保存配置（全量覆盖，仅前端已知字段的场景使用）
 #[tauri::command]
-async fn save_config(config: LauncherConfig) -> Result<(), String> {
+async fn save_config(config: LauncherConfig) -> Result<(), Message> {
     config::save_config(&config)
 }
 
 /// 仅更新设置类字段，保留其余字段不变
 #[tauri::command]
-async fn update_settings(config: LauncherConfig) -> Result<(), String> {
+async fn update_settings(config: LauncherConfig) -> Result<(), Message> {
     let mut current = config::load_config()?;
     config::merge_settings(&mut current, &config);
     config::save_config(&current)

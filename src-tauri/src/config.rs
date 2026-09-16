@@ -1,4 +1,4 @@
-use crate::i18n::keyf;
+use crate::i18n::Message;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -53,13 +53,13 @@ impl Default for LauncherConfig {
 }
 
 /// 跨平台获取用户主目录
-pub fn home_dir() -> Result<PathBuf, String> {
+pub fn home_dir() -> Result<PathBuf, Message> {
     // Unix 使用 HOME，Windows 使用 USERPROFILE
     #[cfg(unix)]
     {
         std::env::var("HOME").map(PathBuf::from).map_err(|e| {
             crate::logging::fail("读取 HOME 环境变量", &e.to_string());
-            keyf("Cannot get HOME environment variable", &[])
+            Message::key("Cannot get HOME environment variable")
         })
     }
     #[cfg(windows)]
@@ -68,13 +68,13 @@ pub fn home_dir() -> Result<PathBuf, String> {
             .map(PathBuf::from)
             .map_err(|e| {
                 crate::logging::fail("读取 USERPROFILE 环境变量", &e.to_string());
-                keyf("Cannot get USERPROFILE environment variable", &[])
+                Message::key("Cannot get USERPROFILE environment variable")
             })
     }
 }
 
 /// 获取配置文件路径
-pub fn config_file_path() -> Result<PathBuf, String> {
+pub fn config_file_path() -> Result<PathBuf, Message> {
     let home = home_dir()?;
     Ok(home.join(".dsh-pro-max").join("config.json"))
 }
@@ -96,22 +96,20 @@ pub fn strip_unc(s: &str) -> String {
 }
 
 /// 加载配置文件，不存在则返回默认值
-pub fn load_config() -> Result<LauncherConfig, String> {
+pub fn load_config() -> Result<LauncherConfig, Message> {
     let path = config_file_path()?;
     if !path.exists() {
         return Ok(LauncherConfig::default());
     }
     let content = std::fs::read_to_string(&path).map_err(|e| {
         crate::logging::warn("读取配置文件", &e.to_string());
-        keyf(
-            "Failed to read config file: {error}",
+        Message::localized("Failed to read config file: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
     let config: LauncherConfig = serde_json::from_str(&content).map_err(|e| {
         crate::logging::warn("解析配置文件", &e.to_string());
-        keyf(
-            "Failed to parse config file: {error}",
+        Message::localized("Failed to parse config file: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
@@ -129,28 +127,25 @@ pub fn merge_settings(current: &mut LauncherConfig, settings: &LauncherConfig) {
 }
 
 /// 保存配置文件
-pub fn save_config(config: &LauncherConfig) -> Result<(), String> {
+pub fn save_config(config: &LauncherConfig) -> Result<(), Message> {
     let path = config_file_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             crate::logging::error("创建配置目录", &e.to_string());
-            keyf(
-                "Failed to create config directory: {error}",
+            Message::localized("Failed to create config directory: {{error}}",
                 &[("error", e.to_string())],
             )
         })?;
     }
     let content = serde_json::to_string_pretty(config).map_err(|e| {
         crate::logging::error("序列化配置", &e.to_string());
-        keyf(
-            "Failed to serialize config: {error}",
+        Message::localized("Failed to serialize config: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
     std::fs::write(&path, content).map_err(|e| {
         crate::logging::error("写入配置文件", &e.to_string());
-        keyf(
-            "Failed to write config file: {error}",
+        Message::localized("Failed to write config file: {{error}}",
             &[("error", e.to_string())],
         )
     })

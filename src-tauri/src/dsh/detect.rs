@@ -1,5 +1,6 @@
 //! dsh 状态检测：聚合组件/插件/Tailscale/运行态与远程访问可达性（dsh_detect 命令）。
 
+use crate::i18n::Message;
 use super::auth::{resolve_auth_config, serve_configured, tailscale_online};
 use super::autostart::autostart_enabled;
 use super::components::{
@@ -17,12 +18,12 @@ use crate::version::parse_version;
 pub async fn dsh_detect(
     app: tauri::AppHandle,
     verify_remote_url: Option<bool>,
-) -> Result<DshStatus, String> {
+) -> Result<DshStatus, Message> {
     // 全链路是子进程/HTTP 阻塞 I/O（verify 时 probe 多轮 curl），走统一 adapter
     super::ipc_blocking(move || dsh_detect_once(&app, verify_remote_url.unwrap_or(false))).await
 }
 
-fn dsh_detect_once(app: &tauri::AppHandle, verify_remote_url: bool) -> Result<DshStatus, String> {
+fn dsh_detect_once(app: &tauri::AppHandle, verify_remote_url: bool) -> Result<DshStatus, Message> {
     let (hostname, url) = resolve_host_and_url();
     let ts = tailscale_path();
     let (magic, _) = match &ts {

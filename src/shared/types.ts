@@ -36,6 +36,8 @@ export type { PluginReleaseNotes } from "./bindings/PluginReleaseNotes";
 
 // 别名：bindings 按 Rust 结构名导出，消费方沿用的前端名在此一次映射
 export type { StepEvent as DshStepEvent } from "./bindings/StepEvent";
+export type { Message } from "./bindings/Message";
+export type { MessageArg } from "./bindings/MessageArg";
 
 // 前端独有（Rust 无对应载荷）：dsh 访问模式（localStorage 持久化）
 export type DshAccessMode = "local" | "remote";

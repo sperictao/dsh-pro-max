@@ -2,7 +2,7 @@
 // 非空；updateLastCheckAt/updateCheckError 供关于页状态卡持久展示检查结果
 
 import { i18n } from "../../i18n";
-import { tErr } from "../../i18n/error";
+import { renderMessage, tErr } from "../../i18n/error";
 import * as cmd from "../../commands";
 import type { DownloadProgress, UpdateInfo, UpdaterConfigHealth } from "../../types";
 import type { Slice } from "./shared";
@@ -37,7 +37,7 @@ export const createUpdaterSlice: Slice<UpdaterSlice> = (set, get) => ({
     try {
       set({ updaterHealth: await cmd.getUpdaterConfigHealth(), updaterHealthError: null });
     } catch (e) {
-      set({ updaterHealth: null, updaterHealthError: String(e) });
+      set({ updaterHealth: null, updaterHealthError: renderMessage(e) });
     }
   },
 
@@ -56,8 +56,8 @@ export const createUpdaterSlice: Slice<UpdaterSlice> = (set, get) => ({
         get().toast(i18n.t("Already up to date"), "info");
       }
     } catch (e) {
-      set({ updateCheckError: String(e) });
-      if (!silent) get().toast(i18n.t("Failed to check for updates: {{error}}", { error: tErr(String(e)) }), "error");
+      set({ updateCheckError: renderMessage(e) });
+      if (!silent) get().toast(i18n.t("Failed to check for updates: {{error}}", { error: tErr(e) }), "error");
     } finally {
       set({ updateBusyKind: null });
     }
@@ -77,7 +77,7 @@ export const createUpdaterSlice: Slice<UpdaterSlice> = (set, get) => ({
       get().toast(msg, "success");
       set({ updateInfo: null });
     } catch (e) {
-      get().toast(i18n.t("Update failed: {{error}}", { error: tErr(String(e)) }), "error");
+      get().toast(i18n.t("Update failed: {{error}}", { error: tErr(e) }), "error");
     } finally {
       set({ updateBusyKind: null, downloadProgress: null });
     }

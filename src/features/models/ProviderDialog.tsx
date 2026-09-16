@@ -221,7 +221,7 @@ export function ProviderDialog({
       }
     } catch (error) {
       if (testRevisionRef.current === requestRevision) {
-        setTestResult({ kind: "error", text: tErr(String(error)) });
+        setTestResult({ kind: "error", text: tErr(error) });
       }
     } finally {
       if (testRevisionRef.current === requestRevision) setTesting(false);
@@ -329,7 +329,7 @@ export function ProviderDialog({
         keyValue ? { ref: credentialRef, value: keyValue } : null,
       );
     } catch (error) {
-      setSubmitError(tErr(String(error)));
+      setSubmitError(tErr(error));
     } finally {
       setSaving(false);
     }

@@ -29,7 +29,7 @@ export function AboutSection() {
       const paths = await cmd.getUpdaterHelpPaths();
       await openUrl(target === "docs" ? paths.docsPath : paths.templatePath);
     } catch (e) {
-      toast(t("Failed to open help: {{error}}", { error: tErr(String(e)) }), "error");
+      toast(t("Failed to open help: {{error}}", { error: tErr(e) }), "error");
     }
   };
 

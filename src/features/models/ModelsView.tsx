@@ -20,7 +20,7 @@ import {
   SELECT,
 } from "@/shared/lib/ui";
 import type { ModelCatalogEntry, ModelConfig, ProviderConfig } from "@/shared/types";
-import { tErr } from "@/shared/i18n/error";
+import { renderMessage, tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
 import { deriveCredentialRef, type CredentialWrite } from "./credentials";
 import { ImportDialog } from "./ImportDialog";
@@ -203,7 +203,7 @@ export function ModelsView() {
           setCredentialStatus(status);
         }
       } catch (error) {
-        if (!disposed) toast(tErr(String(error)), "error");
+        if (!disposed) toast(tErr(error), "error");
       } finally {
         if (!disposed) setLoading(false);
       }
@@ -248,7 +248,7 @@ export function ModelsView() {
         if (!disposed) {
           setCatalogProviderCount(null);
           setCatalogSource(null);
-          setCatalogError(String(error));
+          setCatalogError(renderMessage(error));
           setCatalogState("unavailable");
         }
       }
@@ -302,7 +302,7 @@ export function ModelsView() {
     } catch (error) {
       // The Catalog owns a persistent, actionable inline error surface next to Retry.
       // Avoid duplicating the same failure as a transient global toast.
-      setCatalogError(String(error));
+      setCatalogError(renderMessage(error));
     } finally {
       setCatalogRefreshing(false);
     }
@@ -336,7 +336,7 @@ export function ModelsView() {
       setConfig(next);
       setCredentialStatus(status);
     } catch (error) {
-      if (reportError) toast(tErr(String(error)), "error");
+      if (reportError) toast(tErr(error), "error");
       throw error;
     } finally {
       if (route) setBusyRoute(null);
@@ -467,7 +467,7 @@ export function ModelsView() {
           // Credential first: if settings removal later fails, retry is safe because unset is idempotent.
           await removeOwnedProviderCredential(removed);
         } catch (error) {
-          toast(`${t("Remove provider")}: ${tErr(String(error))}`, "error");
+          toast(`${t("Remove provider")}: ${tErr(error)}`, "error");
           throw error;
         }
       }
@@ -503,7 +503,7 @@ export function ModelsView() {
       );
       toast(`${providerName} · ${t("Connection successful")}`, "success");
     } catch (error) {
-      toast(`${providerName} · ${tErr(String(error))}`, "error");
+      toast(`${providerName} · ${tErr(error)}`, "error");
     } finally {
       setTestingRoute(null);
     }
@@ -524,7 +524,7 @@ export function ModelsView() {
       );
       toast(`${providerName} · ${t("Models from this service")}: ${t("{{count}} models", { count: models.length })}`, "success");
     } catch (error) {
-      toast(`${providerName} · ${tErr(String(error))}`, "error");
+      toast(`${providerName} · ${tErr(error)}`, "error");
     } finally {
       setProbingRoute(null);
     }

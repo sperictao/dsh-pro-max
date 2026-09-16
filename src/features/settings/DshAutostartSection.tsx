@@ -36,7 +36,7 @@ export function DshAutostartSection() {
       setAutostart(next);
       toast(next ? t("Auto-start enabled") : t("Auto-start disabled"), "success");
     } catch (e) {
-      toast(t("Failed to change auto-start: {{error}}", { error: tErr(String(e)) }), "error");
+      toast(t("Failed to change auto-start: {{error}}", { error: tErr(e) }), "error");
     } finally {
       setAutostartBusy(false);
     }

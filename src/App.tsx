@@ -8,6 +8,7 @@ import { onDshStep, onMarketInstallLog, onTrayDshAction, onUpdaterDownloadProgre
 import * as cmd from "./shared/commands";
 import { log } from "./shared/logger";
 import { i18n } from "./shared/i18n";
+import { renderMessage } from "./shared/i18n/error";
 import { Toaster } from "./shared/components/Toaster";
 import { openRepo } from "./shared/lib/links";
 import { UpdateBadge } from "./features/updater/UpdateBadge";
@@ -83,7 +84,7 @@ export function App() {
         await useAppStore.getState().refreshUpdaterHealth();
         void useAppStore.getState().checkForUpdates(true);
       } catch (e) {
-        useAppStore.getState().toast(i18n.t("Initialization failed: {{error}}", { error: String(e) }), "error");
+        useAppStore.getState().toast(i18n.t("Initialization failed: {{error}}", { error: renderMessage(e) }), "error");
       }
     })();
 

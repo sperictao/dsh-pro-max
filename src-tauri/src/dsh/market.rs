@@ -22,7 +22,7 @@
 
 use super::components::{pnpm_bin, resolve_dsh_bin, web_profile_package_path};
 use super::process::{run_capture_lines, run_capture_lines_env};
-use crate::i18n::keyf;
+use crate::i18n::{Message, MessageArg};
 use crate::version::{is_newer, parse_version};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -155,8 +155,8 @@ pub enum InstallOutcome {
 /// 网络/响应体问题允许降级到本地快照
 #[derive(Debug)]
 pub(crate) enum CatalogLoadError {
-    UnsupportedSchema(String),
-    Transient(String),
+    UnsupportedSchema(Message),
+    Transient(Message),
 }
 
 // ============ 目录 ============
@@ -251,8 +251,7 @@ pub(crate) fn catalog_from_raw(
 ) -> Result<MarketCatalog, CatalogLoadError> {
     let body: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
         crate::logging::error("[market] 目录解析失败", &e.to_string());
-        CatalogLoadError::Transient(keyf(
-            "Failed to parse plugin catalog: {error}",
+        CatalogLoadError::Transient(Message::localized("Failed to parse plugin catalog: {{error}}",
             &[("error", e.to_string())],
         ))
     })?;
@@ -266,10 +265,7 @@ pub(crate) fn catalog_from_raw(
             "[market] 目录格式不符",
             "plugins 非空数组缺失或全部条目无法投影",
         );
-        return Err(CatalogLoadError::UnsupportedSchema(keyf(
-            "Unrecognized plugin catalog format; update the app or fix the catalog mirror",
-            &[],
-        )));
+        return Err(CatalogLoadError::UnsupportedSchema(Message::key("Unrecognized plugin catalog format; update the app or fix the catalog mirror")));
     }
     // 分类表原样透传；缺失/畸形按空表处理，前端回退展示分类 id（纯展示数据，
     // 失败不放大全目录）
@@ -293,14 +289,13 @@ pub(crate) fn catalog_from_raw(
 }
 
 /// 目录源：空 = 内置官方源；非空必须显式带协议，避免把写歪的配置当地址用
-pub(crate) fn resolve_catalog_url(configured: &str) -> Result<String, String> {
+pub(crate) fn resolve_catalog_url(configured: &str) -> Result<String, Message> {
     let url = configured.trim();
     if url.is_empty() {
         return Ok(MARKET_CATALOG_URL.to_string());
     }
     if !url.starts_with("https://") && !url.starts_with("http://") {
-        return Err(keyf(
-            "Invalid plugin catalog URL: {url}; it must start with https:// or http://",
+        return Err(Message::localized("Invalid plugin catalog URL: {{url}}; it must start with https:// or http://",
             &[("url", url.to_string())],
         ));
     }
@@ -315,8 +310,7 @@ pub(crate) fn fetch_catalog_raw(url: &str) -> Result<MarketCatalog, CatalogLoadE
         .build()
         .map_err(|e| {
             crate::logging::error("[market] HTTP client 初始化失败", &e.to_string());
-            CatalogLoadError::Transient(keyf(
-                "Cannot initialize HTTP client: {error}",
+            CatalogLoadError::Transient(Message::localized("Cannot initialize HTTP client: {{error}}",
                 &[("error", e.to_string())],
             ))
         })?
@@ -324,52 +318,52 @@ pub(crate) fn fetch_catalog_raw(url: &str) -> Result<MarketCatalog, CatalogLoadE
         .send()
         .map_err(|e| {
             crate::logging::error("[market] 目录拉取失败", &e.to_string());
-            CatalogLoadError::Transient(keyf(
-                "Failed to fetch plugin catalog: {error}",
+            CatalogLoadError::Transient(Message::localized("Failed to fetch plugin catalog: {{error}}",
                 &[("error", e.to_string())],
             ))
         })?;
     if !resp.status().is_success() {
         let status = resp.status();
         crate::logging::error("[market] 目录拉取失败", &status.to_string());
-        return Err(CatalogLoadError::Transient(keyf(
-            "Failed to fetch plugin catalog: HTTP {status}",
+        return Err(CatalogLoadError::Transient(Message::localized("Failed to fetch plugin catalog: HTTP {{status}}",
             &[("status", status.as_u16().to_string())],
         )));
     }
     // 原文仅作解析输入，不落盘（快照存投影后的目录，见 write_catalog_snapshot）
     let raw = resp.text().map_err(|e| {
         crate::logging::error("[market] 目录读取失败", &e.to_string());
-        CatalogLoadError::Transient(keyf(
-            "Failed to fetch plugin catalog: {error}",
+        CatalogLoadError::Transient(Message::localized("Failed to fetch plugin catalog: {{error}}",
             &[("error", e.to_string())],
         ))
     })?;
     catalog_from_raw(&raw, false)
 }
 
-fn catalog_snapshot_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+fn catalog_snapshot_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Message> {
     use tauri::Manager;
-    app.path()
+    // 尾表达式不做 From 隐式转换：先降成技术文案 String，再经 `?` 收口到 Message
+    Ok(app
+        .path()
         .app_data_dir()
-        .map(|p| p.join("market-catalog-snapshot.json"))
         .map_err(|e| e.to_string())
+        .map(|p| p.join("market-catalog-snapshot.json"))?)
 }
 
 /// 快照即投影后的 MarketCatalog（与前端消费同一份数据），读写都是亚 MB 级
 pub(crate) fn write_catalog_snapshot_file(
     path: &std::path::Path,
     catalog: &MarketCatalog,
-) -> Result<(), String> {
+) -> Result<(), Message> {
     let json = serde_json::to_string(catalog).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())
+    // 尾表达式经 `?` 收口到 Message（String → Message 的 From 由此生效）
+    Ok(std::fs::write(path, json).map_err(|e| e.to_string())?)
 }
 
 fn write_catalog_snapshot(app: &tauri::AppHandle, catalog: &MarketCatalog) {
     // 尽力而为：写失败只影响下次断网降级，不影响本次结果
     if let Ok(path) = catalog_snapshot_path(app) {
         if let Err(e) = write_catalog_snapshot_file(&path, catalog) {
-            crate::logging::warn("[market] 目录快照写入失败", &e);
+            crate::logging::warn("[market] 目录快照写入失败", &e.to_english());
         }
     }
 }
@@ -377,18 +371,16 @@ fn write_catalog_snapshot(app: &tauri::AppHandle, catalog: &MarketCatalog) {
 /// 快照读取：内容即投影后的 MarketCatalog，读出恒标 `from_snapshot`（数据
 /// 来自本地快照，前端在刷新结束后如实标注）。缺失/损坏/旧契约格式反序列化
 /// 失败，调用方按"无快照"处理
-pub(crate) fn load_catalog_snapshot_file(path: &std::path::Path) -> Result<MarketCatalog, String> {
+pub(crate) fn load_catalog_snapshot_file(path: &std::path::Path) -> Result<MarketCatalog, Message> {
     let raw = std::fs::read_to_string(path).map_err(|e| {
         crate::logging::warn("[market] 目录快照读取失败", &e.to_string());
-        keyf(
-            "Failed to read catalog snapshot: {error}",
+        Message::localized("Failed to read catalog snapshot: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
     let mut catalog: MarketCatalog = serde_json::from_str(&raw).map_err(|e| {
         crate::logging::warn("[market] 目录快照解析失败", &e.to_string());
-        keyf(
-            "Failed to parse catalog snapshot: {error}",
+        Message::localized("Failed to parse catalog snapshot: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
@@ -401,12 +393,12 @@ pub(crate) fn load_catalog_snapshot_file(path: &std::path::Path) -> Result<Marke
 /// 坏快照不掩盖在线数据的问题
 pub(crate) fn catalog_snapshot_decision(
     path: &std::path::Path,
-    network_error: String,
-) -> Result<MarketCatalog, String> {
+    network_error: Message,
+) -> Result<MarketCatalog, Message> {
     match load_catalog_snapshot_file(path) {
         Ok(catalog) => Ok(catalog),
         Err(e) => {
-            crate::logging::warn("[market] 目录快照不可用", &e);
+            crate::logging::warn("[market] 目录快照不可用", &e.to_english());
             Err(network_error)
         }
     }
@@ -415,7 +407,7 @@ pub(crate) fn catalog_snapshot_decision(
 /// 拉取并解析社区目录；网络失败时降级到最近一次成功的本地快照。
 /// 只投影浏览/安装所需字段，其余（screenshots、tarball、downloads 等）
 /// 在解析时丢弃，避免目录原文整包进 WebView
-fn fetch_catalog(app: &tauri::AppHandle) -> Result<MarketCatalog, String> {
+fn fetch_catalog(app: &tauri::AppHandle) -> Result<MarketCatalog, Message> {
     let configured = crate::config::load_config()?.market_catalog_url;
     let url = resolve_catalog_url(&configured)?;
     match fetch_catalog_raw(&url) {
@@ -428,7 +420,10 @@ fn fetch_catalog(app: &tauri::AppHandle) -> Result<MarketCatalog, String> {
             let path = catalog_snapshot_path(app)?;
             match catalog_snapshot_decision(&path, e.clone()) {
                 Ok(catalog) => {
-                    crate::logging::warn("[market] 网络拉取失败，降级使用本地目录快照", &e);
+                    crate::logging::warn(
+                        "[market] 网络拉取失败，降级使用本地目录快照",
+                        &e.to_english(),
+                    );
                     Ok(catalog)
                 }
                 Err(e) => Err(e),
@@ -439,7 +434,7 @@ fn fetch_catalog(app: &tauri::AppHandle) -> Result<MarketCatalog, String> {
 
 // ============ 已装列表 / 安装 / 移除 ============
 
-pub(crate) fn installed_plugins() -> Result<Vec<InstalledPlugin>, String> {
+pub(crate) fn installed_plugins() -> Result<Vec<InstalledPlugin>, Message> {
     installed_list_from_profile(&web_profile_package_path()?)
 }
 
@@ -616,27 +611,30 @@ pub(crate) fn registry_latest_from_json(raw: &str) -> Option<RegistryLatest> {
 
 /// 更新检测/兼容性查询共用的 HTTP 客户端（同超时同 UA；批量拉取共享一个
 /// 连接池，避免逐包重建 TLS 会话）
-fn update_http_client() -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
+fn update_http_client() -> Result<reqwest::blocking::Client, Message> {
+    let client = reqwest::blocking::Client::builder()
         .timeout(UPDATE_CHECK_TIMEOUT)
         .user_agent(concat!("dsh-pro-max/", env!("CARGO_PKG_VERSION")))
         .build()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(client)
 }
 
 fn registry_latest_with(
     client: &reqwest::blocking::Client,
     name: &str,
-) -> Result<RegistryLatest, String> {
+) -> Result<RegistryLatest, Message> {
     let url = format!("https://registry.npmjs.org/{name}/latest");
-    let resp = client.get(&url).send().map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .send()
+        .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status().as_u16()));
+        return Err(Message::key(format!("HTTP {}", resp.status().as_u16())));
     }
     let raw = resp.text().map_err(|e| e.to_string())?;
     registry_latest_from_json(&raw).ok_or_else(|| {
-        keyf(
-            "Cannot parse package manifest for {name}",
+        Message::localized("Cannot parse package manifest for {{name}}",
             &[("name", name.to_string())],
         )
     })
@@ -650,19 +648,21 @@ fn registry_latest_with(
 fn git_latest_with(
     client: &reqwest::blocking::Client,
     repo: &str,
-) -> Result<RegistryLatest, String> {
+) -> Result<RegistryLatest, Message> {
     if !valid_repo_id(repo) {
-        return Err("Invalid repository identifier".to_string());
+        return Err(Message::key("Invalid repository identifier"));
     }
     let url = format!("https://raw.githubusercontent.com/{repo}/HEAD/package.json");
-    let resp = client.get(&url).send().map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .send()
+        .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status().as_u16()));
+        return Err(Message::key(format!("HTTP {}", resp.status().as_u16())));
     }
     let raw = resp.text().map_err(|e| e.to_string())?;
     registry_latest_from_json(&raw).ok_or_else(|| {
-        keyf(
-            "Cannot parse package manifest for {name}",
+        Message::localized("Cannot parse package manifest for {{name}}",
             &[("name", repo.to_string())],
         )
     })
@@ -793,7 +793,7 @@ struct Resolved {
 /// 已装列表再多也不拖长检测；共享 reqwest Client（Send+Sync）复用连接。
 /// 部分包查询失败不放大为整体失败（如实无 latest、不出更新按钮）；全部
 /// 可检包都失败才报错——那是网络问题的信号
-fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
+fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, Message> {
     let list = installed_plugins()?;
     let mut infos: Vec<PluginUpdateInfo> = list
         .into_iter()
@@ -831,10 +831,10 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
     let dsh_host_str = dsh_host.as_deref();
     let checked = indexes.len();
     let mut failed = 0usize;
-    let mut first_error: Option<String> = None;
+    let mut first_error: Option<Message> = None;
     // std::thread::scope：线程在作用域结束前必须 join，as 引用借到栈上的
     // client/age/dsh_host/now；闭包只读各自 info（Send+Sync），写回靠下标
-    let results: Vec<(usize, Result<Resolved, String>)> = thread::scope(|scope| {
+    let results: Vec<(usize, Result<Resolved, Message>)> = thread::scope(|scope| {
         let handles: Vec<_> = indexes
             .iter()
             .map(|&i| {
@@ -914,10 +914,10 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
         }
     }
     if checked > 0 && failed == checked {
-        let e = first_error.unwrap_or_default();
-        crate::logging::error("[market] 插件更新检测失败", &e);
-        return Err(keyf(
-            "Failed to check plugin updates: {error}",
+        // 走到这里必然记过至少一条失败；兜底只为避免 Default 造出空消息
+        let e = first_error.unwrap_or_else(|| Message::key("unknown error"));
+        crate::logging::error("[market] 插件更新检测失败", &e.to_english());
+        return Err(Message::localized("Failed to check plugin updates: {{error}}",
             &[("error", e)],
         ));
     }
@@ -926,28 +926,26 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, String> {
 
 pub(crate) fn installed_list_from_profile(
     path: &std::path::PathBuf,
-) -> Result<Vec<InstalledPlugin>, String> {
+) -> Result<Vec<InstalledPlugin>, Message> {
     if !path.exists() {
         return Ok(Vec::new());
     }
     let raw = std::fs::read_to_string(path).map_err(|e| {
         crate::logging::warn("[market] 读取 profile package.json 失败", &e.to_string());
-        keyf(
-            "Failed to read web profile: {error}",
+        Message::localized("Failed to read web profile: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
     let package: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
         crate::logging::warn("[market] 解析 profile package.json 失败", &e.to_string());
-        keyf(
-            "Failed to parse web profile: {error}",
+        Message::localized("Failed to parse web profile: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
     let deps = package
         .get("dependencies")
         .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| "Web profile has no dependencies".to_string())?;
+        .ok_or_else(|| Message::key("Web profile has no dependencies"))?;
     // 启停事实：profile patch 的 disabled 覆盖行（缺失/畸形 = 全启用），
     // 判定范围 = 各包 claimed 的入口行
     let patch_states = path
@@ -1055,11 +1053,10 @@ pub(crate) fn policy_allows(entries: &[String], identifier: &str) -> bool {
 /// 文件缺失或 `allowed` 键缺席 → 不启用白名单（默认全允许）；`allowed`
 /// 存在即生效（空数组 = 全部拒绝）。只约束安装：移除是清理，总能做。
 /// 文件损坏按失败处理（fail closed）：策略是治理基线，宁可拒绝不可静默放行
-pub(crate) fn policy_entries_from_raw(raw: &str) -> Result<Option<Vec<String>>, String> {
+pub(crate) fn policy_entries_from_raw(raw: &str) -> Result<Option<Vec<String>>, Message> {
     let policy: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
         crate::logging::warn("[market] 解析插件策略失败", &e.to_string());
-        keyf(
-            "Failed to parse plugin policy: {error}",
+        Message::localized("Failed to parse plugin policy: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
@@ -1068,7 +1065,7 @@ pub(crate) fn policy_entries_from_raw(raw: &str) -> Result<Option<Vec<String>>, 
     };
     let arr = allowed
         .as_array()
-        .ok_or_else(|| "Plugin policy field \"allowed\" must be an array".to_string())?;
+        .ok_or_else(|| Message::key("Plugin policy field \"allowed\" must be an array"))?;
     Ok(Some(
         arr.iter()
             .filter_map(|v| v.as_str())
@@ -1078,21 +1075,20 @@ pub(crate) fn policy_entries_from_raw(raw: &str) -> Result<Option<Vec<String>>, 
 }
 
 /// 策略文件路径的唯一来源
-fn plugin_policy_path() -> Result<std::path::PathBuf, String> {
+fn plugin_policy_path() -> Result<std::path::PathBuf, Message> {
     Ok(crate::config::home_dir()?
         .join(".dsh-pro-max")
         .join("plugin-policy.json"))
 }
 
-fn load_policy_entries() -> Result<Option<Vec<String>>, String> {
+fn load_policy_entries() -> Result<Option<Vec<String>>, Message> {
     let path = plugin_policy_path()?;
     if !path.exists() {
         return Ok(None);
     }
     let raw = std::fs::read_to_string(&path).map_err(|e| {
         crate::logging::warn("[market] 读取插件策略失败", &e.to_string());
-        keyf(
-            "Failed to read plugin policy: {error}",
+        Message::localized("Failed to read plugin policy: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
@@ -1100,7 +1096,7 @@ fn load_policy_entries() -> Result<Option<Vec<String>>, String> {
 }
 
 /// 安装前的策略闸门：拒绝时说明命中了哪条约束与策略文件在哪
-fn enforce_install_policy(identifier: &str) -> Result<(), String> {
+fn enforce_install_policy(identifier: &str) -> Result<(), Message> {
     let Some(entries) = load_policy_entries()? else {
         return Ok(());
     };
@@ -1110,8 +1106,7 @@ fn enforce_install_policy(identifier: &str) -> Result<(), String> {
     let path = plugin_policy_path()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    Err(keyf(
-        "Plugin install blocked by policy: {identifier} is not in the allowlist ({path})",
+    Err(Message::localized("Plugin install blocked by policy: {{identifier}} is not in the allowlist ({{path}})",
         &[("identifier", identifier.to_string()), ("path", path)],
     ))
 }
@@ -1119,21 +1114,21 @@ fn enforce_install_policy(identifier: &str) -> Result<(), String> {
 /// 超时失败的文案：静态 key（无插值），前端 zh 词典按整句精确命中。不走
 /// install_failure_message 的指纹加工——超时输出的指纹只是巧合，审批重跑
 /// 不是「进程被杀」这一错误的去向
-pub(crate) fn timeout_failure_message(action: &str) -> String {
+pub(crate) fn timeout_failure_message(action: &str) -> Message {
     match action {
-        "add" => {
-            "Plugin install timed out and was terminated. Check your network and retry.".to_string()
-        }
-        _ => "Plugin removal timed out and was terminated.".to_string(),
+        "add" => Message::key(
+            "Plugin install timed out and was terminated. Check your network and retry.",
+        ),
+        _ => Message::key("Plugin removal timed out and was terminated."),
     }
 }
 
 /// 用户取消（G2）的文案：静态 key，与超时文案同一形态。取消是用户决策，
 /// 不是失败——文案只陈述事实，去向（重试按钮还在原位）由卡片状态机给出
-fn cancelled_failure_message(action: &str) -> String {
+fn cancelled_failure_message(action: &str) -> Message {
     match action {
-        "add" => "Plugin install was cancelled.".to_string(),
-        _ => "Plugin removal was cancelled.".to_string(),
+        "add" => Message::key("Plugin install was cancelled."),
+        _ => Message::key("Plugin removal was cancelled."),
     }
 }
 
@@ -1219,13 +1214,12 @@ pub(crate) fn pnpm_failure_hint(output: &str) -> Option<&'static str> {
 /// 下一步都有明确去向），否则保留上游原始错误。pnpm 10+ 的构建脚本拦截是
 /// git 来源插件最常见的失败，识别后给出精确到文件的问题/下一步。拦截的
 /// 自动化路径是 market_approve_builds（用户审批后写入 allowBuilds）
-pub(crate) fn install_failure_message(action: &str, error: &str) -> String {
+pub(crate) fn install_failure_message(action: &str, error: &str) -> Message {
     if let Some(hint) = pnpm_failure_hint(error) {
-        return hint.to_string();
+        return Message::key(hint);
     }
     if action != "add" {
-        return keyf(
-            "Failed to remove plugin: {error}",
+        return Message::localized("Failed to remove plugin: {{error}}",
             &[("error", error.to_string())],
         );
     }
@@ -1234,13 +1228,11 @@ pub(crate) fn install_failure_message(action: &str, error: &str) -> String {
             .map(|d| d.join("pnpm-workspace.yaml"))
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "~/.dsh/profiles/web/pnpm-workspace.yaml".to_string());
-        return keyf(
-            "Plugin build scripts were blocked by pnpm. Add the package name printed in the log under \"allowBuilds\" in {path}, then retry. Detail: {error}",
+        return Message::localized("Plugin build scripts were blocked by pnpm. Add the package name printed in the log under \"allowBuilds\" in {{path}}, then retry. Detail: {{error}}",
             &[("path", path), ("error", error.to_string())],
         );
     }
-    keyf(
-        "Failed to install plugin: {error}",
+    Message::localized("Failed to install plugin: {{error}}",
         &[("error", error.to_string())],
     )
 }
@@ -1299,7 +1291,7 @@ fn with_plugin_operation<T>(operation: impl FnOnce() -> T) -> T {
 /// 令牌（不与 run_plugin_cmd 的全局槽互踩），用户取消由紧随的重试 add 承接
 fn rebuild_profile_store(
     on_line: impl Fn(&str) + Send + Sync + 'static,
-) -> Result<(), (String, String)> {
+) -> Result<(), (Message, Message)> {
     let profile = web_profile_dir().map_err(|e| (e.clone(), e))?;
     let pnpm = pnpm_bin();
     let profile_str = profile.display().to_string();
@@ -1321,14 +1313,13 @@ fn rebuild_profile_store(
                 raw.push_str("\npnpm install timed out and was terminated");
             }
             crate::logging::error("[market] profile store 重建失败", &raw);
-            let display = keyf(
-                "Failed to rebuild dependencies in {path}: {error}",
+            let display = Message::localized("Failed to rebuild dependencies in {{path}}: {{error}}",
                 &[("path", profile_str), ("error", raw.clone())],
             );
-            Err((raw, display))
+            Err((Message::key(raw), display))
         }
         Err(e) => {
-            crate::logging::error("[market] profile store 重建执行失败", &e);
+            crate::logging::error("[market] profile store 重建执行失败", &e.to_english());
             Err((e.clone(), e))
         }
     }
@@ -1342,14 +1333,16 @@ fn run_plugin_cmd(
     action: &str,
     arg: &str,
     on_line: impl Fn(&str) + Send + Sync + 'static,
-) -> Result<(), (String, String)> {
+) -> Result<(), (Message, Message)> {
     if !valid_identifier(arg) {
-        let raw = format!("invalid plugin identifier: {arg}");
-        return Err((raw, "Invalid plugin identifier".to_string()));
+        return Err((
+            Message::key(format!("invalid plugin identifier: {arg}")),
+            Message::key("Invalid plugin identifier"),
+        ));
     }
     if action == "add" {
         if let Err(display) = enforce_install_policy(arg) {
-            return Err((format!("policy blocked: {arg}"), display));
+            return Err((format!("policy blocked: {arg}").into(), display));
         }
     }
     let dsh = resolve_dsh_bin().map_err(|e| (e.clone(), e))?;
@@ -1394,10 +1387,13 @@ fn run_plugin_cmd(
                 crate::logging::error(&format!("[market] plugin {action} 失败"), &raw);
                 install_failure_message(action, &raw)
             };
-            Err((raw, display))
+            Err((raw.into(), display))
         }
         Err(e) => {
-            crate::logging::error(&format!("[market] plugin {action} 执行失败"), &e);
+            crate::logging::error(
+                &format!("[market] plugin {action} 执行失败"),
+                &e.to_english(),
+            );
             Err((e.clone(), e))
         }
     }
@@ -1474,22 +1470,22 @@ pub(crate) fn blocked_build_packages(output: &str) -> Vec<String> {
 }
 
 /// profile 的 pnpm-workspace.yaml 路径（package.json 同目录）
-fn workspace_yaml_path() -> Result<std::path::PathBuf, String> {
+fn workspace_yaml_path() -> Result<std::path::PathBuf, Message> {
     Ok(web_profile_dir()?.join("pnpm-workspace.yaml"))
 }
 
 /// web profile 目录（package.json 所在处）——patch、workspace yaml 等同级
 /// 文件的唯一定位来源
-fn web_profile_dir() -> Result<std::path::PathBuf, String> {
+fn web_profile_dir() -> Result<std::path::PathBuf, Message> {
     web_profile_package_path()?
         .parent()
         .map(std::path::Path::to_path_buf)
-        .ok_or_else(|| "Web profile has no parent directory".to_string())
+        .ok_or_else(|| Message::key("Web profile has no parent directory"))
 }
 
 /// profile 的 cordis.patch.yml 路径（dsh loader 的用户覆盖层，启停开关的
 /// 落盘位置）
-fn profile_patch_path() -> Result<std::path::PathBuf, String> {
+fn profile_patch_path() -> Result<std::path::PathBuf, Message> {
     Ok(web_profile_dir()?.join("cordis.patch.yml"))
 }
 
@@ -1500,13 +1496,12 @@ fn profile_patch_path() -> Result<std::path::PathBuf, String> {
 pub(crate) fn merge_allow_builds(
     path: &std::path::Path,
     packages: &[String],
-) -> Result<(), String> {
+) -> Result<(), Message> {
     let yaml_invalid = || "Invalid pnpm workspace config".to_string();
     let mut root: serde_yaml::Value = if path.exists() {
         let raw = std::fs::read_to_string(path).map_err(|e| {
             crate::logging::warn("[market] 读取 pnpm-workspace.yaml 失败", &e.to_string());
-            keyf(
-                "Failed to read {path}: {error}",
+            Message::localized("Failed to read {{path}}: {{error}}",
                 &[
                     ("path", path.display().to_string()),
                     ("error", e.to_string()),
@@ -1516,8 +1511,7 @@ pub(crate) fn merge_allow_builds(
         serde_yaml::from_str(&raw).map_err(|e| {
             crate::logging::warn("[market] 解析 pnpm-workspace.yaml 失败", &e.to_string());
             // 损坏时拒绝覆盖：宁可让用户手改，不可静默丢配置
-            keyf(
-                "Failed to parse {path}: {error}",
+            Message::localized("Failed to parse {{path}}: {{error}}",
                 &[
                     ("path", path.display().to_string()),
                     ("error", e.to_string()),
@@ -1562,8 +1556,7 @@ pub(crate) fn merge_allow_builds(
     let out = serde_yaml::to_string(&root).map_err(|e| e.to_string())?;
     std::fs::write(path, out).map_err(|e| {
         crate::logging::warn("[market] 写入 pnpm-workspace.yaml 失败", &e.to_string());
-        keyf(
-            "Failed to write {path}: {error}",
+        Message::localized("Failed to write {{path}}: {{error}}",
             &[
                 ("path", path.display().to_string()),
                 ("error", e.to_string()),
@@ -1680,7 +1673,7 @@ pub(crate) fn set_entries_enabled(
     raw: &str,
     entries: &[(String, String)],
     enabled: bool,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, Message> {
     let mut lines: Vec<String> = raw.lines().map(str::to_string).collect();
     if is_empty_patch(raw) {
         // 空层：剥掉 `[]` 占位行、保留注释行——追加的覆盖行落在注释头之
@@ -1758,7 +1751,7 @@ pub(crate) fn set_entries_enabled(
 fn top_level_item_ranges(
     lines: &[String],
     raw: &str,
-) -> Result<Vec<(usize, usize, String, bool)>, String> {
+) -> Result<Vec<(usize, usize, String, bool)>, Message> {
     let mut starts: Vec<usize> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         if line.starts_with("- ") || line == "-" {
@@ -1769,7 +1762,7 @@ fn top_level_item_ranges(
         if is_empty_patch(raw) {
             return Ok(Vec::new());
         }
-        return Err("Web profile patch must contain a top-level YAML array".to_string());
+        return Err(Message::key("Web profile patch must contain a top-level YAML array"));
     }
     let mut ranges = Vec::new();
     for (n, &start) in starts.iter().enumerate() {
@@ -1967,7 +1960,7 @@ pub(crate) fn duplicate_mount_strips_of(
 fn strip_duplicate_mounts(
     before: &ProfileLayer,
     after: &ProfileLayer,
-) -> Result<Vec<InstallNotice>, String> {
+) -> Result<Vec<InstallNotice>, Message> {
     let mounted: std::collections::BTreeSet<String> =
         before_row_mounted(before).into_iter().collect();
     let strips = duplicate_mount_strips_of(&before.bundles, &after.bundles, &mounted);
@@ -1976,7 +1969,8 @@ fn strip_duplicate_mounts(
     }
     let path = web_profile_package_path()?;
     let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut package: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let mut package: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     let Some(bundles) = package
         .pointer_mut("/dsh/profile/bundles")
         .and_then(serde_json::Value::as_array_mut)
@@ -1990,8 +1984,7 @@ fn strip_duplicate_mounts(
     });
     let out = serde_json::to_string_pretty(&package).map_err(|e| e.to_string())?;
     std::fs::write(&path, out + "\n").map_err(|e| {
-        keyf(
-            "Failed to write {path}: {error}",
+        Message::localized("Failed to write {{path}}: {{error}}",
             &[
                 ("path", path.display().to_string()),
                 ("error", e.to_string()),
@@ -2011,16 +2004,13 @@ pub(crate) fn verify_landed(
     specifier: &str,
     before: &ProfileLayer,
     after: &ProfileLayer,
-) -> Result<(), String> {
+) -> Result<(), Message> {
     let landed = match package_name_from_specifier(specifier) {
         Some(name) => after.dependencies.contains(&name) || before.dependencies.contains(&name),
         None => before.dependencies != after.dependencies,
     };
     if !landed {
-        return Err(keyf(
-            "dsh plugin add reported success but nothing landed in the web profile (install did not take effect)",
-            &[],
-        ));
+        return Err(Message::key("dsh plugin add reported success but nothing landed in the web profile (install did not take effect)"));
     }
     Ok(())
 }
@@ -2030,7 +2020,7 @@ pub(crate) fn verify_landed(
 /// 的事实源：dsh 自己输出的组合事实，诊断不复刻组合语义、随上游升级零
 /// 漂移），stderr 携带孤儿 patch 行告警；失败返回合并输出（牵连性指纹匹配
 /// 用）——超时被杀也走失败路径，已捕获的部分输出照样参与指纹匹配
-fn dump_config_raw() -> Result<(String, String), String> {
+fn dump_config_raw() -> Result<(String, String), Message> {
     let dsh = resolve_dsh_bin()?.display().to_string();
     let (out, err, ok, timed_out) = run_capture_lines(
         &dsh,
@@ -2046,38 +2036,46 @@ fn dump_config_raw() -> Result<(String, String), String> {
     if timed_out {
         parts.push("(dump-config timed out and was terminated)".to_string());
     }
-    Err(parts.join("\n"))
+    Err(Message::key(parts.join("\n")))
 }
 
-fn dump_config() -> Result<(), String> {
+fn dump_config() -> Result<(), Message> {
     dump_config_raw().map(|_| ())
 }
 
 /// owner-aware 回滚：经官方 remove 路径撤下新包（连带其 bundle 对账产物），
 /// 现有插件的入口与启停状态不动。回滚失败在错误里给手动命令。恒返回给
 /// 用户的错误文案（调用方包 Err 透传），审计记 rollback 行
-fn rollback_install(app: &tauri::AppHandle, name: &str, reason: &str, specifier: &str) -> String {
+fn rollback_install(
+    app: &tauri::AppHandle,
+    name: &str,
+    reason: Message,
+    specifier: &str,
+) -> Message {
     let outcome = run_plugin_cmd("remove", name, |_| {});
-    append_audit(app, "rollback", specifier, Some(reason));
+    append_audit(
+        app,
+        "rollback",
+        specifier,
+        Some(&reason.to_english()),
+    );
     let rolled_back = outcome.is_ok();
-    let tail = outcome.err().map(|(raw, _)| raw).unwrap_or_default();
-    keyf(
+    // detail 是插值进句子的字面数据，不是可翻译句子：失败时放原始 remove 输出
+    // （Nested 保留其自身形态），无输出时是字面量 "-"，故不进词典、不作 key
+    let tail: MessageArg = outcome
+        .err()
+        .map(|(raw, _)| MessageArg::Nested(Box::new(raw)))
+        .unwrap_or_else(|| MessageArg::Text("-".to_string()));
+    Message::localized(
         if rolled_back {
-            "{reason}; the new plugin was rolled back automatically. Detail: {detail}"
+            "{{reason}}; the new plugin was rolled back automatically. Detail: {{detail}}"
         } else {
-            "{reason}; automatic rollback failed — run \"dsh plugin --profile web remove {name}\" manually. Detail: {detail}"
+            "{{reason}}; automatic rollback failed — run \"dsh plugin --profile web remove {{name}}\" manually. Detail: {{detail}}"
         },
         &[
-            ("reason", reason.to_string()),
-            ("name", name.to_string()),
-            (
-                "detail",
-                if tail.is_empty() {
-                    "-".to_string()
-                } else {
-                    tail
-                },
-            ),
+            ("reason", MessageArg::Nested(Box::new(reason.clone()))),
+            ("name", MessageArg::Text(name.to_string())),
+            ("detail", tail),
         ],
     )
 }
@@ -2091,7 +2089,7 @@ fn post_install_guard(
     app: &tauri::AppHandle,
     specifier: &str,
     before: &ProfileLayer,
-) -> Result<Vec<InstallNotice>, String> {
+) -> Result<Vec<InstallNotice>, Message> {
     let after = capture_profile_layer();
     verify_landed(specifier, before, &after)?;
     let notices = strip_duplicate_mounts(before, &after)?;
@@ -2130,8 +2128,7 @@ fn post_install_guard(
                 return Err(rollback_install(
                     app,
                     name,
-                    &keyf(
-                        "New plugin claims entry ids already held by existing plugins ({ids})",
+                    Message::localized("New plugin claims entry ids already held by existing plugins ({{ids}})",
                         &[("ids", overlap.join(", "))],
                     ),
                     specifier,
@@ -2153,12 +2150,11 @@ fn post_install_guard(
             return Err(rollback_install(
                 app,
                 new_dep.as_deref().unwrap_or_default(),
-                "Boot preflight failed",
+                "Boot preflight failed".into(),
                 specifier,
             ));
         }
-        return Err(keyf(
-            "Boot preflight failed (unrelated to this install): {detail}",
+        return Err(Message::localized("Boot preflight failed (unrelated to this install): {{detail}}",
             &[("detail", tail)],
         ));
     }
@@ -2312,12 +2308,12 @@ pub(crate) fn protocol_installed_match<'a>(
 // ============ IPC ============
 
 #[tauri::command]
-pub async fn market_fetch(app: tauri::AppHandle) -> Result<MarketCatalog, String> {
+pub async fn market_fetch(app: tauri::AppHandle) -> Result<MarketCatalog, Message> {
     super::ipc_blocking(move || fetch_catalog(&app)).await
 }
 
 #[tauri::command]
-pub fn market_installed() -> Result<Vec<InstalledPlugin>, String> {
+pub fn market_installed() -> Result<Vec<InstalledPlugin>, Message> {
     installed_plugins()
 }
 
@@ -2336,11 +2332,11 @@ pub fn market_snapshot(app: tauri::AppHandle) -> Option<MarketCatalog> {
 /// 记账（raw 进审计台账，display 给用户）
 pub(crate) fn install_decision(
     specifier: &str,
-    run: Result<(), (String, String)>,
+    run: Result<(), (Message, Message)>,
     before: Option<Vec<String>>,
     after: Option<Vec<InstalledPlugin>>,
     workspace_yaml: Option<String>,
-) -> Result<InstallOutcome, (String, String)> {
+) -> Result<InstallOutcome, (Message, Message)> {
     match run {
         Ok(()) => {
             let receipt = after.and_then(|list| {
@@ -2357,10 +2353,13 @@ pub(crate) fn install_decision(
             })
         }
         Err((raw, display)) => {
+            // 指纹匹配查的是消息的英文原文（词典在前端，Rust 侧只有英文可查）；
+            // raw 本身保持 Message 形态进台账与错误载荷，不因查询被压成字符串
+            let raw_english = raw.to_english();
             // store 漂移（pnpm 大版本升级后 profile 的 node_modules 仍链在旧
             // store / hoist 形态上）：pnpm 拒绝一切安装与卸载，构建脚本审批
             // 无从谈起——先于审批指纹分流，执行体据此走自动重建重试
-            if pnpm_failure_hint(&raw)
+            if pnpm_failure_hint(&raw_english)
                 .is_some_and(|h| h == HINT_UNEXPECTED_STORE || h == HINT_HOIST_DRIFT)
             {
                 return Ok(InstallOutcome::NeedsStoreRepair);
@@ -2369,16 +2368,16 @@ pub(crate) fn install_decision(
             // 的键"：registry 包 = 包名（Ignored build scripts 行），git 包 =
             // 完整键（ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED 硬失败，无该行）；
             // git 键解析不出的变形输出仍走普通失败（HINT_GIT_PREPARE 兜底）
-            let mut packages = blocked_build_packages(&raw);
+            let mut packages = blocked_build_packages(&raw_english);
             if packages.is_empty() {
-                packages = git_prepare_allow_keys(&raw);
+                packages = git_prepare_allow_keys(&raw_english);
             }
             if !packages.is_empty() {
                 // 拦截不算安装失败：转审批请求（被拦包名 + 待写 yaml 路径）
                 let workspace_yaml = workspace_yaml.ok_or_else(|| {
                     (
                         raw.clone(),
-                        "Web profile has no parent directory".to_string(),
+                        Message::key("Web profile has no parent directory"),
                     )
                 })?;
                 return Ok(InstallOutcome::NeedsApproval {
@@ -2396,30 +2395,34 @@ pub(crate) fn install_decision(
 /// 台账记原始子进程输出，不随判定层的加工漂移）。判定成功后过安装护栏
 /// （预检/冲突对账/自动回滚），护栏拦截转失败、剥离事实附进结果。
 /// store 漂移（NeedsStoreRepair）走自动修复：重建 node_modules 后原样重跑
-fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcome, String> {
+fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcome, Message> {
     let before = installed_plugins()
         .ok()
         .map(|l| l.iter().map(|p| p.name.clone()).collect::<Vec<_>>());
     let before_layer = capture_profile_layer();
     let mut run = run_plugin_cmd("add", specifier, emit_install_line(app, specifier));
     let workspace_yaml = workspace_yaml_path().ok().map(|p| p.display().to_string());
-    let store_repair = matches!(
-        run.as_ref().err(),
-        Some((raw, _))
-            if pnpm_failure_hint(raw)
-                .is_some_and(|h| h == HINT_UNEXPECTED_STORE || h == HINT_HOIST_DRIFT)
-    );
+    // 漂移判定与 install_decision 同源：交给 pnpm_failure_hint 查码表（表序即
+    // 判定顺序，首中即定），不在此处复刻一份码清单。查码用的是原始文本，raw
+    // 本身仍是 Message，原样进台账与错误载荷
+    let store_repair = run
+        .as_ref()
+        .err()
+        .map(|(raw, _)| raw.to_english())
+        .and_then(|raw| pnpm_failure_hint(&raw))
+        .is_some_and(|hint| hint == HINT_UNEXPECTED_STORE || hint == HINT_HOIST_DRIFT);
     if store_repair {
         // 首跑命中的原始输出进台账（可复述事实），随后重建重试
         let first_raw = run.as_ref().err().map(|(raw, _)| raw.clone());
-        append_audit(app, "repair-store", specifier, first_raw.as_deref());
+        let first_raw_english = first_raw.as_ref().map(Message::to_english);
+        append_audit(app, "repair-store", specifier, first_raw_english.as_deref());
         match rebuild_profile_store(emit_install_line(app, specifier)) {
             Ok(()) => {
                 append_audit(app, "repair-store", specifier, None);
                 run = run_plugin_cmd("add", specifier, emit_install_line(app, specifier));
             }
             Err((raw, display)) => {
-                append_audit(app, "repair-store", specifier, Some(&raw));
+                append_audit(app, "repair-store", specifier, Some(&raw.to_english()));
                 return Err(display);
             }
         }
@@ -2433,7 +2436,7 @@ fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcom
             let notices = match post_install_guard(app, specifier, &before_layer) {
                 Ok(notices) => notices,
                 Err(display) => {
-                    append_audit(app, "add", specifier, Some(&display));
+                    append_audit(app, "add", specifier, Some(&display.to_english()));
                     return Err(display);
                 }
             };
@@ -2442,16 +2445,26 @@ fn install_once(app: &tauri::AppHandle, specifier: &str) -> Result<InstallOutcom
         }
         Ok(outcome @ InstallOutcome::NeedsApproval { .. }) => {
             // 台账记请求本身：拦截的原始 stderr 是可复述事实
-            append_audit(app, "needs-approval", specifier, raw_failure.as_deref());
+            let raw_failure_english = raw_failure.as_ref().map(Message::to_english);
+            append_audit(
+                app,
+                "needs-approval",
+                specifier,
+                raw_failure_english.as_deref(),
+            );
             Ok(outcome)
         }
         // 自动修复只重试一次：重跑仍报 store 漂移按普通失败如实上报
-        Ok(InstallOutcome::NeedsStoreRepair) => Err(install_failure_message(
-            "add",
-            raw_failure.as_deref().unwrap_or_default(),
-        )),
+        Ok(InstallOutcome::NeedsStoreRepair) => {
+            // 兜底文案与旧 unwrap_or_default 之后的可达分支同义（raw 恒有值）
+            let raw_english = raw_failure.as_ref().map(Message::to_english);
+            Err(install_failure_message(
+                "add",
+                &raw_english.unwrap_or_else(|| failure_raw("", "", "add")),
+            ))
+        }
         Err((raw, display)) => {
-            append_audit(app, "add", specifier, Some(&raw));
+            append_audit(app, "add", specifier, Some(&raw.to_english()));
             Err(display)
         }
     }
@@ -2484,7 +2497,7 @@ fn emit_install_line(
 pub async fn market_install(
     app: tauri::AppHandle,
     specifier: String,
-) -> Result<InstallOutcome, String> {
+) -> Result<InstallOutcome, Message> {
     super::ipc_blocking(move || with_plugin_operation(|| install_once(&app, &specifier))).await
 }
 
@@ -2495,7 +2508,7 @@ fn approve_builds_once(
     app: &tauri::AppHandle,
     specifier: &str,
     packages: Vec<String>,
-) -> Result<InstallOutcome, String> {
+) -> Result<InstallOutcome, Message> {
     let before_layer = capture_profile_layer();
     let yaml = workspace_yaml_path()?;
     merge_allow_builds(&yaml, &packages)?;
@@ -2513,7 +2526,7 @@ fn approve_builds_once(
             let notices = match post_install_guard(app, specifier, &before_layer) {
                 Ok(notices) => notices,
                 Err(display) => {
-                    append_audit(app, "add", specifier, Some(&display));
+                    append_audit(app, "add", specifier, Some(&display.to_english()));
                     return Err(display);
                 }
             };
@@ -2529,7 +2542,7 @@ fn approve_builds_once(
             Ok(InstallOutcome::Installed { receipt, notices })
         }
         Err((raw, display)) => {
-            append_audit(app, "add", specifier, Some(&raw));
+            append_audit(app, "add", specifier, Some(&raw.to_english()));
             Err(display)
         }
     }
@@ -2543,12 +2556,12 @@ pub async fn market_approve_builds(
     app: tauri::AppHandle,
     specifier: String,
     packages: Vec<String>,
-) -> Result<InstallOutcome, String> {
+) -> Result<InstallOutcome, Message> {
     if !valid_identifier(&specifier)
         || packages.is_empty()
         || packages.iter().any(|p| !valid_allow_key(p))
     {
-        return Err("Invalid plugin identifier".to_string());
+        return Err(Message::key("Invalid plugin identifier"));
     }
     super::ipc_blocking(move || {
         with_plugin_operation(|| approve_builds_once(&app, &specifier, packages))
@@ -2564,19 +2577,17 @@ fn set_plugin_enabled_once(
     app: &tauri::AppHandle,
     name: &str,
     enabled: bool,
-) -> Result<InstalledPlugin, String> {
+) -> Result<InstalledPlugin, Message> {
     let list = installed_plugins()?;
     if list.iter().all(|p| p.name != name) {
-        return Err(keyf(
-            "Plugin not installed: {name}",
+        return Err(Message::localized("Plugin not installed: {{name}}",
             &[("name", name.to_string())],
         ));
     }
     if list.iter().any(|p| p.name == name && p.managed) {
-        return Err(
-            "Managed plugins are managed by the launcher's repair flow and cannot be toggled here."
-                .to_string(),
-        );
+        return Err(Message::key(
+            "Managed plugins are managed by the launcher's repair flow and cannot be toggled here.",
+        ));
     }
     let patch_path = profile_patch_path()?;
     let raw = std::fs::read_to_string(&patch_path).unwrap_or_default();
@@ -2585,8 +2596,7 @@ fn set_plugin_enabled_once(
         Some(updated) => {
             std::fs::write(&patch_path, updated).map_err(|e| {
                 crate::logging::warn("[market] 写入 cordis.patch.yml 失败", &e.to_string());
-                keyf(
-                    "Failed to write {path}: {error}",
+                Message::localized("Failed to write {{path}}: {{error}}",
                     &[
                         ("path", patch_path.display().to_string()),
                         ("error", e.to_string()),
@@ -2614,8 +2624,7 @@ fn set_plugin_enabled_once(
         .into_iter()
         .find(|p| p.name == name)
         .ok_or_else(|| {
-            keyf(
-                "Plugin not installed: {name}",
+            Message::localized("Plugin not installed: {{name}}",
                 &[("name", name.to_string())],
             )
         })
@@ -2629,9 +2638,9 @@ pub async fn market_set_plugin_enabled(
     app: tauri::AppHandle,
     name: String,
     enabled: bool,
-) -> Result<InstalledPlugin, String> {
+) -> Result<InstalledPlugin, Message> {
     if !valid_identifier(&name) {
-        return Err("Invalid plugin identifier".to_string());
+        return Err(Message::key("Invalid plugin identifier"));
     }
     super::ipc_blocking(move || {
         with_plugin_operation(|| set_plugin_enabled_once(&app, &name, enabled))
@@ -2658,7 +2667,7 @@ fn strip_disabled_override_rows(entries: &[(String, String)]) {
 }
 
 /// 移除插件的执行体（market_remove 的阻塞部分）
-fn remove_once(app: &tauri::AppHandle, name: &str) -> Result<(), String> {
+fn remove_once(app: &tauri::AppHandle, name: &str) -> Result<(), Message> {
     // claimed 入口在移除前读：移除后 node_modules 消失，无法再定位
     let claimed = web_profile_dir()
         .ok()
@@ -2672,14 +2681,14 @@ fn remove_once(app: &tauri::AppHandle, name: &str) -> Result<(), String> {
             Ok(())
         }
         Err((raw, display)) => {
-            append_audit(app, "remove", name, Some(&raw));
+            append_audit(app, "remove", name, Some(&raw.to_english()));
             Err(display)
         }
     }
 }
 
 #[tauri::command]
-pub async fn market_remove(app: tauri::AppHandle, name: String) -> Result<(), String> {
+pub async fn market_remove(app: tauri::AppHandle, name: String) -> Result<(), Message> {
     super::ipc_blocking(move || with_plugin_operation(|| remove_once(&app, &name))).await
 }
 
@@ -2689,7 +2698,7 @@ pub async fn market_remove(app: tauri::AppHandle, name: String) -> Result<(), St
 /// 时先弹供应链确认框，用户确认后才钉版本 name@latestVersion 重装，
 /// 与安装同一 dsh 闸门、审计与审批路径
 #[tauri::command]
-pub async fn market_check_updates() -> Result<Vec<PluginUpdateInfo>, String> {
+pub async fn market_check_updates() -> Result<Vec<PluginUpdateInfo>, Message> {
     super::ipc_blocking(check_updates_once).await
 }
 
@@ -2702,7 +2711,7 @@ pub async fn market_check_updates() -> Result<Vec<PluginUpdateInfo>, String> {
 /// 失败，串行安装仍是唯一写盘路径、会自行下载）；只有系统级错误（如 profile
 /// 不可得）才 Err。并发 worker 池与 discovery_compat_once 同款（Mutex 队列 +
 /// 固定并发），共享 store 内容寻址 immutable，并发写入不同包安全
-fn prefetch_once(specifiers: Vec<String>, profile_dir: &std::path::Path) -> Result<(), String> {
+fn prefetch_once(specifiers: Vec<String>, profile_dir: &std::path::Path) -> Result<(), Message> {
     if specifiers.is_empty() {
         return Ok(());
     }
@@ -2745,7 +2754,7 @@ fn prefetch_once(specifiers: Vec<String>, profile_dir: &std::path::Path) -> Resu
 /// 后端并发 `pnpm store add`（--dir 对齐 profile 的 store），完成后前端再进入串行
 /// 安装队列。恒 Ok（单包失败容忍）；profile 不可得等系统级错误才 Err
 #[tauri::command]
-pub async fn market_prefetch(specifiers: Vec<String>) -> Result<(), String> {
+pub async fn market_prefetch(specifiers: Vec<String>) -> Result<(), Message> {
     let profile_dir = web_profile_dir()?;
     super::ipc_blocking(move || prefetch_once(specifiers, &profile_dir)).await
 }
@@ -2792,19 +2801,20 @@ const COMPAT_FAILURE_COOLDOWN_SECS: i64 = 5 * 60;
 /// 缓存条目硬上限（写时按 checkedAt 淘汰最旧）
 pub(crate) const COMPAT_CACHE_MAX_ENTRIES: usize = 5000;
 
-fn compat_cache_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+fn compat_cache_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Message> {
     use tauri::Manager;
-    app.path()
+    Ok(app
+        .path()
         .app_data_dir()
-        .map(|p| p.join("market-compat-cache.json"))
         .map_err(|e| e.to_string())
+        .map(|p| p.join("market-compat-cache.json"))?)
 }
 
-pub(crate) fn load_compat_cache_file(path: &std::path::Path) -> Result<CompatCacheFile, String> {
+pub(crate) fn load_compat_cache_file(path: &std::path::Path) -> Result<CompatCacheFile, Message> {
     let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     let file: CompatCacheFile = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     if file.schema != COMPAT_CACHE_SCHEMA {
-        return Err("unsupported compat cache schema".to_string());
+        return Err(Message::key("unsupported compat cache schema"));
     }
     Ok(file)
 }
@@ -2812,7 +2822,7 @@ pub(crate) fn load_compat_cache_file(path: &std::path::Path) -> Result<CompatCac
 pub(crate) fn write_compat_cache_file(
     path: &std::path::Path,
     entries: &BTreeMap<String, CompatCacheEntry>,
-) -> Result<(), String> {
+) -> Result<(), Message> {
     // 硬上限裁剪：按 checkedAt 保留最新的一批，防长年膨胀（B 方同值 5000）
     let mut newest: Vec<(&String, &CompatCacheEntry)> = entries.iter().collect();
     newest.sort_by_key(|e| std::cmp::Reverse(e.1.checked_at));
@@ -2824,11 +2834,11 @@ pub(crate) fn write_compat_cache_file(
             .map(|(k, v)| (k.clone(), (*v).clone()))
             .collect(),
     };
-    std::fs::write(
+    Ok(std::fs::write(
         path,
         serde_json::to_string(&file).map_err(|e| e.to_string())?,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?)
 }
 
 /// 单包失败冷却的进程内记账：name → 冷却到点的 unix 秒。BTreeMap 以保
@@ -2905,7 +2915,7 @@ fn discovery_compat_once(
         }
         if let Some(p) = cache_path {
             if let Err(e) = write_compat_cache_file(p, &cache) {
-                crate::logging::warn("[market] 兼容缓存写入失败", &e);
+                crate::logging::warn("[market] 兼容缓存写入失败", &e.to_english());
             }
         }
     }
@@ -2935,7 +2945,7 @@ fn discovery_compat_once(
 pub async fn market_discovery_compat(
     app: tauri::AppHandle,
     names: Vec<String>,
-) -> Result<Vec<DiscoveryCompat>, String> {
+) -> Result<Vec<DiscoveryCompat>, Message> {
     super::ipc_blocking(move || {
         let path = compat_cache_path(&app).ok();
         Ok(discovery_compat_once(names, path.as_deref()))
@@ -2980,6 +2990,8 @@ pub struct ReleaseNotesInfo {
 #[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct CommitNoteInfo {
     pub sha: String,
+    /// commit subject 是 GitHub API 的外部数据（原文即英文，无译文可言），
+    /// 不是可翻译句子：保持 String 原样透传，前端直接渲染
     pub message: String,
     pub date: Option<String>,
 }
@@ -2997,12 +3009,13 @@ pub(crate) fn valid_repo_id(repo: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-'))
 }
 
-fn updates_cache_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+fn updates_cache_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, Message> {
     use tauri::Manager;
-    app.path()
+    Ok(app
+        .path()
         .app_data_dir()
-        .map(|p| p.join("market-updates-cache.json"))
         .map_err(|e| e.to_string())
+        .map(|p| p.join("market-updates-cache.json"))?)
 }
 
 /// 缓存新鲜度判定（纯函数，mtime 即时间戳——缓存文件就是 updates.json 原文，
@@ -3113,9 +3126,9 @@ pub(crate) fn release_notes_once(
 pub async fn market_release_notes(
     app: tauri::AppHandle,
     repo: String,
-) -> Result<Option<PluginReleaseNotes>, String> {
+) -> Result<Option<PluginReleaseNotes>, Message> {
     if !valid_repo_id(&repo) {
-        return Err("Invalid repository identifier".to_string());
+        return Err(Message::key("Invalid repository identifier"));
     }
     super::ipc_blocking(move || {
         let path = updates_cache_path(&app).ok();
@@ -3247,7 +3260,7 @@ pub(crate) fn diagnostics_from_dump(stdout: &str, stderr: &str) -> MarketDiagnos
 
 /// 诊断执行体（market_diagnostics 的阻塞部分）：dump-config 失败即 Err——
 /// 组合跑不起来正是诊断要暴露的事实，错误原文（dsh 的失败输出）原样上报
-fn diagnostics_once() -> Result<MarketDiagnostics, String> {
+fn diagnostics_once() -> Result<MarketDiagnostics, Message> {
     let (stdout, stderr) = dump_config_raw()?;
     Ok(diagnostics_from_dump(&stdout, &stderr))
 }
@@ -3255,6 +3268,6 @@ fn diagnostics_once() -> Result<MarketDiagnostics, String> {
 /// 深度诊断：组合层事实从 dsh 自己的 `--dump-config` 输出读取（重复入口
 /// id / 孤儿 patch 行 / 禁用计数），零组合语义复刻。90s 硬超时（D1 同款）
 #[tauri::command]
-pub async fn market_diagnostics() -> Result<MarketDiagnostics, String> {
+pub async fn market_diagnostics() -> Result<MarketDiagnostics, Message> {
     super::ipc_blocking(diagnostics_once).await
 }
