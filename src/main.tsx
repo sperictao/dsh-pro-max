@@ -7,6 +7,7 @@ import "./features/models/advanced-settings.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { installMarketTabAccessibility } from "./features/market/market-tabs-a11y";
 import { getResolvedLanguage } from "./shared/commands";
 import { initI18n, type ResolvedLanguage } from "./shared/i18n";
 import { getStoredFamily, getStoredTheme, resolveDataTheme } from "./shared/theme";
@@ -33,6 +34,7 @@ async function bootstrap(): Promise<void> {
       <App />
     </StrictMode>,
   );
+  installMarketTabAccessibility();
 }
 
 void bootstrap();
