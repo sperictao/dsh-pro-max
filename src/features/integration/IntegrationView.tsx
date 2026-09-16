@@ -5,7 +5,7 @@ import { DshCard } from "./DshCard";
 
 export function IntegrationView() {
   return (
-    <main className="app-page-padding flex-1 overflow-y-auto py-6" id="integration-view">
+    <main className="flex-1 overflow-y-auto px-[var(--app-page-gutter)] py-6" id="integration-view">
       <div className="app-page-width mx-auto w-full">
         <DshCard />
       </div>
