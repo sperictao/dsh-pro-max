@@ -113,32 +113,36 @@ export function SettingsView() {
         {/* key 随分区切换重挂载：滚动位置归位 */}
         <div key={section} className="flex min-w-0 flex-1 flex-col overflow-y-auto">
           <div className="flex-1 p-4 sm:p-6">
-            {section === "general" && <GeneralSection />}
-            {section === "appearance" && <AppearanceSection />}
-            {section === "dsh-version" && <DshVersionSection />}
-            {section === "dsh-autostart" && <DshAutostartSection />}
-            {section === "dsh-auth" && <RemoteAuthSection />}
-            {section === "about" && <AboutSection />}
+            <div className="app-page-width mx-auto w-full">
+              {section === "general" && <GeneralSection />}
+              {section === "appearance" && <AppearanceSection />}
+              {section === "dsh-version" && <DshVersionSection />}
+              {section === "dsh-autostart" && <DshAutostartSection />}
+              {section === "dsh-auth" && <RemoteAuthSection />}
+              {section === "about" && <AboutSection />}
+            </div>
           </div>
           {/* 全局脏状态保存条：有未落盘修改才出现，与所在分区无关 */}
           {dirty && (
             <div
-              className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6"
+              className="sticky bottom-0 border-t border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6"
               id="settings-footer"
             >
-              <span className="mr-auto text-xs opacity-70">{t("You have unsaved changes")}</span>
-              <button type="button" className={BTN} id="btn-discard-config" onClick={discardConfigDraft}>
-                {t("Discard")}
-              </button>
-              <button
-                type="button"
-                className={BTN_PRIMARY}
-                id="btn-save-config"
-                disabled={saveBlocked}
-                onClick={() => void saveConfig()}
-              >
-                {t("Save Settings")}
-              </button>
+              <div className="app-page-width mx-auto flex w-full items-center justify-end gap-3">
+                <span className="mr-auto text-xs opacity-70">{t("You have unsaved changes")}</span>
+                <button type="button" className={BTN} id="btn-discard-config" onClick={discardConfigDraft}>
+                  {t("Discard")}
+                </button>
+                <button
+                  type="button"
+                  className={BTN_PRIMARY}
+                  id="btn-save-config"
+                  disabled={saveBlocked}
+                  onClick={() => void saveConfig()}
+                >
+                  {t("Save Settings")}
+                </button>
+              </div>
             </div>
           )}
         </div>
