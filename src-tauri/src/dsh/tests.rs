@@ -281,9 +281,9 @@ fn plugin_failure_names_the_innermost_non_builtin_entry() {
             "failed to apply loader entry agent-teams (@nanmicoder/dsh-agent-teams): ctx.subagents.registerContinuableSetup is not a function\n",
             "    at updateError (cordis-plugin-loader/lib/index.js:309:9)\n",
         );
-    let (plugin, error) = plugin_failure_from_log_tail(tail).unwrap();
-    assert_eq!(plugin, "@nanmicoder/dsh-agent-teams");
-    assert!(error.contains("registerContinuableSetup is not a function"));
+    let failure = plugin_failure_from_log_tail(tail).unwrap();
+    assert_eq!(failure.plugin.as_deref(), Some("@nanmicoder/dsh-agent-teams"));
+    assert!(failure.error.contains("registerContinuableSetup is not a function"));
 }
 
 #[test]
@@ -293,9 +293,9 @@ fn plugin_failure_falls_back_to_missing_module_in_builtin_only_chain() {
         "dsh: fatal load failure: Error: dsh: plugin tree failed to load: ",
         "failed to apply loader entry include (cordis:include): Cannot find module '@foo/bar'\n",
     );
-    let (plugin, error) = plugin_failure_from_log_tail(tail).unwrap();
-    assert_eq!(plugin, "@foo/bar");
-    assert!(error.contains("Cannot find module '@foo/bar'"));
+    let failure = plugin_failure_from_log_tail(tail).unwrap();
+    assert_eq!(failure.plugin.as_deref(), Some("@foo/bar"));
+    assert!(failure.error.contains("Cannot find module '@foo/bar'"));
 }
 
 #[test]
@@ -2939,26 +2939,31 @@ fn resolve_local_access_url_falls_back_to_bare_url_after_budget_exhausted() {
 fn diagnose_start_failure_branches_on_log_fingerprints() {
     set_current("en");
     // 无日志：占用端口的兜底文案
-    let no_log = super::setup::diagnose_start_failure_from_tail(None);
+    let no_log = super::setup::diagnose_start_failure_from_tail(None, None);
     assert!(no_log.problem.contains("no log output"));
     assert!(no_log.solution.contains("dsh-web.log"));
     // EPERM 指纹 → Windows 开发者模式
-    let eperm = super::setup::diagnose_start_failure_from_tail(Some(
-        "Error: EPERM: operation not permitted, symlink",
-    ));
+    let eperm = super::setup::diagnose_start_failure_from_tail(
+        Some("Error: EPERM: operation not permitted, symlink"),
+        None,
+    );
     assert!(eperm.solution.contains("Developer Mode"));
     assert_eq!(eperm.action_plugin, None);
     // credentials 格式指纹 → 手动还原指引
-    let credentials = super::setup::diagnose_start_failure_from_tail(Some(
-        "Error: the value for \"version\" in /x/.dsh/.credentials.yaml must be a string",
-    ));
+    let credentials = super::setup::diagnose_start_failure_from_tail(
+        Some("Error: the value for \"version\" in /x/.dsh/.credentials.yaml must be a string"),
+        None,
+    );
     assert!(credentials.solution.contains("KEY: value"));
     // 插件崩溃链优先于通用指纹
-    let plugin = super::setup::diagnose_start_failure_from_tail(Some(concat!(
+    let plugin = super::setup::diagnose_start_failure_from_tail(
+        Some(concat!(
             "Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): ",
             "failed to apply loader entry agent-teams (@nanmicoder/dsh-agent-teams): ctx.x is not a function\n",
             "EPERM something", // 通用指纹在场也不抢插件点名
-        )));
+        )),
+        None,
+    );
     assert!(plugin.problem.contains("@nanmicoder/dsh-agent-teams"));
     assert!(plugin.solution.contains("Plugins page"));
     assert_eq!(
@@ -2966,10 +2971,13 @@ fn diagnose_start_failure_branches_on_log_fingerprints() {
         Some("@nanmicoder/dsh-agent-teams")
     );
     // 受管授权插件不提供一键禁用（恢复路径是 Repair dsh stack）
-    let managed = super::setup::diagnose_start_failure_from_tail(Some(concat!(
+    let managed = super::setup::diagnose_start_failure_from_tail(
+        Some(concat!(
             "Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): ",
             "failed to apply loader entry tailscale-auth (@dsh-external/dsh-auth-tailscale): invalid config\n",
-        )));
+        )),
+        None,
+    );
     assert!(managed.problem.contains("@dsh-external/dsh-auth-tailscale"));
     assert_eq!(managed.action_plugin, None);
     // 普通日志：问题截前 8 行进时间轴
@@ -2977,7 +2985,7 @@ fn diagnose_start_failure_branches_on_log_fingerprints() {
         .map(|i| format!("line{i}"))
         .collect::<Vec<_>>()
         .join("\n");
-    let truncated = super::setup::diagnose_start_failure_from_tail(Some(&long_tail));
+    let truncated = super::setup::diagnose_start_failure_from_tail(Some(&long_tail), None);
     assert!(truncated.problem.contains("line8"));
     assert!(!truncated.problem.contains("line9"));
     set_current("en");
@@ -3095,11 +3103,14 @@ fn lock_timeout_diagnosis_points_at_the_lock_file_not_the_builtin_plugin() {
     // connection 插件的锁等待上。按插件链归因会指引用户去 Plugins 页移除一个
     // 不可移除的内置插件——锁超时指纹必须优先，解法指向锁文件本身
     set_current("en");
-    let lock = super::setup::diagnose_start_failure_from_tail(Some(concat!(
+    let lock = super::setup::diagnose_start_failure_from_tail(
+        Some(concat!(
             "Error: dsh: plugin tree failed to load: failed to apply loader entry connection (@deepseek-ai/dsh-client-connection): ",
             "atomic-write: timed out waiting for the writer lock at C:\\Users\\x\\.dsh\\.credentials.yaml.lock\n",
             "Error: atomic-write: timed out waiting for the writer lock at C:\\Users\\x\\.dsh\\.credentials.yaml.lock\n",
-        )));
+        )),
+        None,
+    );
     assert!(lock.problem.contains(".credentials.yaml.lock"));
     assert!(lock.solution.contains(".credentials.yaml.lock"));
     assert!(!lock.solution.contains("Plugins page"));
@@ -4347,4 +4358,306 @@ fn project_catalog_projects_capability_metadata() {
             "missing {expected}"
         );
     }
+}
+
+// ============ 修复核（repair）：影子副本治理 + 保留名剥离 ============
+
+/// 修复核测试的隔离 profile 目录（每次调用全新）
+fn repair_fixture_dir(tag: &str) -> std::path::PathBuf {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "dsh-pro-max-repair-{tag}-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+const REPAIR_SCAFFOLD: &str = "# Your patch layer for this dsh profile, applied after every bundle layer:\n# a top-level YAML array of loader patch entries (id-targeted config\n# overrides, disables, and insert lists; `!!js` expressions allowed).\n[]\n";
+
+/// 给 fixture profile 写一个 bundle（manifest + 自带补丁层）
+fn repair_fixture_bundle(dir: &std::path::Path, name: &str, patch_yaml: &str) {
+    let pkg = dir.join("node_modules").join(name);
+    std::fs::create_dir_all(&pkg).unwrap();
+    std::fs::write(
+        pkg.join("package.json"),
+        format!(r#"{{"name":"{name}","dsh":{{"bundle":{{"patch":"./cordis.patch.yml"}}}}}}"#),
+    )
+    .unwrap();
+    std::fs::write(pkg.join("cordis.patch.yml"), patch_yaml).unwrap();
+}
+
+fn repair_profile_manifest(dir: &std::path::Path, bundles: &[&str]) {
+    let list = bundles
+        .iter()
+        .map(|b| format!("\"{b}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    std::fs::write(
+        dir.join("package.json"),
+        format!(r#"{{"dsh":{{"profile":{{"bundles":[{list}]}}}}}}"#),
+    )
+    .unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn stale_host_copies_removed_but_symlinks_kept() {
+    use super::repair::remove_stale_host_copies;
+    let dir = repair_fixture_dir("copies");
+    let scope = dir.join("node_modules").join("@deepseek-ai");
+    let stale = scope.join("dsh-llm");
+    std::fs::create_dir_all(&stale).unwrap();
+    std::fs::write(stale.join("package.json"), "{\"version\":\"0.1.5-rc.2\"}").unwrap();
+    // heal 的 fallback 别名是 symlink（含断链）：一律不动，heal 自己纠
+    std::fs::create_dir_all(dir.join("host-dsh-session")).unwrap();
+    std::os::unix::fs::symlink(dir.join("host-dsh-session"), scope.join("dsh-session")).unwrap();
+    std::os::unix::fs::symlink(dir.join("ghost-target"), scope.join("dsh-llm-deepseek")).unwrap();
+
+    let removed = remove_stale_host_copies(&dir);
+    assert_eq!(removed, vec!["@deepseek-ai/dsh-llm 0.1.5-rc.2"]);
+    assert!(!stale.exists());
+    assert!(scope.join("dsh-session").exists(), "正源别名不能动");
+    assert!(
+        scope.join("dsh-llm-deepseek").symlink_metadata().is_ok(),
+        "断链交给 heal 处理（exists() 会穿透断链，须查 lstat）"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn reserved_preset_scan_takes_the_last_declarer() {
+    use super::repair::scan_reserved_presets;
+    let dir = repair_fixture_dir("scan");
+    repair_fixture_bundle(
+        &dir,
+        "dsh-base",
+        "- id: permission\n  config:\n    presets:\n      read-only:\n        sandbox: read-only\n",
+    );
+    repair_fixture_bundle(
+        &dir,
+        "plugin-a",
+        "- id: permission\n  config:\n    presets:\n      auto:\n        sandbox: workspace-write\n        approval: ask\n",
+    );
+    repair_fixture_bundle(
+        &dir,
+        "plugin-b",
+        "- id: permission\n  config:\n    presets:\n      custom:\n        sandbox: danger-full-access\n      workspace-write:\n        sandbox: workspace-write\n        approval: ask\n",
+    );
+    repair_profile_manifest(&dir, &["dsh-base", "plugin-a", "plugin-b"]);
+
+    // wholesale 覆盖语义下最后的声明者才是生效方：plugin-a 的 auto 表已被
+    // plugin-b 整体替换，保留名只认生效表里的 custom
+    let conflict = scan_reserved_presets(&dir).unwrap();
+    assert_eq!(conflict.plugin, "plugin-b");
+    assert_eq!(conflict.reserved, vec!["custom"]);
+    let presets = conflict
+        .stripped_config
+        .unwrap()
+        .get("presets")
+        .unwrap()
+        .clone();
+    assert!(presets.get("auto").is_none() && presets.get("custom").is_none());
+    assert!(presets.get("workspace-write").is_some(), "非保留预设原样保留");
+    // 只有 base 声明（表无保留名）→ 无冲突
+    repair_profile_manifest(&dir, &["dsh-base"]);
+    assert!(scan_reserved_presets(&dir).is_none());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn double_bang_tagged_patch_refuses_strip() {
+    use super::repair::scan_reserved_presets;
+    // serde_yaml 对 `!!js` 双 bang 标签静默剥成普通字符串（Tagged 不出现），
+    // 带标签的表一旦重序列化，表达式就被烤成字面量——只能靠补丁层原文的
+    // `!!` 守卫拒绝剥离
+    let dir = repair_fixture_dir("scan-tagged");
+    repair_fixture_bundle(
+        &dir,
+        "plugin-a",
+        "- id: permission\n  config:\n    presets:\n      auto:\n        sandbox: !!js process.env.DSH_PERMISSION_MODE\n",
+    );
+    repair_profile_manifest(&dir, &["plugin-a"]);
+    let conflict = scan_reserved_presets(&dir).unwrap();
+    assert_eq!(conflict.plugin, "plugin-a");
+    assert_eq!(conflict.reserved, vec!["auto"]);
+    assert!(conflict.stripped_config.is_none(), "含 !! 标签的表不可重序列化");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn single_bang_tagged_config_refuses_strip() {
+    use super::repair::strip_reserved_presets;
+    // 单 bang 自定义标签在 serde_yaml 里落为 Tagged：重序列化不保真，剥离让位披露
+    let config: serde_yaml::Value = serde_yaml::from_str(
+        "presets:\n  auto:\n    sandbox: workspace-write\n    gated: !foo bar\n",
+    )
+    .unwrap();
+    let (reserved, stripped) = strip_reserved_presets(&config).unwrap();
+    assert_eq!(reserved, vec!["auto"]);
+    assert!(stripped.is_none(), "含 Tagged 值的表不可重序列化");
+    // 无保留名 → 无事发生
+    let clean: serde_yaml::Value =
+        serde_yaml::from_str("presets:\n  read-only:\n    sandbox: read-only\n").unwrap();
+    let (reserved, stripped) = strip_reserved_presets(&clean).unwrap();
+    assert!(reserved.is_empty() && stripped.is_none());
+}
+
+#[test]
+fn strip_override_write_is_idempotent_and_selfcleaning() {
+    use super::repair::{remove_strip_override, write_strip_override};
+    let dir = repair_fixture_dir("override");
+    std::fs::write(dir.join("cordis.patch.yml"), REPAIR_SCAFFOLD).unwrap();
+    let config: serde_yaml::Value =
+        serde_yaml::from_str("presets:\n  read-only:\n    sandbox: read-only\n").unwrap();
+
+    write_strip_override(&dir, &config).unwrap();
+    let written = std::fs::read_to_string(dir.join("cordis.patch.yml")).unwrap();
+    assert!(written.contains("- id: permission") && written.contains("  config:"));
+    assert!(written.contains("# Your patch layer"), "脚手架注释逐字节保留");
+    // 生成物必须是 dsh loader 认的顶层数组（与启停写入同一落盘约束）
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&written).unwrap();
+    assert_eq!(parsed.as_sequence().unwrap().len(), 1);
+
+    let before = written.clone();
+    write_strip_override(&dir, &config).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.join("cordis.patch.yml")).unwrap(),
+        before,
+        "同表重写免写盘（内容逐字节相等）"
+    );
+
+    // 冲突消失 → 标记块自洁，文件逐字节还原官方脚手架
+    assert!(remove_strip_override(&dir));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("cordis.patch.yml")).unwrap(),
+        REPAIR_SCAFFOLD
+    );
+    // 无标记块时自洁是空操作
+    assert!(!remove_strip_override(&dir));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn repair_override_write_and_selfclean_preserve_disabled_rows() {
+    use super::market::set_entries_enabled;
+    use super::repair::{remove_strip_override, write_strip_override};
+    let dir = repair_fixture_dir("override-coexist");
+    let entries = vec![(
+        "auto-permission-mode".to_string(),
+        "@x/plugin-a".to_string(),
+    )];
+    let with_disabled_row = set_entries_enabled(REPAIR_SCAFFOLD, &entries, false)
+        .unwrap()
+        .unwrap();
+    std::fs::write(dir.join("cordis.patch.yml"), &with_disabled_row).unwrap();
+
+    let config: serde_yaml::Value =
+        serde_yaml::from_str("presets:\n  read-only:\n    sandbox: read-only\n").unwrap();
+    write_strip_override(&dir, &config).unwrap();
+    let written = std::fs::read_to_string(dir.join("cordis.patch.yml")).unwrap();
+    assert!(written.contains("disabled: true"), "启停覆盖行不能被修复写入吞掉");
+    assert!(written.contains("# dsh-pro-max repair"));
+
+    assert!(remove_strip_override(&dir));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("cordis.patch.yml")).unwrap(),
+        with_disabled_row,
+        "自洁只删标记块，其余逐字节还原"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn entry_attribution_finds_insert_and_bare_declarers_last_wins() {
+    use super::repair::bundle_declarer_of_entry;
+    let dir = repair_fixture_dir("attrib");
+    repair_fixture_bundle(
+        &dir,
+        "plugin-a",
+        "- insert:\n    - id: target-entry\n      name: '@x/plugin-a'\n      config: {}\n",
+    );
+    repair_fixture_bundle(
+        &dir,
+        "plugin-b",
+        "- id: target-entry\n  config:\n    presets:\n      read-only:\n        sandbox: read-only\n",
+    );
+    repair_profile_manifest(&dir, &["plugin-a", "plugin-b"]);
+    // bare 覆盖与 insert 子项都算声明，bundle 顺序取最后
+    assert_eq!(
+        bundle_declarer_of_entry(&dir, "target-entry").as_deref(),
+        Some("plugin-b")
+    );
+    assert_eq!(bundle_declarer_of_entry(&dir, "absent-entry"), None);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn reserved_preset_failure_names_the_declaring_bundle_and_flags_repairable() {
+    crate::i18n::set_current("en");
+    let dir = repair_fixture_dir("diag");
+    repair_fixture_bundle(
+        &dir,
+        "plugin-a",
+        "- id: permission\n  config:\n    presets:\n      auto:\n        sandbox: workspace-write\n",
+    );
+    repair_profile_manifest(&dir, &["plugin-a"]);
+    // 真实事故日志形态（2026-09-19 本机 dsh 0.1.6-alpha.2 拒启）
+    let tail = "Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): failed to apply loader entry permission (@deepseek-ai/dsh-permission-presets): permission: \"auto\" is reserved and cannot name a configured preset\n";
+    let diagnosed = super::setup::diagnose_start_failure_from_tail(Some(tail), Some(&dir));
+    assert!(diagnosed.repairable, "保留名冲突必须标记可自愈");
+    assert!(diagnosed.problem.contains("plugin-a"));
+    assert!(diagnosed.problem.contains("is reserved"));
+    assert!(diagnosed.solution.contains("strips reserved presets"));
+    assert_eq!(diagnosed.action_plugin.as_deref(), Some("plugin-a"));
+
+    // profile 未知：不归因（不给无效禁用动作），仍可自愈
+    let unknown = super::setup::diagnose_start_failure_from_tail(Some(tail), None);
+    assert!(unknown.repairable);
+    assert_eq!(unknown.action_plugin, None);
+    assert!(unknown.problem.contains("a plugin configures"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn host_package_entry_failure_without_attribution_names_no_plugin() {
+    crate::i18n::set_current("en");
+    // 内层是宿主包且非保留名失败（profile 未知 → 归因不可达）：错误本体照报，
+    // 不产出「禁用宿主包」的无效动作（旧诊断的误归因正是本回归的靶心）
+    let tail = "Error: dsh: plugin tree failed to load: failed to apply loader entry include (cordis:include): failed to apply loader entry permission (@deepseek-ai/dsh-permission-presets): permission: the mounted bash executor does not confine (no sandboxMode)\n";
+    let diagnosed = super::setup::diagnose_start_failure_from_tail(Some(tail), None);
+    assert!(!diagnosed.repairable);
+    assert_eq!(diagnosed.action_plugin, None);
+    assert!(diagnosed.problem.contains("sandboxMode"));
+    assert!(diagnosed.solution.contains("recently added plugin"));
+}
+
+#[test]
+fn done_detail_reports_repair_ledger() {
+    use super::compat::done_detail_with_preflight;
+    use super::repair::{ProfileRepair, ReservedPresetOutcome};
+    let repair = ProfileRepair {
+        removed_copies: vec!["@deepseek-ai/dsh-llm 0.1.5-rc.2".to_string()],
+        reserved_presets: ReservedPresetOutcome::Stripped {
+            plugin: "plugin-a".to_string(),
+            reserved: "auto".to_string(),
+        },
+    };
+    let (detail, _) =
+        done_detail_with_preflight("dsh web is running on 127.0.0.1:3899", &repair);
+    assert!(detail.iter().any(|m| m.contains("stale cached copies")));
+    assert!(detail
+        .iter()
+        .any(|m| m.contains("Stripped reserved permission presets")));
+    assert!(detail[0].contains("dsh web is running on 127.0.0.1:3899"), "基线行恒在首位");
+    // 无修复台账：不含修复行（漂移披露与修复台账互不依赖）
+    let (detail, _) = done_detail_with_preflight(
+        "dsh web is running on 127.0.0.1:3899",
+        &ProfileRepair::default(),
+    );
+    assert!(!detail.iter().any(|m| m.contains("stale cached copies")));
+    assert!(!detail.iter().any(|m| m.contains("Stripped reserved")));
 }

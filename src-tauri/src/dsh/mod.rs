@@ -21,8 +21,9 @@
 //!
 //! 模块布局：process（CLI/进程）→ components（组件定位/插件）→ auth（远程授权配置）
 //! → detect（状态检测）/ setup（远程一键启动）/ start（本地一键启动）/
-//! compat（启动前 peer 兼容预检）/ update（更新与版本管理）/ probe（远程 URL 探测）/
-//! autostart（开机自启）。共享常量与 IPC 数据结构在本文件；子模块条目统一
+//! compat（启动前 peer 兼容预检）/ repair（profile 修复核：影子副本 + 保留预设）/
+//! update（更新与版本管理）/ probe（远程 URL 探测）/ autostart（开机自启）。
+//! 共享常量与 IPC 数据结构在本文件；子模块条目统一
 //! pub(crate)，经 glob 重导出互见。
 
 use serde::Serialize;
@@ -39,6 +40,7 @@ mod model_import;
 mod models;
 mod probe;
 mod process;
+mod repair;
 mod setup;
 mod start;
 mod update;

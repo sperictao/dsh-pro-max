@@ -7,8 +7,11 @@ use super::components::{
     PinnedDshDecision,
 };
 use super::process::{dsh_web_pid, port_listening, process_alive, wait_web_start};
+use super::repair::{repair_web_profile, ProfileRepair};
 use super::setup::StepCtx;
-use super::setup::{restart_dsh_web, spawn_dsh_web, start_failure_diagnosis};
+use super::setup::{
+    restart_dsh_web, spawn_dsh_web, start_failure_diagnosis, StartFailureDiagnosis,
+};
 use super::{SUPPORTED_DSH_VERSION, WEB_PORT};
 use std::fs;
 use std::path::PathBuf;
@@ -208,15 +211,61 @@ fn verify_local_ready(
     }
 }
 
+/// spawn + 有界启动等待（冷启与自愈重试的共用体）。返回 (pid, 本次动作前的
+/// 日志偏移——token 行只认本次启动之后打印的)；失败返回诊断（Box 装箱：诊断
+/// 结构体超 clippy 的 Err 内联阈值）。拉不起进程（spawn 层失败）包装成不可
+/// 自愈诊断
+fn spawn_web_and_wait() -> Result<(u32, usize), Box<StartFailureDiagnosis>> {
+    let log_offset = dsh_web_log_len();
+    let pid =
+        spawn_dsh_web(None, None, &AuthConfig::default()).map_err(|(problem, solution)| {
+            Box::new(StartFailureDiagnosis {
+                problem,
+                solution,
+                action_plugin: None,
+                repairable: false,
+            })
+        })?;
+    if wait_web_start(Some(pid), Duration::from_secs(60)) {
+        return Ok((pid, log_offset));
+    }
+    let log = dsh_dir()
+        .map(|d| d.join("dsh-web.log"))
+        .unwrap_or_else(|_| PathBuf::from("dsh-web.log"));
+    Err(Box::new(start_failure_diagnosis(&log)))
+}
+
+/// 冷启编排：失败且诊断为可自愈（保留名预设冲突）时 force 修复一轮再重试
+/// 一次——观测到的失败即事实，越过内容门控；重试上限 1，防修复-失败循环。
+/// force 轮确有改动才值得重付一次启动等待，repair 台账以 force 轮为准累积
+fn cold_start_with_repair(
+    ctx: &StepCtx,
+    repair: &mut ProfileRepair,
+) -> Result<(u32, usize), Box<StartFailureDiagnosis>> {
+    match spawn_web_and_wait() {
+        Ok(started) => Ok(started),
+        Err(failure) if failure.repairable => {
+            ctx.running("Auto-repairing the dsh profile and retrying…");
+            let forced = repair_web_profile(true);
+            if forced.did_something() {
+                *repair = forced;
+                return spawn_web_and_wait();
+            }
+            Err(failure)
+        }
+        Err(failure) => Err(failure),
+    }
+}
+
 /// 一键启动 dsh web 并返回本机访问地址（不碰 Tailscale Serve）。
 /// 本地访问遵循 dsh 原生方式：web 以 dsh 自身的 launch token 鉴权，启动时
 /// 把带 token 的地址打印进 dsh-web.log，这里解析出该地址交给前端打开——
 /// 浏览器经 token 换取持久 cookie 后即为 dsh 原生的已登录会话（web 重启会
 /// 换 token，需重新从本应用打开）。不注入登录名 env：授权插件按空 allowlist
 /// 默认拒绝全部远程登录，本地链路不经它。与 dsh_setup 一样按 LOCAL_STEPS
-/// 逐步发出 dsh-step 事件，前端时间轴据此显示本地模式安装进度。ready 步是
-/// 真实就绪验证（HTTP 应答 + 进程存活），boot 后崩溃会以失败节点带上日志里
-/// 的具体报错
+/// 逐步发出 dsh-step 事件，前端时间轴据此显示本地模式安装进度。启动前跑
+/// 修复核（影子副本治理 + 保留名剥离，幂等），ready 步是真实就绪验证
+/// （HTTP 应答 + 进程存活），boot 后崩溃会以失败节点带上日志里的具体报错
 #[tauri::command]
 pub async fn dsh_start_web(app: tauri::AppHandle) -> Result<String, Message> {
     // 全程阻塞 I/O（npm 安装、进程拉起、最长 60s 端口等待 + 10s token 轮询）：
@@ -264,7 +313,8 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, Message> {
         match decide_pinned_dsh(current.as_deref()) {
             PinnedDshDecision::KeepCurrent => {
                 // 显示实际版本而非锁定版本（同 dsh_setup 的修复）
-                ctx.done(Message::localized("Compatible dsh is installed: {{version}}",
+                ctx.done(Message::localized(
+                    "Compatible dsh is installed: {{version}}",
                     &[("version", current.clone().unwrap_or_default())],
                 ));
             }
@@ -276,11 +326,15 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, Message> {
                 ));
             }
             PinnedDshDecision::InstallPinned => {
-                ctx.running(Message::localized("Installing the pinned dsh ({{version}})…",
+                ctx.running(Message::localized(
+                    "Installing the pinned dsh ({{version}})…",
                     &[("version", SUPPORTED_DSH_VERSION.to_string())],
                 ));
                 match install_supported_dsh() {
-                    Ok(version) => ctx.done(Message::localized("Installed {{version}}", &[("version", version)])),
+                    Ok(version) => ctx.done(Message::localized(
+                        "Installed {{version}}",
+                        &[("version", version)],
+                    )),
                     Err(error) => {
                         return ctx.fail_err(
                             &error,
@@ -309,7 +363,8 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, Message> {
         }
         // 已在跑：本地访问不依赖 trusted-host，直接用。若刚才装了新 dsh 则重启生效
         // 锚点须在重启动作前记录：重启会换 token，只有重启之后打印的
-        // token 行才是活实例的
+        // token 行才是活实例的。已在跑意味着 profile 片刻前还是健康的，
+        // 修复核与自愈重试都不在此路径（下次冷启覆盖）
         let log_offset = dsh_web_log_len();
         let pid = {
             let ctx = StepCtx {
@@ -320,8 +375,10 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, Message> {
             ctx.running("Restarting dsh web…");
             match restart_dsh_web(None, None, &AuthConfig::default()) {
                 Ok(pid) => {
-                    let (detail, action) =
-                        done_detail_with_preflight("dsh web is running on 127.0.0.1:3899");
+                    let (detail, action) = done_detail_with_preflight(
+                        "dsh web is running on 127.0.0.1:3899",
+                        &ProfileRepair::default(),
+                    );
                     ctx.done_noting(detail, action);
                     pid
                 }
@@ -343,22 +400,17 @@ fn dsh_start_web_once(app: &tauri::AppHandle) -> Result<String, Message> {
         index: start_idx,
         id: steps[start_idx],
     };
+    // 修复核先于启动：影子副本治理 + 保留名剥离（幂等），台账进 done 明细
+    let mut repair = repair_web_profile(false);
     ctx.running("Starting dsh web on 127.0.0.1:3899…");
-    let log_offset = dsh_web_log_len();
-    let pid = match spawn_dsh_web(None, None, &AuthConfig::default()) {
-        Ok(pid) => pid,
-        Err((problem, solution)) => {
-            return ctx.fail_err(&problem, &solution, &remaining_after(start_idx));
+    let (pid, log_offset) = match cold_start_with_repair(&ctx, &mut repair) {
+        Ok(started) => started,
+        Err(failure) => {
+            return ctx.fail_err_diagnosis(&failure, &remaining_after(start_idx));
         }
     };
-    if !wait_web_start(Some(pid), Duration::from_secs(60)) {
-        let log = dsh_dir()
-            .map(|d| d.join("dsh-web.log"))
-            .unwrap_or_else(|_| PathBuf::from("dsh-web.log"));
-        let failure = start_failure_diagnosis(&log);
-        return ctx.fail_err_diagnosis(&failure, &remaining_after(start_idx));
-    }
-    let (detail, action) = done_detail_with_preflight("dsh web is running on 127.0.0.1:3899");
+    let (detail, action) =
+        done_detail_with_preflight("dsh web is running on 127.0.0.1:3899", &repair);
     ctx.done_noting(detail, action);
     verify_local_ready(app, steps, pid, log_offset)
 }

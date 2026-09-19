@@ -22,10 +22,11 @@ pub(crate) struct ExportDrift {
     pub(crate) missing: Vec<String>,
 }
 
-/// 宿主 dsh 包根（…/node_modules/@deepseek-ai/dsh）：宿主导出清单的定位基点。
-/// 优先从 CLI 符号链接 canonicalize 推导（零子进程）；npm 的 cmd shim
-/// （Windows）穿透不了，回退 npm root -g。两路都断时返回 None（预检放弃）
-fn host_package_root() -> Option<PathBuf> {
+/// 宿主 dsh 包根（…/node_modules/@deepseek-ai/dsh）：宿主导出清单的定位基点，
+/// repair 的保留名指纹门控同用。优先从 CLI 符号链接 canonicalize 推导（零子
+/// 进程）；npm 的 cmd shim（Windows）穿透不了，回退 npm root -g。两路都断时
+/// 返回 None（预检放弃）
+pub(crate) fn host_package_root() -> Option<PathBuf> {
     if let Ok(bin) = resolve_dsh_bin() {
         if let Ok(real) = bin.canonicalize() {
             let hit = real.ancestors().find(|p| {
@@ -272,30 +273,46 @@ pub(crate) fn preflight_warning_lines(drifts: &[ExportDrift]) -> Vec<Message> {
         })
         .collect();
     if drifts.len() > 3 {
-        lines.push(Message::localized("… and {{count}} more",
+        lines.push(Message::localized(
+            "… and {{count}} more",
             &[("count", (drifts.len() - 3).to_string())],
         ));
     }
     lines
 }
 
-/// start 步骤的 done 明细组装：基线文案在前，漂移披露行随后逐行追加，并给出
-/// 可一键禁用的第三方插件（受管授权插件不给按钮——它的既定恢复路径是 Repair
-/// dsh stack，与启动失败诊断同一规则）。无漂移时只有基线行、不带动作。
+/// start 步骤的 done 明细组装：基线文案在前，修复核台账（这次启动自动修了
+/// 什么——影子副本清理、保留名剥离）与漂移披露行随后逐行追加。无内容时只有
+/// 基线行、不带动作。Blocked 态的保留名冲突不在这里披露——它必然导向启动
+/// 失败，失败节点的诊断（点名 + 禁用动作）才是它的展示面。
 ///
 /// 返回行数组而非拼接后的整句：`step.detail` 是 `Vec<Message>`，每行各自过
 /// 词典；先拼成成品句子就再也命不中词典里的模板 key
-pub(crate) fn done_detail_with_preflight(base: &str) -> (Vec<Message>, Option<String>) {
-    let drifts = preflight_export_drift();
-    if drifts.is_empty() {
-        return (vec![Message::key(base)], None);
+pub(crate) fn done_detail_with_preflight(
+    base: &str,
+    repair: &super::repair::ProfileRepair,
+) -> (Vec<Message>, Option<String>) {
+    let mut detail = vec![Message::key(base)];
+    if !repair.removed_copies.is_empty() {
+        detail.push(Message::localized(
+            "Removed stale cached copies of {{names}}; dsh relinks the runtime's own versions on the next start",
+            &[("names", repair.removed_copies.join(", "))],
+        ));
     }
+    if let super::repair::ReservedPresetOutcome::Stripped { plugin, reserved } =
+        &repair.reserved_presets
+    {
+        detail.push(Message::localized(
+            "Stripped reserved permission presets ({{names}}) from {{plugin}}; its other presets stay active",
+            &[("plugin", plugin.clone()), ("names", reserved.clone())],
+        ));
+    }
+    let drifts = preflight_export_drift();
     let action = drifts
         .iter()
         .map(|d| d.plugin.as_str())
         .find(|p| *p != AUTH_PLUGIN_PACKAGE && *p != CONNECTION_PLUGIN_PACKAGE)
         .map(str::to_string);
-    let mut detail = vec![Message::key(base)];
     detail.extend(preflight_warning_lines(&drifts));
     (detail, action)
 }

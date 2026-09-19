@@ -1645,7 +1645,7 @@ pub(crate) fn patch_row_states(raw: &str) -> BTreeMap<String, bool> {
 /// 架是注释头 + `[]`（PROFILE_PATCH_TEMPLATE），注释行不是顶层 item，flow
 /// 空数组也不携带 item——都是合法空层。解析失败（真畸形）不算空层，交给
 /// 顶层 item 检测报错
-fn is_empty_patch(raw: &str) -> bool {
+pub(crate) fn is_empty_patch(raw: &str) -> bool {
     if raw.trim().is_empty() {
         return true;
     }

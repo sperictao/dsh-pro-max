@@ -675,4 +675,13 @@ export const zhCN: Record<I18nKey, string> = {
   "Credential \"{{name}}\" must contain a string value": "凭据 \"{{name}}\" 的值必须是字符串",
   "Credential \"{{name}}\" is empty; remove it instead": "凭据 \"{{name}}\" 为空；请改为移除它",
   "Credentials file {{path}} is readable beyond its owner (mode {{mode}}); run chmod 600 before continuing": "凭据文件 {{path}} 对属主之外的账号可读（权限 {{mode}}）；请先执行 chmod 600 再继续",
+  "Removed stale cached copies of {{names}}; dsh relinks the runtime's own versions on the next start": "已移除过期缓存的运行时包副本（{{names}}）；dsh 下次启动会重新链接运行时自带版本",
+  "Stripped reserved permission presets ({{names}}) from {{plugin}}; its other presets stay active": "已从 {{plugin}} 剥离 dsh 保留的权限预设（{{names}}）；其其余预设保持可用",
+  "dsh web failed to start; {{plugin}} configures permission presets reserved by this dsh version:\n{{error}}": "dsh Web 启动失败；{{plugin}} 配置了本版本 dsh 保留的权限预设：\n{{error}}",
+  "The launcher strips reserved presets and retries automatically; if the next start still fails, update or disable {{plugin}} on the Plugins page": "启动器会自动剥离保留预设并重试；若下次启动仍失败，请在插件页更新或禁用 {{plugin}}",
+  "dsh web failed to start; a plugin configures permission presets reserved by this dsh version:\n{{error}}": "dsh Web 启动失败；某个插件配置了本版本 dsh 保留的权限预设：\n{{error}}",
+  "The launcher strips reserved presets and retries automatically; if the next start still fails, update or disable the plugin that adds permission presets on the Plugins page": "启动器会自动剥离保留预设并重试；若下次启动仍失败，请在插件页更新或禁用添加权限预设的插件",
+  "dsh web failed to start; the profile's plugin tree failed to load:\n{{error}}": "dsh Web 启动失败；profile 的插件树加载失败：\n{{error}}",
+  "Check the log at ~/.dsh/dsh-web.log; a recently added plugin's configuration is the likely cause": "查看 ~/.dsh/dsh-web.log 日志；近期新装插件的配置层是首要嫌疑",
+  "Auto-repairing the dsh profile and retrying…": "正在自动修复 dsh profile 并重试…",
 };

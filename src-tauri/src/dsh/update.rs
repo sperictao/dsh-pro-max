@@ -20,6 +20,20 @@ use crate::i18n::Message;
 
 // ============ 更新 ============
 
+/// 宿主升线后的 profile 修复（影子副本治理 + 保留名剥离）：更新/修复流程
+/// 重启 web 前必跑——宿主版本变更正是陈旧状态致拒启的高危时刻。更新时间轴
+/// 不展示修复明细，台账进日志
+fn repair_after_host_change() {
+    let repair = super::repair::repair_web_profile(false);
+    if repair.did_something() {
+        log::info!(
+            "[dsh 更新] profile 修复: 影子副本 {:?}，保留名预设 {:?}",
+            repair.removed_copies,
+            repair.reserved_presets
+        );
+    }
+}
+
 /// 运行期授权上下文 (login, fqdn)：login 仅在 Tailscale 身份可解析时为
 /// Some——解析失败不再注入哨兵登录名（授权插件按空 allowlist 默认
 /// deny-all），只影响远程访问，不影响本机使用
@@ -52,6 +66,7 @@ fn dsh_update_once(app: &tauri::AppHandle) -> Result<String, Message> {
     if was_running {
         let (login, fqdn) = runtime_auth_context();
         let auth = resolve_auth_config()?;
+        repair_after_host_change();
         restart_dsh_web(login.as_deref(), fqdn.as_deref(), &auth)?;
     }
     Ok(version)
@@ -173,6 +188,7 @@ fn dsh_remove_plugins_once() -> Result<(), Message> {
     if port_listening(WEB_PORT) {
         let (login, fqdn) = runtime_auth_context();
         let auth = resolve_auth_config()?;
+        repair_after_host_change();
         restart_dsh_web(login.as_deref(), fqdn.as_deref(), &auth)?;
     }
     Ok(())
@@ -431,6 +447,7 @@ fn dsh_install_version_once(version: &str) -> Result<String, Message> {
     if was_running {
         let (login, fqdn) = runtime_auth_context();
         let auth = resolve_auth_config()?;
+        repair_after_host_change();
         restart_dsh_web(login.as_deref(), fqdn.as_deref(), &auth)?;
     }
     Ok(version.to_string())

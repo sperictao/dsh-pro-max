@@ -671,6 +671,15 @@ export const en = {
   "Credential \"{{name}}\" must contain a string value": "Credential \"{{name}}\" must contain a string value",
   "Credential \"{{name}}\" is empty; remove it instead": "Credential \"{{name}}\" is empty; remove it instead",
   "Credentials file {{path}} is readable beyond its owner (mode {{mode}}); run chmod 600 before continuing": "Credentials file {{path}} is readable beyond its owner (mode {{mode}}); run chmod 600 before continuing",
+  "Removed stale cached copies of {{names}}; dsh relinks the runtime's own versions on the next start": "Removed stale cached copies of {{names}}; dsh relinks the runtime's own versions on the next start",
+  "Stripped reserved permission presets ({{names}}) from {{plugin}}; its other presets stay active": "Stripped reserved permission presets ({{names}}) from {{plugin}}; its other presets stay active",
+  "dsh web failed to start; {{plugin}} configures permission presets reserved by this dsh version:\n{{error}}": "dsh web failed to start; {{plugin}} configures permission presets reserved by this dsh version:\n{{error}}",
+  "The launcher strips reserved presets and retries automatically; if the next start still fails, update or disable {{plugin}} on the Plugins page": "The launcher strips reserved presets and retries automatically; if the next start still fails, update or disable {{plugin}} on the Plugins page",
+  "dsh web failed to start; a plugin configures permission presets reserved by this dsh version:\n{{error}}": "dsh web failed to start; a plugin configures permission presets reserved by this dsh version:\n{{error}}",
+  "The launcher strips reserved presets and retries automatically; if the next start still fails, update or disable the plugin that adds permission presets on the Plugins page": "The launcher strips reserved presets and retries automatically; if the next start still fails, update or disable the plugin that adds permission presets on the Plugins page",
+  "dsh web failed to start; the profile's plugin tree failed to load:\n{{error}}": "dsh web failed to start; the profile's plugin tree failed to load:\n{{error}}",
+  "Check the log at ~/.dsh/dsh-web.log; a recently added plugin's configuration is the likely cause": "Check the log at ~/.dsh/dsh-web.log; a recently added plugin's configuration is the likely cause",
+  "Auto-repairing the dsh profile and retrying…": "Auto-repairing the dsh profile and retrying…",
 };
 
 export type I18nKey = keyof typeof en;

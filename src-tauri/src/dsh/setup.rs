@@ -159,6 +159,7 @@ impl StepCtx<'_> {
                 problem: problem.into(),
                 solution: solution.into(),
                 action_plugin: None,
+                repairable: false,
             },
             remaining,
         );
@@ -261,67 +262,130 @@ pub(crate) fn read_log_tail(path: &Path, max_lines: usize) -> Option<String> {
     }
 }
 
+/// 一条 loader 链的最内层归因：条目 id、条目名（插件包名或宿主包名）与
+/// 根因报错。链上全是内置节点时（include 导入失败）entry_id 为空，name
+/// 取根因文本引号里的缺失模块名
+struct LoaderCulprit {
+    entry_id: String,
+    name: String,
+    error: String,
+}
+
 /// 解析一行 loader 链 `failed to {stage} loader entry {id} ({name}): {inner}`：
-/// 链可多层嵌套（内置 include → 真插件），最内层非 `cordis:` 的名字即肇事
-/// 插件；链上全是内置节点时（include 导入失败）从根因文本的引号里取缺失的
-/// 模块名。行内无完整链则 None
-fn loader_entry_culprit(line: &str) -> Option<(&str, &str)> {
-    let mut name: Option<&str> = None;
+/// 链可多层嵌套（内置 include → 真插件），最内层非 `cordis:` 的链接即归因
+/// 对象。行内无完整链则 None
+fn loader_entry_culprit(line: &str) -> Option<LoaderCulprit> {
+    let mut last: Option<(String, String)> = None;
     let mut saw_chain = false;
     let mut rest = line;
     while let Some(pos) = rest.find("loader entry ") {
         saw_chain = true;
         rest = &rest[pos + "loader entry ".len()..];
-        let (_, after_id) = rest.split_once(" (")?;
+        let (entry_id, after_id) = rest.split_once(" (")?;
         let (entry_name, detail) = after_id.split_once("): ")?;
         if !entry_name.starts_with("cordis:") {
-            name = Some(entry_name);
+            last = Some((entry_id.to_string(), entry_name.to_string()));
         }
         rest = detail;
     }
     if !saw_chain {
         return None;
     }
-    let plugin = match name {
-        Some(n) => n,
+    match last {
+        Some((entry_id, name)) => Some(LoaderCulprit {
+            entry_id,
+            name,
+            error: rest.trim().to_string(),
+        }),
         None => {
             let (_, quoted) = rest.split_once('\'')?;
             let (module, _) = quoted.split_once('\'')?;
-            module
+            Some(LoaderCulprit {
+                entry_id: String::new(),
+                name: module.to_string(),
+                error: rest.trim().to_string(),
+            })
         }
-    };
-    Some((plugin, rest.trim()))
+    }
 }
 
-/// 从日志尾提取插件加载失败的（插件包名，根因报错）。门控是致命标记——
-/// `plugin tree failed to load`（boot 断言）或 `fatal load failure`（fail-loud
-/// 横幅）：非致命的插件告警（allSettled 软失败转储、probe warn）不得被
-/// 误判成死因。多条链时取最后一处（越靠后越接近最终致命现场）
-pub(crate) fn plugin_failure_from_log_tail(tail: &str) -> Option<(String, String)> {
+/// 从日志尾提取插件加载失败的归因输入。门控是致命标记——`plugin tree
+/// failed to load`（boot 断言）或 `fatal load failure`（fail-loud 横幅）：
+/// 非致命的插件告警（allSettled 软失败转储、probe warn）不得被误判成死因。
+/// 多条链时取最后一处（越靠后越接近最终致命现场）。纯函数：最内层是宿主包
+/// （@deepseek-ai/*）时 plugin 为 None、entry_id 带条目 id——「某 bundle 层
+/// 配置的条目炸在宿主服务构造上」，真正的肇事者由调用方持 profile 目录反查
+/// （bundle_declarer_of_entry），本函数不碰文件系统
+#[derive(Debug, PartialEq)]
+pub(crate) struct PluginFailure {
+    /// 肇事插件包名；None = 最内层是宿主包（不可禁用，需归因反查）
+    pub(crate) plugin: Option<String>,
+    pub(crate) entry_id: String,
+    pub(crate) error: String,
+}
+
+pub(crate) fn plugin_failure_from_log_tail(tail: &str) -> Option<PluginFailure> {
     if !tail.contains("plugin tree failed to load") && !tail.contains("fatal load failure") {
         return None;
     }
-    tail.lines()
-        .rev()
-        .find_map(loader_entry_culprit)
-        .map(|(name, error)| (name.to_string(), error.to_string()))
+    let culprit = tail.lines().rev().find_map(loader_entry_culprit)?;
+    let plugin = if culprit.name.starts_with("@deepseek-ai/") {
+        None
+    } else {
+        Some(culprit.name)
+    };
+    Some(PluginFailure {
+        plugin,
+        entry_id: culprit.entry_id,
+        error: culprit.error,
+    })
 }
 
 /// 启动失败诊断：problem/solution 进时间轴；action_plugin 是可一键禁用
 /// 重试的第三方插件包名（受管授权插件不提供此动作——它的既定恢复路径是
-/// Repair dsh stack，由 solution 文案指引）
+/// Repair dsh stack，由 solution 文案指引）。repairable 标记该失败属于
+/// 修复核可自愈的类别（保留名预设冲突）：重试编排据此自动修复并重试一次
 #[derive(Debug, Clone)]
 pub(crate) struct StartFailureDiagnosis {
     pub(crate) problem: Message,
     pub(crate) solution: Message,
     pub(crate) action_plugin: Option<String>,
+    pub(crate) repairable: bool,
 }
 
-/// 从日志尾部内容诊断启动失败（决策核，不碰文件系统）：插件加载失败优先点名
-/// 具体插件与根因报错（致命标记门控在提取函数内），非受管插件附带给一键
-/// 禁用重试；其余按日志里的常见崩溃指纹（EPERM/symlink、credentials 格式）
-/// 给针对性方案
-pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> StartFailureDiagnosis {
+/// 保留名预设冲突的诊断：修复核的 force 重试会自动剥离并重启，禁用动作
+/// 留作自愈失败后的手动兜底；归因失败（查不到肇事 bundle）时只报错误
+/// 本体，不产出无效的禁用动作
+fn reserved_preset_diagnosis(plugin: Option<String>, error: String) -> StartFailureDiagnosis {
+    let managed = |p: &str| p == AUTH_PLUGIN_PACKAGE || p == CONNECTION_PLUGIN_PACKAGE;
+    match plugin {
+        Some(plugin) => StartFailureDiagnosis {
+            problem: Message::localized("dsh web failed to start; {{plugin}} configures permission presets reserved by this dsh version:\n{{error}}",
+                &[("plugin", plugin.clone()), ("error", error)]),
+            solution: Message::localized("The launcher strips reserved presets and retries automatically; if the next start still fails, update or disable {{plugin}} on the Plugins page",
+                &[("plugin", plugin.clone())]),
+            action_plugin: (!managed(&plugin)).then_some(plugin),
+            repairable: true,
+        },
+        None => StartFailureDiagnosis {
+            problem: Message::localized("dsh web failed to start; a plugin configures permission presets reserved by this dsh version:\n{{error}}",
+                &[("error", error)]),
+            solution: Message::key("The launcher strips reserved presets and retries automatically; if the next start still fails, update or disable the plugin that adds permission presets on the Plugins page"),
+            action_plugin: None,
+            repairable: true,
+        },
+    }
+}
+
+/// 从日志尾部内容诊断启动失败（决策核）：插件加载失败优先点名具体插件与
+/// 根因报错（致命标记门控在提取函数内），非受管插件附带给一键禁用重试；
+/// 其余按日志里的常见崩溃指纹（EPERM/symlink、credentials 格式）给针对性
+/// 方案。`profile` 是 web profile 目录（归因反查用）：None 时不做任何文件
+/// 访问——最内层为宿主包的失败一律走「归因失败」分支，测试据此保持纯度
+pub(crate) fn diagnose_start_failure_from_tail(
+    tail: Option<&str>,
+    profile: Option<&Path>,
+) -> StartFailureDiagnosis {
     // 锁超时指纹优先于插件链归因：孤儿 credentials 写锁让 boot 崩在内置
     // connection 插件的锁等待上，按插件链点名会指引用户去 Plugins 页移除一个
     // 不可移除的内置插件；真实解法是删掉孤儿锁（Launcher 启动路径已自动清理
@@ -334,17 +398,44 @@ pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> StartFailu
                 problem: "dsh web failed to start: the credentials writer lock ~/.dsh/.credentials.yaml.lock is held by another dsh process or was left behind by a killed one".into(),
                 solution: "If no other dsh command is running, delete ~/.dsh/.credentials.yaml.lock, then retry".into(),
                 action_plugin: None,
+                repairable: false,
             };
         }
     }
-    if let Some((plugin, error)) = tail.and_then(plugin_failure_from_log_tail) {
-        let managed = plugin == AUTH_PLUGIN_PACKAGE || plugin == CONNECTION_PLUGIN_PACKAGE;
+    if let Some(failure) = tail.and_then(plugin_failure_from_log_tail) {
+        // 内层是宿主包：肇事者是配置了该条目的 bundle 层，持 profile 反查
+        let mut plugin = failure.plugin;
+        if plugin.is_none() && !failure.entry_id.is_empty() {
+            plugin =
+                profile.and_then(|p| super::repair::bundle_declarer_of_entry(p, &failure.entry_id));
+        }
+        // 保留名指纹优先于通用插件归因：修复核能自动剥离并重试（repairable），
+        // 禁用动作留作自愈失败后的手动兜底
+        if failure
+            .error
+            .contains(super::repair::RESERVED_NAME_FINGERPRINT)
+        {
+            return reserved_preset_diagnosis(plugin, failure.error);
+        }
+        if let Some(plugin) = plugin {
+            let managed = plugin == AUTH_PLUGIN_PACKAGE || plugin == CONNECTION_PLUGIN_PACKAGE;
+            return StartFailureDiagnosis {
+                problem: Message::localized("dsh web failed to start; plugin {{plugin}} failed to load:\n{{error}}", &[("plugin", plugin.clone()), ("error", failure.error)],
+                ),
+                solution: Message::localized("Remove or update the plugin {{plugin}} on the Plugins page, then retry; launcher-managed authorization plugins are restored by Repair dsh stack", &[("plugin", plugin.clone())],
+                ),
+                action_plugin: (!managed).then_some(plugin),
+                repairable: false,
+            };
+        }
+        // 内层是宿主包且归因失败：错误本体照报，不给禁用动作（宿主包不可
+        // 禁用；近期新装插件的配置层是首要嫌疑）
         return StartFailureDiagnosis {
-            problem: Message::localized("dsh web failed to start; plugin {{plugin}} failed to load:\n{{error}}", &[("plugin", plugin.clone()), ("error", error)],
-            ),
-            solution: Message::localized("Remove or update the plugin {{plugin}} on the Plugins page, then retry; launcher-managed authorization plugins are restored by Repair dsh stack", &[("plugin", plugin.clone())],
-            ),
-            action_plugin: (!managed).then_some(plugin),
+            problem: Message::localized("dsh web failed to start; the profile's plugin tree failed to load:\n{{error}}",
+                &[("error", failure.error)]),
+            solution: Message::key("Check the log at ~/.dsh/dsh-web.log; a recently added plugin's configuration is the likely cause"),
+            action_plugin: None,
+            repairable: false,
         };
     }
     let problem = match tail {
@@ -373,13 +464,16 @@ pub(crate) fn diagnose_start_failure_from_tail(tail: Option<&str>) -> StartFailu
         problem,
         solution,
         action_plugin: None,
+        repairable: false,
     }
 }
 
 /// 启动失败诊断：把 dsh-web.log 尾部的真实错误带进时间轴（进程崩溃时这里就是
-/// 堆栈），并按常见崩溃原因给出针对性方案。只读日志，不修改任何状态
+/// 堆栈），并按常见崩溃原因给出针对性方案。读日志 + 归因反查（宿主包内层
+/// 的条目归因到肇事 bundle 层），不修改任何状态
 pub(crate) fn start_failure_diagnosis(log: &Path) -> StartFailureDiagnosis {
-    diagnose_start_failure_from_tail(read_log_tail(log, 40).as_deref())
+    let profile = super::repair::web_profile_dir();
+    diagnose_start_failure_from_tail(read_log_tail(log, 40).as_deref(), profile.as_deref())
 }
 
 /// dsh-web.log 尾部（前端在失败节点「查看日志」里内嵌展示）。只读不改状态；
@@ -626,6 +720,9 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), Message> {
             id: steps[5],
         };
         let fqdn = resolve_fqdn();
+        // 修复核先于启动/重启（幂等）：远程链路与本地一键启动同一 profile，
+        // 同样的陈旧状态同样会拒启；自愈重试只在本地冷启路径，这里只修不重试
+        let repair = super::repair::repair_web_profile(false);
         if port_listening(WEB_PORT) && dsh_web_pid().is_none() {
             return ctx.fail(
                 "Port 3899 is occupied by another process",
@@ -658,7 +755,8 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), Message> {
                 return ctx.fail_diagnosis(&failure, &remaining_after(5));
             }
         }
-        let (detail, action) = done_detail_with_preflight("dsh web is running on 127.0.0.1:3899");
+        let (detail, action) =
+            done_detail_with_preflight("dsh web is running on 127.0.0.1:3899", &repair);
         ctx.done_noting(detail, action);
     }
 
