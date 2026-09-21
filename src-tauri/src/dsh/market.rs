@@ -1711,8 +1711,8 @@ pub(crate) fn set_entries_enabled(
                             lines.push(String::new());
                         }
                     }
-                    lines.push(format!("- id: {eid}"));
-                    lines.push(format!("  name: {ename}"));
+                    lines.push(format!("- id: {}", yaml_scalar(eid)));
+                    lines.push(format!("  name: {}", yaml_scalar(ename)));
                     lines.push("  disabled: true".to_string());
                     changed = true;
                 }
@@ -1794,6 +1794,24 @@ fn unquote(v: &str) -> String {
         v[1..v.len() - 1].to_string()
     } else {
         v.to_string()
+    }
+}
+
+/// 覆盖行值的 YAML 安全标量编码（与 `unquote` 对偶）：包名/入口 id 白名单内
+/// 的裸词原样落盘，其余（`@scope/pkg` 的 `@` 是 YAML 保留字符，裸写会让
+/// overlay 解析全灭——2026-09-20 启动即崩事故）双引号包裹并转义
+fn yaml_scalar(v: &str) -> String {
+    let head_safe = v
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+    if head_safe
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-'))
+    {
+        v.to_string()
+    } else {
+        format!("\"{}\"", v.replace('\\', "\\\\").replace('"', "\\\""))
     }
 }
 

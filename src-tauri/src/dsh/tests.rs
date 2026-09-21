@@ -2058,6 +2058,42 @@ fn set_entries_enabled_roundtrips_disabled_rows() {
 }
 
 #[test]
+fn set_entries_enabled_quotes_scoped_package_names() {
+    use super::market::{patch_row_states, set_entries_enabled};
+    // 2026-09-20 事故：@scope 包名的 `@` 是 YAML 保留字符，裸写进停用覆盖
+    // 行会让 dsh 的 overlay 解析全灭（web profile 启动即崩）。落盘值必须
+    // 可解析，且行级判定认得带引号的形态（再停用 None / 启用可删）
+    let entries = vec![(
+        "ui-task-board".to_string(),
+        "@linxin666/dsh-client-ui-task-board".to_string(),
+    )];
+    let disabled = set_entries_enabled("", &entries, false).unwrap().unwrap();
+    let parsed: serde_yaml::Value =
+        serde_yaml::from_str(&disabled).expect("停用覆盖行必须是合法 YAML");
+    let row = parsed.as_sequence().unwrap().last().unwrap();
+    assert_eq!(
+        row.get("name").and_then(|v| v.as_str()),
+        Some("@linxin666/dsh-client-ui-task-board"),
+        "引号只是编码，解析后的入口名必须原样"
+    );
+    assert_eq!(
+        patch_row_states(&disabled).get("ui-task-board"),
+        Some(false).as_ref()
+    );
+    // 再停用：带引号行被行级判定认出，内容未变 → None
+    assert_eq!(
+        set_entries_enabled(&disabled, &entries, false).unwrap(),
+        None
+    );
+    // 启用：带引号形态照样按入口 id 删除
+    let enabled = set_entries_enabled(&disabled, &entries, true)
+        .unwrap()
+        .unwrap();
+    assert!(!enabled.contains("ui-task-board"));
+    assert!(!patch_row_states(&enabled).contains_key("ui-task-board"));
+}
+
+#[test]
 fn set_entries_enabled_handles_official_empty_scaffold() {
     use super::market::{patch_row_states, set_entries_enabled};
     // dsh CLI 的官方空层脚手架（PROFILE_PATCH_TEMPLATE）：注释头 + flow 空数
