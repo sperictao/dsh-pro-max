@@ -1609,6 +1609,94 @@ describe("failed install affordances", () => {
     expect(writeText.mock.calls[0][0] as string).toContain("Target: github:owner/repo");
   });
 
+  it("custom install surfaces build approval and completes through the allowBuilds write", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    useAppStore.setState({ marketInstalled: [] });
+    // git 来源插件的 prepare 拦截：pnpm 11+ 打印的精确键原样进审批载荷
+    // （自定义安装的主战场正是目录之外的 GitHub 仓库）
+    const gitKey = "dsh-repo@git+https://github.com/owner/repo.git#abc123";
+    vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "needsApproval",
+      packages: [gitKey],
+      workspaceYaml: "/home/u/.dsh/profiles/web/pnpm-workspace.yaml",
+    });
+    const approveSpy = vi.spyOn(cmd, "marketApproveBuilds").mockResolvedValue({
+      status: "installed",
+      receipt: { name: "dsh-repo", spec: "github:owner/repo" },
+      notices: [],
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Custom install" }));
+    const customDialog = document.getElementById("custom-install-dialog")!;
+    await user.type(screen.getByPlaceholderText("e.g. github:owner/repo or pkg@1.2.3"), "owner/repo");
+    await user.click(within(customDialog).getByRole("button", { name: "Install" }));
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("github:owner/repo"));
+
+    // 被拦转审批：approval 态不是终态——对话框不能谎报 done/failed，且 busy
+    // 中 Close 禁撤；审批框列出待写 allowBuilds 的完整 git 键
+    const approvalDialog = await waitFor(() => {
+      const el = document.getElementById("build-approval-dialog");
+      expect(el).not.toBeNull();
+      return el!;
+    });
+    expect(within(approvalDialog).getByText(gitKey)).toBeInTheDocument();
+    expect(useAppStore.getState().marketPendingApproval?.specifier).toBe("github:owner/repo");
+    expect(within(customDialog).queryByText("Installed")).not.toBeInTheDocument();
+    expect(within(customDialog).getByRole("button", { name: "Close" })).toBeDisabled();
+    expect(useAppStore.getState().toasts.map((t) => t.type)).not.toContain("error");
+
+    // 放行：写 allowBuilds（packages 原样回传，git 键不剥）并重跑安装，
+    // 成功后对话框落 done（回执 toast 与目录安装同一形态）
+    await user.click(within(approvalDialog).getByRole("button", { name: "Approve & install" }));
+    await waitFor(() => expect(approveSpy).toHaveBeenCalledWith("github:owner/repo", [gitKey]));
+    expect(await within(customDialog).findByText("Installed")).toBeInTheDocument();
+    expect(within(customDialog).getByText("github:owner/repo")).toBeInTheDocument();
+    expect(useAppStore.getState().marketPendingApproval).toBeNull();
+    expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual(
+      "Plugin installed: dsh-repo (github:owner/repo)",
+    );
+  });
+
+  it("custom install returns to the input phase when build approval is declined", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
+    useAppStore.setState({ marketInstalled: [] });
+    vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "needsApproval",
+      packages: ["node-pty"],
+      workspaceYaml: "/home/u/.dsh/profiles/web/pnpm-workspace.yaml",
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Custom install" }));
+    const customDialog = document.getElementById("custom-install-dialog")!;
+    await user.type(screen.getByPlaceholderText("e.g. github:owner/repo or pkg@1.2.3"), "dsh-better-sidebar@latest");
+    await user.click(within(customDialog).getByRole("button", { name: "Install" }));
+    const approvalDialog = await waitFor(() => {
+      const el = document.getElementById("build-approval-dialog");
+      expect(el).not.toBeNull();
+      return el!;
+    });
+
+    // 拒绝放行：不写 allowBuilds，toast 给出手动后补路径；自定义对话框
+    // 回输入态（可改地址重装或直接关闭），不当失败也不当成功
+    await user.click(within(approvalDialog).getByRole("button", { name: "Keep scripts blocked" }));
+    expect(useAppStore.getState().marketPendingApproval).toBeNull();
+    expect(cmd.marketApproveBuilds).not.toHaveBeenCalled();
+    expect(
+      useAppStore.getState().toasts.some((t) => t.type === "info" && t.message.includes("pnpm approve-builds")),
+    ).toBe(true);
+    await waitFor(() =>
+      expect(within(customDialog).getByRole("button", { name: "Close" })).toBeEnabled(),
+    );
+    expect(within(customDialog).getByRole("button", { name: "Install" })).toBeEnabled();
+    expect(within(customDialog).queryByText("Installed")).not.toBeInTheDocument();
+  });
+
   it("restarts dsh web from the installed tab through the shared shell action", async () => {
     const user = userEvent.setup();
     render(createElement(MarketView));
