@@ -982,12 +982,16 @@ pub(crate) fn valid_identifier(s: &str) -> bool {
 }
 
 /// 可写入 allowBuilds 的键：npm 包名形态（valid_identifier）或 pnpm 打印的
-/// git-hosted 精确键（`name@git+url#commit`，`+` 不在 identifier 白名单）。
-/// market_approve_builds 的 IPC 校验用——前端回传不可信，git 分支仍限长与
-/// 可打印 ASCII（键只会成为 yaml 字符串键，无 shell/路径面）
+/// git-hosted 精确键（`name@git+url#commit` 或 codeload tarball URL 形态
+/// `name@https://codeload.../tar.gz/<sha>`，`+` 与超长的 URL 键不在
+/// identifier 白名单/长度余量内）。market_approve_builds 的 IPC 校验用——
+/// 前端回传不可信，URL 分支仍限长与可打印 ASCII（键只会成为 yaml 字符串键，
+/// 无 shell/路径面）
 pub(crate) fn valid_allow_key(s: &str) -> bool {
     valid_identifier(s)
-        || (s.contains("git+") && s.len() <= 512 && s.chars().all(|c| c.is_ascii_graphic()))
+        || ((s.contains("git+") || s.contains("://"))
+            && s.len() <= 512
+            && s.chars().all(|c| c.is_ascii_graphic()))
 }
 
 /// npm 形态 specifier 的包名部分；带协议前缀的形态（github:/file:/npm: 等）
@@ -1419,16 +1423,18 @@ fn strip_spec_version(spec: &str) -> &str {
 }
 
 /// 从 pnpm 失败输出提取 git-hosted prepare 拦截的 allowBuilds 键（pnpm 11+
-/// 打印的精确键，`name@git+url#commit`）。判定收敛为"含 git+ 且以 ': true'
-/// 结尾的行"：不依赖缩进（dsh/UI 转发可能丢失），普通输出行不会被误判；
-/// blocked_build_packages 未命中（该失败形态无 Ignored build scripts 行）时
-/// 兜底调用
+/// 打印的精确键）。实机已观测两种形态：`name@git+url#commit`（git 克隆
+/// 拉取）与 `name@https://codeload.github.com/.../tar.gz/<sha>`（codeload
+/// tarball 拉取，2026-09-21 Windows + pnpm 11 实测）。判定收敛为"以 ': true'
+/// 结尾且键含 git+ 或 :// 的行"：不依赖缩进（dsh/UI 转发可能丢失），普通
+/// 输出行不会被误判；blocked_build_packages 未命中（该失败形态无
+/// Ignored build scripts 行）时兜底调用
 pub(crate) fn git_prepare_allow_keys(output: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for line in output.lines() {
         let trimmed = line.trim();
         if let Some(key) = trimmed.strip_suffix(": true") {
-            if key.contains("git+") && !out.iter().any(|k| k == key) {
+            if (key.contains("git+") || key.contains("://")) && !out.iter().any(|k| k == key) {
                 out.push(key.to_string());
             }
         }

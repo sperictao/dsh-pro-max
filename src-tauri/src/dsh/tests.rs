@@ -2364,8 +2364,9 @@ fn failure_raw_merges_stdout_and_stderr_for_fingerprint_detection() {
 }
 
 /// git-hosted prepare 拦截的 allowBuilds 键提取：pnpm 11+ 硬失败
-/// （ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED）打印的精确键，`name@git+url#commit`
-/// 形态——blocked_build_packages 的 Ignored build scripts 行在此形态不存在
+/// （ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED）打印的精确键——blocked_build_packages
+/// 的 Ignored build scripts 行在此形态不存在。已观测两种键形态：
+/// `name@git+url#commit`（git 克隆）与 codeload tarball URL（tarball 拉取）
 #[test]
 fn git_prepare_allow_keys_extracts_pnpm_printed_keys() {
     // 实机样本（Windows + pnpm 11，dsh CLI 转发；缩进在转发链路中可能丢失）
@@ -2373,6 +2374,14 @@ fn git_prepare_allow_keys_extracts_pnpm_printed_keys() {
     assert_eq!(
         git_prepare_allow_keys(raw),
         vec!["dsh-advisor@git+https://github.com/btspoony/dsh-advisor.git#1eda7b2026864f331dcb934a9861bdb3cbae6a9e"]
+    );
+    // 实机样本（2026-09-21 Windows + pnpm 11.25，codeload tarball 拉取：
+    // 键是 `name@https://codeload.../tar.gz/<sha>`，不含 git+——此前只认
+    // git+ 形态，解析落空导致审批不分流、退回手动指引）
+    let codeload = "[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] Failed to prepare git-hosted package fetched from \"https://codeload.github.com/sperictao/dsh-auto-review-jev/tar.gz/51891d3f0fd8dfcd05a724b3f721aff947ac354c\": The git-hosted package \"@dsh-external/dsh-auto-review-jev@0.2.2\" needs to execute build scripts but is not in the \"allowBuilds\" allowlist.\nThis error happened while installing a direct dependency of C:\\Users\\EricTao\\.dsh\\profiles\\web\nAdd the package to \"allowBuilds\" in your project's pnpm-workspace.yaml to allow it to run scripts. For example:\nallowBuilds:\n@dsh-external/dsh-auto-review-jev@https://codeload.github.com/sperictao/dsh-auto-review-jev/tar.gz/51891d3f0fd8dfcd05a724b3f721aff947ac354c: true\ndsh: pnpm failed; diagnostics: C:\\Users\\EricTao\\.dsh\\profiles\\web\\.plugin-manager\\logs\\operation-nleTSn\\pnpm.log";
+    assert_eq!(
+        git_prepare_allow_keys(codeload),
+        vec!["@dsh-external/dsh-auto-review-jev@https://codeload.github.com/sperictao/dsh-auto-review-jev/tar.gz/51891d3f0fd8dfcd05a724b3f721aff947ac354c"]
     );
     // scope 包 + 多包去重
     let multi = "allowBuilds:\n  @scope/pkg@git+https://x.git#abc: true\n  dsh-x@git+https://y.git#def: true\n  dsh-x@git+https://y.git#def: true";
@@ -2452,6 +2461,23 @@ fn merge_allow_builds_writes_git_key_and_package_name_in_only_built() {
     let before = std::fs::read_to_string(&path).unwrap();
     merge_allow_builds(&path, &[key.to_string()]).unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+    // codeload tarball 键：allowBuilds 保留完整键，onlyBuiltDependencies
+    // 剥为 scope 包名（rfind('@') 取 URL 前的包名段）
+    let codeload_key = "@dsh-external/dsh-auto-review-jev@https://codeload.github.com/sperictao/dsh-auto-review-jev/tar.gz/51891d3f0fd8dfcd05a724b3f721aff947ac354c";
+    merge_allow_builds(&path, &[codeload_key.to_string()]).unwrap();
+    let v: serde_yaml::Value =
+        serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        v["allowBuilds"][codeload_key],
+        serde_yaml::Value::Bool(true)
+    );
+    let only: Vec<&str> = v["onlyBuiltDependencies"]
+        .as_sequence()
+        .unwrap()
+        .iter()
+        .filter_map(|x| x.as_str())
+        .collect();
+    assert_eq!(only, vec!["@dsh-external/dsh-auto-review-jev", "dsh-advisor"]);
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -3219,6 +3245,25 @@ fn install_decision_elevates_git_prepare_block_to_needs_approval() {
         }
         _ => panic!("expected needsApproval"),
     }
+    // codeload tarball 键形态（无 git+）同样转审批
+    let codeload = "[ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED] The git-hosted package \"@dsh-external/dsh-auto-review-jev@0.2.2\" needs to execute build scripts but is not in the \"allowBuilds\" allowlist.\nallowBuilds:\n  @dsh-external/dsh-auto-review-jev@https://codeload.github.com/sperictao/dsh-auto-review-jev/tar.gz/51891d3f: true";
+    let outcome = super::market::install_decision(
+        "github:sperictao/dsh-auto-review-jev",
+        Err((Message::key(codeload), Message::key("hint"))),
+        None,
+        None,
+        Some("/p/pnpm-workspace.yaml".to_string()),
+    )
+    .expect("codeload key needs approval is not an error");
+    match outcome {
+        InstallOutcome::NeedsApproval { packages, .. } => {
+            assert_eq!(
+                packages,
+                vec!["@dsh-external/dsh-auto-review-jev@https://codeload.github.com/sperictao/dsh-auto-review-jev/tar.gz/51891d3f"]
+            );
+        }
+        _ => panic!("expected needsApproval"),
+    }
     // 解析不出键 → 普通失败，display 保留 HINT_GIT_PREPARE 手动兜底
     let err = super::market::install_decision(
         "github:owner/repo",
@@ -3514,6 +3559,10 @@ fn valid_allow_key_accepts_package_names_and_git_keys() {
     assert!(valid_allow_key("@scope/pkg"));
     assert!(valid_allow_key(
         "dsh-advisor@git+https://github.com/btspoony/dsh-advisor.git#1eda7b2026864f331dcb934a9861bdb3cbae6a9e"
+    ));
+    // codeload tarball 键形态（pnpm 11 实机打印，无 git+）
+    assert!(valid_allow_key(
+        "@dsh-external/dsh-auto-review-jev@https://codeload.github.com/sperictao/dsh-auto-review-jev/tar.gz/51891d3f0fd8dfcd05a724b3f721aff947ac354c"
     ));
     assert!(!valid_allow_key(""));
     assert!(!valid_allow_key("bad name"));
