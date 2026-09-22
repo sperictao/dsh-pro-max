@@ -405,6 +405,7 @@ export const en = {
   "Update": "Update",
   "Update all ({{count}})": "Update all ({{count}})",
   "Up to date": "Up to date",
+  "This update reinstalls from {{specifier}} instead of the local path.": "This update reinstalls from {{specifier}} instead of the local path.",
   "Plugin updated: {{name}} ({{spec}})": "Plugin updated: {{name}} ({{spec}})",
   "Plugin updated: {{name}}": "Plugin updated: {{name}}",
   "Failed to update plugin: {{error}}": "Failed to update plugin: {{error}}",

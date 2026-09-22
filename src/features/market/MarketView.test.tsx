@@ -63,8 +63,8 @@ const catalog: MarketCatalog = {
 };
 
 const installed: InstalledPlugin[] = [
-  { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
-  { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, managed: true, enabled: true },
+  { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
+  { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, upstreamRepo: null, managed: true, enabled: true },
 ];
 
 // vitest globals: false，jsdom 的 localStorage 不保证就绪：收藏持久化断言用测试桩（DshCard.test 同款）
@@ -155,8 +155,8 @@ describe("specifier parsers match the shared test vectors", () => {
 describe("protocolInstalledMatch", () => {
   it("matches a github-installed plugin whose key differs from the catalog name", () => {
     const list: InstalledPlugin[] = [
-      { name: "dsh-api-relay-audit", spec: "github:toby-bridges/api-relay-audit", version: null, managed: false, enabled: true },
-      { name: "dsh-at-file", spec: "git+https://github.com/omdsh-dev/dsh-at-file.git", version: null, managed: false, enabled: true },
+      { name: "dsh-api-relay-audit", spec: "github:toby-bridges/api-relay-audit", version: null, upstreamRepo: "toby-bridges/api-relay-audit", managed: false, enabled: true },
+      { name: "dsh-at-file", spec: "git+https://github.com/omdsh-dev/dsh-at-file.git", version: null, upstreamRepo: "omdsh-dev/dsh-at-file", managed: false, enabled: true },
     ];
     const hit = protocolInstalledMatch("github:toby-bridges/api-relay-audit", "api-relay-audit", list);
     expect(hit?.name).toBe("dsh-api-relay-audit");
@@ -164,7 +164,7 @@ describe("protocolInstalledMatch", () => {
 
   it("matches a specifier with a trailing ref on disk (#sha/#path:)", () => {
     const list: InstalledPlugin[] = [
-      { name: "dsh-api-relay-audit", spec: "github:toby-bridges/api-relay-audit#c0ffee", version: null, managed: false, enabled: true },
+      { name: "dsh-api-relay-audit", spec: "github:toby-bridges/api-relay-audit#c0ffee", version: null, upstreamRepo: "toby-bridges/api-relay-audit", managed: false, enabled: true },
     ];
     const hit = protocolInstalledMatch("github:toby-bridges/api-relay-audit", "api-relay-audit", list);
     expect(hit?.name).toBe("dsh-api-relay-audit");
@@ -174,7 +174,7 @@ describe("protocolInstalledMatch", () => {
   // git+https://github.com/owner/repo.git，前缀判定认不出 → 卡片恒显未安装
   it("matches a git+https disk spec against the github: catalog specifier (pnpm normalization)", () => {
     const list: InstalledPlugin[] = [
-      { name: "dsh-at-file", spec: "git+https://github.com/omdsh-dev/dsh-at-file.git", version: null, managed: false, enabled: true },
+      { name: "dsh-at-file", spec: "git+https://github.com/omdsh-dev/dsh-at-file.git", version: null, upstreamRepo: "omdsh-dev/dsh-at-file", managed: false, enabled: true },
     ];
     const hit = protocolInstalledMatch("github:omdsh-dev/dsh-at-file", "dsh-at-file", list);
     expect(hit?.name).toBe("dsh-at-file");
@@ -182,8 +182,8 @@ describe("protocolInstalledMatch", () => {
 
   it("matches each sibling repo exactly (repo id equality, no prefix ambiguity)", () => {
     const list: InstalledPlugin[] = [
-      { name: "dsh", spec: "github:owner/dsh", version: null, managed: false, enabled: true },
-      { name: "dsh-relay", spec: "github:owner/dsh-relay", version: null, managed: false, enabled: true },
+      { name: "dsh", spec: "github:owner/dsh", version: null, upstreamRepo: "owner/dsh", managed: false, enabled: true },
+      { name: "dsh-relay", spec: "github:owner/dsh-relay", version: null, upstreamRepo: "owner/dsh-relay", managed: false, enabled: true },
     ];
     expect(protocolInstalledMatch("github:owner/dsh", "dsh", list)?.name).toBe("dsh");
     expect(protocolInstalledMatch("github:owner/dsh-relay", "dsh-relay", list)?.name).toBe("dsh-relay");
@@ -194,29 +194,62 @@ describe("protocolInstalledMatch", () => {
   });
 });
 
-// git-hosted 插件的更新/重装标识：按原仓 github:owner/repo 重装（pnpm 重新
-// 解析默认分支 HEAD），而非 name@latest——这类包不在 npm registry，@latest
-// 要么 404 要么把 git 源覆盖成 registry 包（shadow-mind 检不出新版本即此因）
+// git-hosted 插件的更新/重装标识：按上游仓库 github:owner/repo 重装（pnpm
+// 重新解析默认分支 HEAD），而非 name@latest——这类包不在 npm registry，@latest
+// 要么 404 要么把 git 源覆盖成 registry 包（shadow-mind 检不出新版本即此因）。
+// 上游读已装记录的 upstreamRepo（Rust 侧统一归一，见 installed_facts_for_update）
 describe("updateSpecifierFor", () => {
   it("reinstalls GitHub-hosted plugins by repo, whatever the disk spec form", () => {
     expect(
-      updateSpecifierFor("@w/dsh-shadow-mind", "github:whutzefengxie-ops/dsh-shadow-mind", null),
+      updateSpecifierFor(
+        "@w/dsh-shadow-mind",
+        { upstreamRepo: "whutzefengxie-ops/dsh-shadow-mind" },
+        null,
+      ),
     ).toBe("github:whutzefengxie-ops/dsh-shadow-mind");
     expect(
       updateSpecifierFor(
         "dsh-at-file",
-        "git+https://github.com/omdsh-dev/dsh-at-file.git",
+        { upstreamRepo: "omdsh-dev/dsh-at-file" },
         null,
       ),
     ).toBe("github:omdsh-dev/dsh-at-file");
     // #ref 钉住的安装同样回到 HEAD：重装/更新的语义就是"到远端最新"
-    expect(updateSpecifierFor("pkg", "github:owner/pkg#v1.0.0", null)).toBe("github:owner/pkg");
+    expect(
+      updateSpecifierFor("pkg", { upstreamRepo: "owner/pkg" }, null),
+    ).toBe("github:owner/pkg");
+  });
+
+  // 回归（市场更新检测 Bug）：本地路径安装（file: 目录 dev 安装）的上游来自
+  // 包自述的 repository，更新/重装回该仓库——修复前这类安装按 name@latest
+  // 重装，registry 上没有该包，404 收场
+  it("reinstalls a local-path install from its declared upstream repo", () => {
+    expect(
+      updateSpecifierFor(
+        "@dsh-external/dsh-auto-review-jev",
+        { upstreamRepo: "sperictao/dsh-auto-review-jev" },
+        {
+          name: "@dsh-external/dsh-auto-review-jev",
+          spec: "file:/Volumes/repos/dsh-auto-review-jev",
+          managed: false,
+          installedVersion: "0.2.4",
+          latestVersion: "0.2.5",
+          latestInReleaseAgeWindow: false,
+          latestPublishTime: null,
+          requiresDsh: null,
+          compatible: null,
+          updateAvailable: true,
+        },
+      ),
+    ).toBe("github:sperictao/dsh-auto-review-jev");
   });
 
   it("keeps npm semantics for npm-shaped specs (release-age pin / @latest)", () => {
-    expect(updateSpecifierFor("dsh-context", "^0.43.0", null)).toBe("dsh-context@latest");
     expect(
-      updateSpecifierFor("dsh-context", "^0.43.0", {
+      updateSpecifierFor("dsh-context", { upstreamRepo: null }, null),
+    ).toBe("dsh-context@latest");
+    expect(
+      updateSpecifierFor("dsh-context", { upstreamRepo: null }, {
         name: "dsh-context",
         spec: "^0.43.0",
         managed: false,
@@ -229,7 +262,7 @@ describe("updateSpecifierFor", () => {
         updateAvailable: true,
       }),
     ).toBe("dsh-context@0.44.0");
-    // spec 不可得（已装列表缺失等极端情况）回退 npm 规则，不抛错
+    // 已装记录不可得（已装列表缺失等极端情况）回退 npm 规则，不抛错
     expect(updateSpecifierFor("dsh-context", null, null)).toBe("dsh-context@latest");
   });
 });
@@ -289,7 +322,7 @@ describe("market operation serialization", () => {
     );
     useAppStore.setState({
       marketInstalled: [
-        { name: "dsh-existing", spec: "dsh-existing@1.0.0", version: "1.0.0", managed: false, enabled: true },
+        { name: "dsh-existing", spec: "dsh-existing@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
       ],
       marketUpdates: {
         "dsh-existing": {
@@ -353,8 +386,8 @@ describe("MarketView", () => {
   it("installed tab renders catalog-consistent cards and marks available updates", async () => {
     // npm 包名大小写敏感：目录名与已装键精确一致才能补全描述/星标
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
-      { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, managed: true, enabled: true },
+      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
+      { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, upstreamRepo: null, managed: true, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -398,11 +431,56 @@ describe("MarketView", () => {
     expect(screen.queryByRole("button", { name: /@dsh-external/ })).not.toBeInTheDocument();
   });
 
+  // 回归（插件市场更新检测 Bug）：本地路径安装（file: 目录 dev 安装）的插件
+  // 版本与上游来自包自述的 repository——卡片显示磁盘版本与"已是最新"，整卡
+  // 参与更新检测；修复前这类安装版本与上游双 None，卡片无版本号、不进检测
+  it("checks a local-path install against its declared upstream repo", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
+      {
+        name: "@dsh-external/dsh-auto-review-jev",
+        spec: "file:/Volumes/repos/dsh-auto-review-jev",
+        version: "0.2.5",
+        upstreamRepo: "sperictao/dsh-auto-review-jev",
+        managed: false,
+        enabled: true,
+      },
+    ]);
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "@dsh-external/dsh-auto-review-jev",
+        spec: "file:/Volumes/repos/dsh-auto-review-jev",
+        managed: false,
+        installedVersion: "0.2.5",
+        latestVersion: "0.2.5",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
+        updateAvailable: false,
+      },
+    ]);
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+
+    // 版本号与最新判定都出（磁盘版本 + 远端探测结果）
+    expect(await screen.findByText("v0.2.5")).toBeInTheDocument();
+    expect(screen.getByText("Up to date")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Update @dsh-external/dsh-auto-review-jev" }),
+    ).not.toBeInTheDocument();
+    // 无更新时仍给重装出口（半成品修复用）——重装同样回到上游仓库
+    expect(
+      screen.getByRole("button", { name: "Reinstall @dsh-external/dsh-auto-review-jev" }),
+    ).toBeInTheDocument();
+  });
+
   it("disables Update and shows the requirement when the latest version needs a newer dsh", async () => {
     // engines.dsh 兼容门禁：目标包声明了更高 dsh 最低版本（compatible=false）
     // → 更新按钮禁用 + 红字要求；不满足时不出现在批量计数里
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -433,12 +511,12 @@ describe("MarketView", () => {
     // disabled 覆盖行走 market_set_plugin_enabled（重启 dsh web 生效）；受管
     // 插件不出开关
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
-      { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, managed: true, enabled: true },
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
+      { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, upstreamRepo: null, managed: true, enabled: true },
     ]);
     const setEnabled = vi
       .spyOn(cmd, "marketSetPluginEnabled")
-      .mockResolvedValue({ name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: false });
+      .mockResolvedValue({ name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: false });
     const user = userEvent.setup();
     render(createElement(MarketView));
     await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
@@ -463,12 +541,13 @@ describe("MarketView", () => {
     // 回执 enabled 与请求一致 = 内容未变化的空操作（后端免写盘）：如实提示
     // 没改，不谎称「将于下次启动停用」
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketSetPluginEnabled").mockResolvedValue({
       name: "dsh-better-sidebar",
       spec: "npm:dsh-better-sidebar@1.0.0",
       version: "1.0.0",
+      upstreamRepo: null,
       managed: false,
       enabled: true,
     });
@@ -581,10 +660,10 @@ describe("MarketView", () => {
     });
     vi.spyOn(cmd, "marketInstalled")
       .mockResolvedValueOnce([
-        { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+        { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
       ])
       .mockResolvedValue([
-        { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@2.0.0", version: "2.0.0", managed: false, enabled: true },
+        { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@2.0.0", version: "2.0.0", upstreamRepo: null, managed: false, enabled: true },
       ]);
     vi.spyOn(cmd, "marketInstall").mockResolvedValue({
       status: "installed",
@@ -638,7 +717,7 @@ describe("MarketView", () => {
 
   it("outdated card offers Update instead of Reinstall", async () => {
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      { name: "DSH-better-sidebar", spec: "dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -774,9 +853,9 @@ describe("MarketView", () => {
     // 遇之弹知情确认框；用户确认后钉版本安装，弹队首续传——装完继续下一个，
     // 直到全部可更新项处理完
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
-      { name: "dsh-context", spec: "npm:dsh-context@0.41.0", version: "0.41.0", managed: false, enabled: true },
-      { name: "dsh-better-cards", spec: "npm:dsh-better-cards@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
+      { name: "dsh-context", spec: "npm:dsh-context@0.41.0", version: "0.41.0", upstreamRepo: null, managed: false, enabled: true },
+      { name: "dsh-better-cards", spec: "npm:dsh-better-cards@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -857,8 +936,8 @@ describe("MarketView", () => {
     // GitHub 仓库形态无 registry tarball，不进 pnpm store 预下载；它仍进串行
     // 安装队列（重装到远端 HEAD）。预下载只预热 npm 形态的 specifier
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
-      { name: "dsh-at-file", spec: "git+https://github.com/omdsh-dev/dsh-at-file.git", version: null, managed: false, enabled: true },
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
+      { name: "dsh-at-file", spec: "git+https://github.com/omdsh-dev/dsh-at-file.git", version: null, upstreamRepo: "omdsh-dev/dsh-at-file", managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -914,8 +993,8 @@ describe("MarketView", () => {
     // 窗口项是队列最后一项：确认钉版本后弹空队列，收尾汇总如实报成功（不残留
     // 中继态、不丢 toast——"只更新一个"场景的收尾边界）
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
-      { name: "dsh-context", spec: "npm:dsh-context@0.41.0", version: "0.41.0", managed: false, enabled: true },
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
+      { name: "dsh-context", spec: "npm:dsh-context@0.41.0", version: "0.41.0", upstreamRepo: null, managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -971,8 +1050,8 @@ describe("MarketView", () => {
   it("update all continues past a declined windowed plugin", async () => {
     // 放弃窗口项：跳过它继续更新后续，不收窄为"只更新一个"
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "dsh-context", spec: "npm:dsh-context@0.41.0", version: "0.41.0", managed: false, enabled: true },
-      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      { name: "dsh-context", spec: "npm:dsh-context@0.41.0", version: "0.41.0", upstreamRepo: null, managed: false, enabled: true },
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -1272,8 +1351,8 @@ describe("MarketView", () => {
     });
     useAppStore.setState({
       marketInstalled: [
-        { name: "blocked", spec: "blocked@1.0.0", version: "1.0.0", managed: false, enabled: true },
-        { name: "next", spec: "next@1.0.0", version: "1.0.0", managed: false, enabled: true },
+        { name: "blocked", spec: "blocked@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
+        { name: "next", spec: "next@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
       ],
       marketUpdates: { blocked: update("blocked"), next: update("next") },
       marketUpdateAllQueue: ["blocked", "next"],
@@ -1837,9 +1916,65 @@ describe("discovery compatibility (G4)", () => {
 });
 
 describe("release notes dialog (G5)", () => {
+  // 回归（插件市场更新检测 Bug）：本地路径 dev 安装的插件有更新时，更新前
+  // 如实披露安装源从本地路径换成包自述的仓库，确认后按该仓库重装
+  it("discloses the source switch for a local-path install and updates from its repo", async () => {
+    vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
+      {
+        name: "@dsh-external/dsh-auto-review-jev",
+        spec: "file:/Volumes/repos/dsh-auto-review-jev",
+        version: "0.2.4",
+        upstreamRepo: "sperictao/dsh-auto-review-jev",
+        managed: false,
+        enabled: true,
+      },
+    ]);
+    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
+      {
+        name: "@dsh-external/dsh-auto-review-jev",
+        spec: "file:/Volumes/repos/dsh-auto-review-jev",
+        managed: false,
+        installedVersion: "0.2.4",
+        latestVersion: "0.2.5",
+        latestInReleaseAgeWindow: false,
+        latestPublishTime: null,
+        requiresDsh: null,
+        compatible: null,
+        updateAvailable: true,
+      },
+    ]);
+    // 更新说明查询同源读已装记录的上游（目录里没有该插件，无处兜底）
+    const notesSpy = vi.spyOn(cmd, "marketReleaseNotes").mockResolvedValue(null);
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
+      status: "installed",
+      receipt: {
+        name: "@dsh-external/dsh-auto-review-jev",
+        spec: "github:sperictao/dsh-auto-review-jev",
+      },
+      notices: [],
+    });
+    const user = userEvent.setup();
+    render(createElement(MarketView));
+    await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Installed" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Update @dsh-external/dsh-auto-review-jev" }),
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("0.2.4 → 0.2.5");
+    expect(screen.getByText(/instead of the local path/)).toBeInTheDocument();
+    expect(notesSpy).toHaveBeenCalledWith("sperictao/dsh-auto-review-jev");
+    expect(installSpy).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Update" }));
+    await waitFor(() =>
+      expect(installSpy).toHaveBeenCalledWith("github:sperictao/dsh-auto-review-jev"),
+    );
+  });
+
   it("update shows release notes and installs after confirm", async () => {
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {
@@ -1881,7 +2016,7 @@ describe("release notes dialog (G5)", () => {
 
   it("uncovered plugins show an honest no-notes state and still update", async () => {
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
-      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", managed: false, enabled: true },
+      { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
     ]);
     vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([
       {

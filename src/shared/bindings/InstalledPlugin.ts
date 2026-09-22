@@ -11,11 +11,18 @@ name: string,
 spec: string, 
 /**
  * 实际安装版本：磁盘事实（node_modules/<name>/package.json）优先，
- * spec 精确版本次之；协议形态（github:/file: 等，版本多为 0.0.0 占位）
- * 与两者均不可得为 None。更新检测复用同一事实（check_updates_once 不再
- * 自算），前端卡片版本号即时显示靠它
+ * spec 精确版本次之；不可检的协议形态（无上游的 file: 等，版本多为
+ * 0.0.0 占位）与两者均不可得为 None。更新检测复用同一事实
+ * （check_updates_once 不再自算），前端卡片版本号即时显示靠它
  */
 version: string | null, 
+/**
+ * 更新/重装的上游仓库（owner/repo）：spec 的 GitHub 形态优先，本地路径
+ * 等其余协议形态回退包自述的 repository（见 github_upstream_from_manifest）；
+ * registry 形态与无上游的协议形态为 None。检测查它、更新重装也回到它，
+ * 前端（更新 specifier、更新说明查询）只读这一个事实，不重复推导
+ */
+upstreamRepo: string | null, 
 /**
  * Launcher 自管授权插件：不出移除按钮，由 Launcher 的修复/卸载流程管理
  */

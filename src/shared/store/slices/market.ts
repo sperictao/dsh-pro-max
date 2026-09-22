@@ -104,21 +104,21 @@ function hasMarketOperation(
   return state.marketReleaseAgeConfirm !== null;
 }
 
-/// 更新/重装的安装标识拼装：GitHub 仓库形态（github:/git+https: 落盘形态，
-/// githubRepoId 认全）按 github:owner/repo 重装——pnpm 重新解析默认分支
-/// HEAD，即"更到远端最新"；这些包多半不在 npm registry（或 registry 上只是
-/// 占位），name@latest 要么 404 要么把 git 源覆盖成 registry 包。npm 形态
+/// 更新/重装的安装标识拼装：可检上游是 GitHub 仓库时按 github:owner/repo
+/// 重装——pnpm 重新解析默认分支 HEAD，即"更到远端最新"。上游仓库读已装记录的
+/// upstreamRepo（Rust 侧统一归一：spec 的 GitHub 形态，或本地路径安装包自述的
+/// repository），前端不重复推导；这类包多半不在 npm registry（或 registry 上
+/// 只是占位），name@latest 要么 404 要么把 git 源覆盖成 registry 包。npm 形态
 /// 维持原规则：latest 在 pnpm minimumReleaseAge 保护窗口内时钉版本（窗口内
 /// @latest 会被静默拦回旧版、退出码仍为 0 造成假成功，钉版本是 pnpm 认的
-/// 知情通道），否则 @latest。store 发起与卡片锚定 installError 共用此规则，
-/// 两侧不得漂移
+/// 知情通道），否则 @latest。store 发起、卡片锚定 installError、批量预热共用
+/// 此规则，三处不得漂移
 export function updateSpecifierFor(
   name: string,
-  spec: string | null | undefined,
+  installed: Pick<InstalledPlugin, "upstreamRepo"> | null | undefined,
   info: PluginUpdateInfo | null | undefined,
 ): string {
-  const repo = githubRepoId(spec ?? "");
-  if (repo) return `github:${repo}`;
+  if (installed?.upstreamRepo) return `github:${installed.upstreamRepo}`;
   return info?.updateAvailable && info.latestInReleaseAgeWindow && info.latestVersion
     ? `${name}@${info.latestVersion}`
     : `${name}@latest`;
@@ -511,9 +511,9 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       });
       return false;
     }
-    const spec = get().marketInstalled.find((p) => p.name === name)?.spec ?? null;
+    const target = get().marketInstalled.find((p) => p.name === name) ?? null;
     const specifier =
-      opts?.releaseAgePin ? `${name}@${opts.releaseAgePin}` : updateSpecifierFor(name, spec, info);
+      opts?.releaseAgePin ? `${name}@${opts.releaseAgePin}` : updateSpecifierFor(name, target, info);
     set({ marketUpdating: name, marketInstallLog: { specifier, lines: [] } });
     try {
       const outcome = await cmd.marketInstall(specifier);
@@ -616,13 +616,14 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       .filter((u) => u.updateAvailable && !u.managed && u.compatible !== false)
       .map((u) => u.name);
     if (targets.length === 0 || hasMarketOperation(get())) return;
-    // 预下载候选：与后续安装同源生成 specifier，npm 形态（githubRepoId(spec)
-    // 为 null）才预热；窗口项生成 name@latestVersion 钉版本，同样可预热
+    // 预下载候选：与后续安装同源生成 specifier（上游是 GitHub 仓库的形态
+    // 生成 github:owner/repo），只有 npm 形态（githubRepoId(specifier) 为
+    // null）才预热；窗口项生成 name@latestVersion 钉版本，同样可预热
     const npmSpecifiers = targets
       .map((name) => {
-        const spec = get().marketInstalled.find((p) => p.name === name)?.spec ?? null;
+        const target = get().marketInstalled.find((p) => p.name === name) ?? null;
         const info = get().marketUpdates?.[name] ?? null;
-        return updateSpecifierFor(name, spec, info);
+        return updateSpecifierFor(name, target, info);
       })
       .filter((specifier) => !githubRepoId(specifier));
     if (npmSpecifiers.length > 0) {
@@ -702,17 +703,19 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
     }
   },
 
-  // 更新说明打开（G5）：仓库标识从目录条目 url 派生（github: spec 兜底）；
+  // 更新说明打开（G5）：仓库标识优先读已装记录的上游事实（Rust 侧统一归一：
+  // spec 的 GitHub 形态，或本地路径安装包自述的 repository），目录条目 url
+  // 只作兜底——目录里没有的手动安装（file: 等）也有更新说明可看；
   // 说明是显示性增强，查询失败按"未覆盖"处理，不阻塞更新
   openMarketReleaseNotes: async (name) => {
     if (get().marketReleaseNotes?.busy) return;
-    const spec = get().marketInstalled.find((p) => p.name === name)?.spec;
+    const installed = get().marketInstalled.find((p) => p.name === name) ?? null;
     // 目录名与落盘键大小写可能不一致（目录保留作者原样、npm 键常小写），
     // 仓库标识派生按不区分大小写匹配
     const url = get().marketCatalog?.plugins.find(
       (p) => p.name.toLowerCase() === name.toLowerCase(),
     )?.url;
-    const repo = repoIdFromCatalogUrl(url) ?? (spec?.startsWith("github:") ? spec.slice(7).split("#")[0] : null);
+    const repo = installed?.upstreamRepo ?? repoIdFromCatalogUrl(url);
     set({ marketReleaseNotes: { name, notes: null, busy: true } });
     try {
       const notes = repo ? await cmd.marketReleaseNotes(repo) : null;

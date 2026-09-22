@@ -523,8 +523,10 @@ function FavoritesPane() {
   );
 }
 
-/// 已安装页：与发现页同一卡片观感，npm 形态插件自动比对 registry latest，
-/// 有更新出 Update 按钮，可一键全部更新；受管插件只读，其余可移除
+/// 已安装页：与发现页同一卡片观感，可检插件自动比对上游最新版（registry
+/// 形态比 registry latest，有 GitHub 上游的比远端默认分支 manifest，见
+/// installed/upstreamRepo），有更新出 Update 按钮，可一键全部更新；受管插件
+/// 只读，其余可移除
 function InstalledPane() {
   const { t, i18n } = useTranslation();
   const locale = catalogLocale(i18n.language);
@@ -734,9 +736,9 @@ function MarketCard({
   favorited: boolean;
   onToggleFavorite: () => void;
   onInstall?: () => void;
-  /** 重装（无更新态）：重跑安装——npm 形态 name@latest（latest 在 pnpm
-      minimumReleaseAge 窗口内时先弹供应链确认框、确认后钉版本），GitHub
-      仓库形态按原仓重装到默认分支 HEAD（见 updateSpecifierFor）；同一命令
+  /** 重装（无更新态）：重跑安装——registry 形态 name@latest（latest 在 pnpm
+      minimumReleaseAge 窗口内时先弹供应链确认框、确认后钉版本），有 GitHub
+      上游的按该仓库重装到默认分支 HEAD（见 updateSpecifierFor）；同一命令
       通道。已装页必传，发现/收藏页不传（永不渲染对应分支） */
   onUpdate?: () => void;
   /** 更新（有更新态）：先弹更新说明对话框（G5），确认后走既有更新管线。
@@ -766,7 +768,7 @@ function MarketCard({
   // （与 updateMarketPlugin 共用 updateSpecifierFor——specifier 是
   // installError/installLog 锚回本卡的键，两处必须一致）
   const ownSpecifier = installed
-    ? updateSpecifierFor(installed.name, installed.spec, info)
+    ? updateSpecifierFor(installed.name, installed, info)
     : (plugin?.installSpecifier ?? null);
 
   // 状态推导（自上而下首个命中）：受管 > 移除中 > 更新中 > 安装失败 > 已装
@@ -975,10 +977,10 @@ function MarketCard({
     ) : state === "installed" ? (
       <>
         {current && latest !== null && <span className={MUTED}>{t("Up to date")}</span>}
-        {/* 无更新时提供重装：与 Update 同一回调（onUpdate 重跑安装：npm 形态
-            name@latest、GitHub 仓库形态原仓重装到 HEAD，见 updateSpecifierFor），
-            覆盖终端手动 add 被拦构建脚本留下的半成品（依赖已写入但构建未跑）；
-            与 Update 所在 outdated 分支互斥，永不共存 */}
+        {/* 无更新时提供重装：与 Update 同一回调（onUpdate 重跑安装：registry
+            形态 name@latest、有 GitHub 上游的原仓重装到 HEAD，见
+            updateSpecifierFor），覆盖终端手动 add 被拦构建脚本留下的半成品
+            （依赖已写入但构建未跑）；与 Update 所在 outdated 分支互斥，永不共存 */}
         {state === "installed" && onUpdate && (
           <button
             className={BTN_OUTLINE}
@@ -1411,11 +1413,21 @@ function UpdateNotesDialog() {
   const pending = useAppStore((s) => s.marketReleaseNotes);
   const updating = useAppStore((s) => s.marketUpdating);
   const updates = useAppStore((s) => s.marketUpdates);
+  const installed = useAppStore((s) =>
+    s.marketReleaseNotes
+      ? (s.marketInstalled.find((p) => p.name === s.marketReleaseNotes?.name) ?? null)
+      : null,
+  );
   const confirm = useAppStore((s) => s.confirmMarketReleaseNotesUpdate);
   const dismiss = useAppStore((s) => s.dismissMarketReleaseNotes);
   if (!pending) return null;
   const busy = updating === pending.name;
   const info = updates?.[pending.name] ?? null;
+  // 本次更新的安装目标（与更新管线同源，见 updateSpecifierFor）
+  const target = updateSpecifierFor(pending.name, installed, info);
+  // 来源切换披露：落盘 spec 不是 GitHub 形态（本地路径 dev 安装等）而更新目标
+  // 是 GitHub 仓库——更新会把安装源从本地路径换成该仓库，更新前如实说明
+  const switchesSource = target.startsWith("github:") && githubRepoId(installed?.spec ?? "") === null;
 
   return (
     <div
@@ -1438,6 +1450,12 @@ function UpdateNotesDialog() {
             (info?.latestVersion ?? pending.name)
           )}
         </div>
+        {switchesSource && (
+          <p className="mt-2 text-xs opacity-70" id="update-source-switch">
+            {t("This update reinstalls from {{specifier}} instead of the local path.",
+              { specifier: target })}
+          </p>
+        )}
         {pending.busy ? (
           <p className="mt-3 text-xs opacity-60">{t("Loading notes…")}</p>
         ) : pending.notes?.release ? (

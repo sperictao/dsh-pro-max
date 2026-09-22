@@ -781,8 +781,8 @@ fn installed_version_from_spec_parses_concrete_npm_forms_only() {
 }
 
 #[test]
-fn installed_version_from_disk_reads_node_modules_facts() {
-    use super::market::installed_version_from_disk;
+fn installed_facts_from_disk_reads_node_modules_facts() {
+    use super::market::installed_facts_from_disk;
     // 回归（市场更新检测 Bug）：pnpm 落盘的依赖 spec 常是 ^x.y.z 范围
     // 形态，installed_version_from_spec 对其返回 None，npm 形态插件整体
     // 脱离更新检测。磁盘上的实际版本（node_modules 内 package.json）是
@@ -798,7 +798,7 @@ fn installed_version_from_disk_reads_node_modules_facts() {
     )
     .unwrap();
     assert_eq!(
-        installed_version_from_disk(&dir, "dsh-context").as_deref(),
+        installed_facts_from_disk(&dir, "dsh-context").version.as_deref(),
         Some("0.38.5")
     );
     // scope 包：@scope/pkg 拼成 node_modules/@scope/pkg 自然子路径
@@ -809,15 +809,15 @@ fn installed_version_from_disk_reads_node_modules_facts() {
     )
     .unwrap();
     assert_eq!(
-        installed_version_from_disk(&dir, "@scope/pkg").as_deref(),
+        installed_facts_from_disk(&dir, "@scope/pkg").version.as_deref(),
         Some("1.2.3")
     );
     // 文件缺失
-    assert_eq!(installed_version_from_disk(&dir, "not-installed"), None);
+    assert_eq!(installed_facts_from_disk(&dir, "not-installed").version, None);
     // 坏 JSON
     std::fs::create_dir_all(nm.join("broken")).unwrap();
     std::fs::write(nm.join("broken").join("package.json"), "not json").unwrap();
-    assert_eq!(installed_version_from_disk(&dir, "broken"), None);
+    assert_eq!(installed_facts_from_disk(&dir, "broken").version, None);
     // version 字段缺失 / 非语义版本
     std::fs::create_dir_all(nm.join("no-version")).unwrap();
     std::fs::write(
@@ -825,25 +825,25 @@ fn installed_version_from_disk_reads_node_modules_facts() {
         r#"{"name":"x"}"#,
     )
     .unwrap();
-    assert_eq!(installed_version_from_disk(&dir, "no-version"), None);
+    assert_eq!(installed_facts_from_disk(&dir, "no-version").version, None);
     std::fs::create_dir_all(nm.join("bad-version")).unwrap();
     std::fs::write(
         nm.join("bad-version").join("package.json"),
         r#"{"version":"latest"}"#,
     )
     .unwrap();
-    assert_eq!(installed_version_from_disk(&dir, "bad-version"), None);
+    assert_eq!(installed_facts_from_disk(&dir, "bad-version").version, None);
     // `..` 注入名：路径拼接防纵深（上游 valid_identifier 已挡，不信任调用方）
-    assert_eq!(installed_version_from_disk(&dir, "../escape"), None);
-    assert_eq!(installed_version_from_disk(&dir, "..\\escape"), None);
-    assert_eq!(installed_version_from_disk(&dir, ""), None);
+    assert_eq!(installed_facts_from_disk(&dir, "../escape").version, None);
+    assert_eq!(installed_facts_from_disk(&dir, "..\\escape").version, None);
+    assert_eq!(installed_facts_from_disk(&dir, "").version, None);
     // 绝对路径 / 盘符注入：Path::join 遇绝对路径组件会整体替换基路径，
     // Windows 下 `C:/evil`、`\evil`、`/evil` 都会逃出 profile 目录，
     // 四条校验（字符白名单挡 `:` 与 `\`，首字符挡 `/`）必须全拦
-    assert_eq!(installed_version_from_disk(&dir, "C:/evil"), None);
-    assert_eq!(installed_version_from_disk(&dir, r"C:\evil"), None);
-    assert_eq!(installed_version_from_disk(&dir, "/evil"), None);
-    assert_eq!(installed_version_from_disk(&dir, "C:evil"), None);
+    assert_eq!(installed_facts_from_disk(&dir, "C:/evil").version, None);
+    assert_eq!(installed_facts_from_disk(&dir, r"C:\evil").version, None);
+    assert_eq!(installed_facts_from_disk(&dir, "/evil").version, None);
+    assert_eq!(installed_facts_from_disk(&dir, "C:evil").version, None);
     // 合法包名回归：点划下划线与 scope 形态均正常放行
     std::fs::create_dir_all(nm.join("pkg")).unwrap();
     std::fs::write(
@@ -864,24 +864,44 @@ fn installed_version_from_disk_reads_node_modules_facts() {
     )
     .unwrap();
     assert_eq!(
-        installed_version_from_disk(&dir, "pkg").as_deref(),
+        installed_facts_from_disk(&dir, "pkg").version.as_deref(),
         Some("1.0.0")
     );
     assert_eq!(
-        installed_version_from_disk(&dir, "pkg.name-1_x").as_deref(),
+        installed_facts_from_disk(&dir, "pkg.name-1_x").version.as_deref(),
         Some("2.0.0")
     );
     assert_eq!(
-        installed_version_from_disk(&dir, "@scope/pkg.name-1_x").as_deref(),
+        installed_facts_from_disk(&dir, "@scope/pkg.name-1_x").version.as_deref(),
         Some("3.0.0")
+    );
+    // 一次读盘出两件事实：版本 + 包自述的 GitHub 上游（本地路径安装的检测
+    // 来源）；未声明 repository 的包上游如实 None
+    assert_eq!(
+        installed_facts_from_disk(&dir, "@scope/pkg.name-1_x").upstream_repo,
+        None
+    );
+    std::fs::create_dir_all(nm.join("local-dev")).unwrap();
+    std::fs::write(
+        nm.join("local-dev").join("package.json"),
+        r#"{"version":"0.2.5","repository":"git+https://github.com/sperictao/dsh-auto-review-jev.git"}"#,
+    )
+    .unwrap();
+    let local_dev = installed_facts_from_disk(&dir, "local-dev");
+    assert_eq!(local_dev.version.as_deref(), Some("0.2.5"));
+    assert_eq!(
+        local_dev.upstream_repo.as_deref(),
+        Some("sperictao/dsh-auto-review-jev")
     );
     std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
-fn installed_version_for_update_prefers_disk_over_spec() {
-    use super::market::installed_version_for_update;
-    // check_updates_once 的版本决策纯函数化：磁盘事实优先，spec 精确版本兜底
+fn installed_facts_for_update_prefers_disk_over_spec() {
+    use super::market::installed_facts_for_update;
+    // check_updates_once 的安装事实判定纯函数化：版本磁盘事实优先、spec 精确
+    // 版本兜底；上游仓库 spec 的 GitHub 形态优先，其余协议形态回退包自述的
+    // repository（本地 dev 安装的检测来源，不是猜）
     let dir = std::env::temp_dir().join(format!(
         "dsh-pro-max-disk-ver-decision-{}",
         std::process::id()
@@ -895,22 +915,35 @@ fn installed_version_for_update_prefers_disk_over_spec() {
     )
     .unwrap();
     // 范围 spec（pnpm 落盘形态）：磁盘事实参与检测——修复前这里恒 None
-    assert_eq!(
-        installed_version_for_update(Some(&dir), "dsh-context", "^0.38.5").as_deref(),
-        Some("0.38.5")
-    );
+    let range_form = installed_facts_for_update(Some(&dir), "dsh-context", "^0.38.5");
+    assert_eq!(range_form.version.as_deref(), Some("0.38.5"));
+    // registry 形态的上游恒 None：npm 包的发布事实以 registry 为准
+    assert_eq!(range_form.upstream_repo, None);
+    // 包自述了 repository 的 registry 形态同样不回落到源码仓库 HEAD
+    std::fs::create_dir_all(nm.join("npm-with-repo")).unwrap();
+    std::fs::write(
+        nm.join("npm-with-repo").join("package.json"),
+        r#"{"version":"1.0.0","repository":"https://github.com/owner/npm-with-repo"}"#,
+    )
+    .unwrap();
+    let npm_form = installed_facts_for_update(Some(&dir), "npm-with-repo", "^1.0.0");
+    assert_eq!(npm_form.version.as_deref(), Some("1.0.0"));
+    assert_eq!(npm_form.upstream_repo, None);
     // 磁盘不可得（profile 目录拿不到 / 包不在盘上）回退 spec 精确版本
     assert_eq!(
-        installed_version_for_update(None, "dsh-context", "npm:dsh-context@0.38.4").as_deref(),
+        installed_facts_for_update(None, "dsh-context", "npm:dsh-context@0.38.4")
+            .version
+            .as_deref(),
         Some("0.38.4")
     );
     assert_eq!(
-        installed_version_for_update(Some(&dir), "absent", "1.0.0").as_deref(),
+        installed_facts_for_update(Some(&dir), "absent", "1.0.0").version.as_deref(),
         Some("1.0.0")
     );
-    // git-hosted（GitHub 仓库）参与检测：版本来自磁盘事实，检测比对远端
-    // 默认分支的 manifest，更新动作按原仓重装——不再有 name@latest 覆盖
-    // git 源的歧途。修复前这里恒 None（shadow-mind 检不出新版本即此因）
+    // git-hosted（GitHub 仓库）参与检测：版本来自磁盘事实，上游是 spec 归一出
+    // 的仓库，检测比对远端默认分支的 manifest，更新动作按原仓重装——不再有
+    // name@latest 覆盖 git 源的歧途。修复前这里恒 None（shadow-mind 检不出
+    // 新版本即此因）
     std::fs::create_dir_all(nm.join("@whutzefengxie-ops").join("dsh-shadow-mind")).unwrap();
     std::fs::write(
         nm.join("@whutzefengxie-ops")
@@ -919,41 +952,110 @@ fn installed_version_for_update_prefers_disk_over_spec() {
         r#"{"version":"0.2.1"}"#,
     )
     .unwrap();
+    let github_form = installed_facts_for_update(
+        Some(&dir),
+        "@whutzefengxie-ops/dsh-shadow-mind",
+        "github:whutzefengxie-ops/dsh-shadow-mind",
+    );
+    assert_eq!(github_form.version.as_deref(), Some("0.2.1"));
     assert_eq!(
-        installed_version_for_update(
-            Some(&dir),
-            "@whutzefengxie-ops/dsh-shadow-mind",
-            "github:whutzefengxie-ops/dsh-shadow-mind"
-        )
-        .as_deref(),
-        Some("0.2.1")
+        github_form.upstream_repo.as_deref(),
+        Some("whutzefengxie-ops/dsh-shadow-mind")
     );
     // pnpm 落盘的规范化形态（github: → git+https://...git）同样命中
-    assert_eq!(
-        installed_version_for_update(
-            Some(&dir),
-            "@whutzefengxie-ops/dsh-shadow-mind",
-            "git+https://github.com/whutzefengxie-ops/dsh-shadow-mind.git"
-        )
-        .as_deref(),
-        Some("0.2.1")
+    let normalized = installed_facts_for_update(
+        Some(&dir),
+        "@whutzefengxie-ops/dsh-shadow-mind",
+        "git+https://github.com/whutzefengxie-ops/dsh-shadow-mind.git",
     );
-    // file:/非 GitHub git 形态不检：没有可比的远端版本事实
+    assert_eq!(normalized.version.as_deref(), Some("0.2.1"));
     assert_eq!(
-        installed_version_for_update(Some(&dir), "dsh-context", "file:/x/y.tgz"),
-        None
+        normalized.upstream_repo.as_deref(),
+        Some("whutzefengxie-ops/dsh-shadow-mind")
+    );
+    // 回归（市场更新检测 Bug）：本地路径安装（file: 目录 dev 安装）没有可归一
+    // 的远端 spec，唯一的上游事实是包自述的 repository——修复前这类安装版本与
+    // 上游双 None、整卡不进检测（dsh-auto-review-jev 检不到最新版即此因）
+    std::fs::create_dir_all(nm.join("@dsh-external").join("dsh-auto-review-jev")).unwrap();
+    std::fs::write(
+        nm.join("@dsh-external")
+            .join("dsh-auto-review-jev")
+            .join("package.json"),
+        r#"{"version":"0.2.5","repository":{"type":"git","url":"git+https://github.com/sperictao/dsh-auto-review-jev.git"}}"#,
+    )
+    .unwrap();
+    let local_path = installed_facts_for_update(
+        Some(&dir),
+        "@dsh-external/dsh-auto-review-jev",
+        "file:/Volumes/repos/dsh-auto-review-jev",
+    );
+    assert_eq!(local_path.version.as_deref(), Some("0.2.5"));
+    assert_eq!(
+        local_path.upstream_repo.as_deref(),
+        Some("sperictao/dsh-auto-review-jev")
+    );
+    // 包自述不可得 / 非 GitHub 主机：不可检，版本与上游都如实 None——不猜，
+    // 也不把"检不到"放大成"已是最新"
+    assert_eq!(
+        installed_facts_for_update(Some(&dir), "dsh-context", "file:/x/y.tgz"),
+        super::market::InstalledFacts::default()
     );
     assert_eq!(
-        installed_version_for_update(Some(&dir), "dsh-context", "git+https://x/y.git"),
-        None
+        installed_facts_for_update(Some(&dir), "dsh-context", "git+https://x/y.git"),
+        super::market::InstalledFacts::default()
     );
     std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
-fn installed_version_from_disk_edge_shapes_return_none() {
-    use super::market::installed_version_for_update;
-    use super::market::installed_version_from_disk;
+fn github_upstream_from_manifest_reads_package_repository() {
+    use super::market::github_upstream_from_manifest;
+    let upstream = |raw: &str| {
+        github_upstream_from_manifest(&serde_json::from_str::<serde_json::Value>(raw).unwrap())
+    };
+    // 对象形态（npm 标准）/ 字符串形态 / 归一：大小写、.git 后缀、#fragment
+    assert_eq!(
+        upstream(r#"{"repository":{"type":"git","url":"git+https://github.com/Sperictao/Dsh-Auto-Review-Jev.git"}}"#)
+            .as_deref(),
+        Some("sperictao/dsh-auto-review-jev")
+    );
+    assert_eq!(
+        upstream(r#"{"repository":"https://github.com/owner/repo"}"#).as_deref(),
+        Some("owner/repo")
+    );
+    assert_eq!(
+        upstream(r#"{"repository":{"url":"git@github.com:owner/repo.git"}}"#).as_deref(),
+        Some("owner/repo")
+    );
+    assert_eq!(
+        upstream(r#"{"repository":{"url":"https://github.com/owner/repo#main"}}"#).as_deref(),
+        Some("owner/repo")
+    );
+    // 非 GitHub 主机 / 缺 url / 非字符串 / 无 repository：不认——检测只认
+    // GitHub 默认分支 manifest 这一种远端事实
+    assert_eq!(upstream(r#"{"repository":{"url":"https://gitlab.com/owner/repo"}}"#), None);
+    assert_eq!(upstream(r#"{"repository":{"type":"git"}}"#), None);
+    assert_eq!(upstream(r#"{"repository":123}"#), None);
+    assert_eq!(upstream(r#"{"name":"x","version":"1.0.0"}"#), None);
+    // monorepo 子包（directory 声明）：远端根 manifest 的版本是仓库根版本，
+    // 与子包版本不可比，采信会读出假最新 → fail closed；空 directory 不算声明
+    assert_eq!(
+        upstream(
+            r#"{"repository":{"url":"https://github.com/owner/mono","directory":"packages/x"}}"#
+        ),
+        None
+    );
+    assert_eq!(
+        upstream(r#"{"repository":{"url":"https://github.com/owner/mono","directory":"  "}}"#)
+            .as_deref(),
+        Some("owner/mono")
+    );
+}
+
+#[test]
+fn installed_facts_from_disk_edge_shapes_return_none() {
+    use super::market::installed_facts_for_update;
+    use super::market::installed_facts_from_disk;
     // 边界补测（QA 回归）：工程师用例未覆盖的畸形盘上事实，都必须
     // 如实 None，不得 panic、不得误读
     let dir =
@@ -964,7 +1066,7 @@ fn installed_version_from_disk_edge_shapes_return_none() {
     // node_modules 下的"包"是文件而非目录：路径拼接后读不到
     // package.json（file\package.json 不存在），必须 None
     std::fs::write(nm.join("file-not-dir"), "i am a file").unwrap();
-    assert_eq!(installed_version_from_disk(&dir, "file-not-dir"), None);
+    assert_eq!(installed_facts_from_disk(&dir, "file-not-dir").version, None);
     // version 字段是数字 / null：as_str() 拿不到字符串，必须 None
     std::fs::create_dir_all(nm.join("numeric-version")).unwrap();
     std::fs::write(
@@ -972,20 +1074,20 @@ fn installed_version_from_disk_edge_shapes_return_none() {
         r#"{"version":123}"#,
     )
     .unwrap();
-    assert_eq!(installed_version_from_disk(&dir, "numeric-version"), None);
+    assert_eq!(installed_facts_from_disk(&dir, "numeric-version").version, None);
     std::fs::create_dir_all(nm.join("null-version")).unwrap();
     std::fs::write(
         nm.join("null-version").join("package.json"),
         r#"{"version":null}"#,
     )
     .unwrap();
-    assert_eq!(installed_version_from_disk(&dir, "null-version"), None);
+    assert_eq!(installed_facts_from_disk(&dir, "null-version").version, None);
     // profile 目录本身不存在：读文件失败，必须 None
     let missing = dir.join("definitely-missing-profile");
-    assert_eq!(installed_version_from_disk(&missing, "dsh-context"), None);
+    assert_eq!(installed_facts_from_disk(&missing, "dsh-context").version, None);
     // scope 名里带 `..`（@../pkg、@scope/../pkg）：路径防注入同样必须拦
-    assert_eq!(installed_version_from_disk(&dir, "@../pkg"), None);
-    assert_eq!(installed_version_from_disk(&dir, "@scope/../pkg"), None);
+    assert_eq!(installed_facts_from_disk(&dir, "@../pkg").version, None);
+    assert_eq!(installed_facts_from_disk(&dir, "@scope/../pkg").version, None);
     // 磁盘版本优先于 spec 精确版本：盘上是事实，spec 只是落盘时的
     // 声明（可能滞后），两者冲突时以磁盘为准
     std::fs::create_dir_all(nm.join("ahead")).unwrap();
@@ -995,7 +1097,7 @@ fn installed_version_from_disk_edge_shapes_return_none() {
     )
     .unwrap();
     assert_eq!(
-        installed_version_for_update(Some(&dir), "ahead", "1.0.0").as_deref(),
+        installed_facts_for_update(Some(&dir), "ahead", "1.0.0").version.as_deref(),
         Some("2.0.0")
     );
     std::fs::remove_dir_all(&dir).ok();
@@ -2757,6 +2859,7 @@ fn install_receipt_prefers_new_key_then_npm_name() {
             name: "old".into(),
             spec: "npm:old@1".into(),
             version: None,
+            upstream_repo: None,
             managed: false,
             enabled: true,
         },
@@ -2764,6 +2867,7 @@ fn install_receipt_prefers_new_key_then_npm_name() {
             name: "dsh-new".into(),
             spec: "dsh-new@2.0".into(),
             version: None,
+            upstream_repo: None,
             managed: false,
             enabled: true,
         },
@@ -2808,6 +2912,7 @@ fn install_receipt_protocol_reinstall_locates_existing_key() {
             name: "dsh-api-relay-audit".into(),
             spec: "github:toby-bridges/api-relay-audit".into(),
             version: None,
+            upstream_repo: Some("toby-bridges/api-relay-audit".into()),
             managed: false,
             enabled: true,
         },
@@ -2815,6 +2920,7 @@ fn install_receipt_protocol_reinstall_locates_existing_key() {
             name: "dsh-at-file".into(),
             spec: "git+https://github.com/omdsh-dev/dsh-at-file.git".into(),
             version: None,
+            upstream_repo: Some("omdsh-dev/dsh-at-file".into()),
             managed: false,
             enabled: true,
         },
@@ -2836,6 +2942,7 @@ fn install_receipt_protocol_reinstall_locates_existing_key() {
             name: "dsh".into(),
             spec: "github:owner/dsh".into(),
             version: None,
+            upstream_repo: Some("owner/dsh".into()),
             managed: false,
             enabled: true,
         },
@@ -2843,6 +2950,7 @@ fn install_receipt_protocol_reinstall_locates_existing_key() {
             name: "dsh-relay".into(),
             spec: "github:owner/dsh-relay".into(),
             version: None,
+            upstream_repo: Some("owner/dsh-relay".into()),
             managed: false,
             enabled: true,
         },
@@ -2861,6 +2969,7 @@ fn install_receipt_matches_git_https_disk_spec() {
         name: "dsh-at-file".into(),
         spec: "git+https://github.com/omdsh-dev/dsh-at-file.git".into(),
         version: None,
+        upstream_repo: Some("omdsh-dev/dsh-at-file".into()),
         managed: false,
         enabled: true,
     }];
@@ -2883,6 +2992,7 @@ fn protocol_installed_match_hits_each_sibling_repo_exactly() {
             name: "dsh".into(),
             spec: "github:owner/dsh".into(),
             version: None,
+            upstream_repo: Some("owner/dsh".into()),
             managed: false,
             enabled: true,
         },
@@ -2890,6 +3000,7 @@ fn protocol_installed_match_hits_each_sibling_repo_exactly() {
             name: "dsh-relay".into(),
             spec: "github:owner/dsh-relay".into(),
             version: None,
+            upstream_repo: Some("owner/dsh-relay".into()),
             managed: false,
             enabled: true,
         },
@@ -3336,6 +3447,7 @@ fn install_decision_success_computes_receipt_from_before_after() {
         name: "dsh-new".into(),
         spec: "dsh-new@2.0".into(),
         version: None,
+        upstream_repo: None,
         managed: false,
         enabled: true,
     }];
@@ -4746,3 +4858,4 @@ fn done_detail_reports_repair_ledger() {
     assert!(!detail.iter().any(|m| m.contains("stale cached copies")));
     assert!(!detail.iter().any(|m| m.contains("Stripped reserved")));
 }
+

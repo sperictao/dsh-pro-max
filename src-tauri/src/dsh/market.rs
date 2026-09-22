@@ -104,10 +104,15 @@ pub struct InstalledPlugin {
     /// 安装 spec（file: tarball / npm:x@ver / github:owner/repo 等）
     pub spec: String,
     /// 实际安装版本：磁盘事实（node_modules/<name>/package.json）优先，
-    /// spec 精确版本次之；协议形态（github:/file: 等，版本多为 0.0.0 占位）
-    /// 与两者均不可得为 None。更新检测复用同一事实（check_updates_once 不再
-    /// 自算），前端卡片版本号即时显示靠它
+    /// spec 精确版本次之；不可检的协议形态（无上游的 file: 等，版本多为
+    /// 0.0.0 占位）与两者均不可得为 None。更新检测复用同一事实
+    /// （check_updates_once 不再自算），前端卡片版本号即时显示靠它
     pub version: Option<String>,
+    /// 更新/重装的上游仓库（owner/repo）：spec 的 GitHub 形态优先，本地路径
+    /// 等其余协议形态回退包自述的 repository（见 github_upstream_from_manifest）；
+    /// registry 形态与无上游的协议形态为 None。检测查它、更新重装也回到它，
+    /// 前端（更新 specifier、更新说明查询）只读这一个事实，不重复推导
+    pub upstream_repo: Option<String>,
     /// Launcher 自管授权插件：不出移除按钮，由 Launcher 的修复/卸载流程管理
     pub managed: bool,
     /// 下次启动启用状态（profile cordis.patch.yml 的 disabled 覆盖行判定，
@@ -438,10 +443,13 @@ pub(crate) fn installed_plugins() -> Result<Vec<InstalledPlugin>, Message> {
     installed_list_from_profile(&web_profile_package_path()?)
 }
 
-/// 插件更新检测的单包结果。检测范围 = npm 形态安装的非受管插件：实际版本
-/// 优先取磁盘事实（node_modules 内 package.json 的 version，范围 spec
-/// `^x.y.z` 就靠它参与检测），磁盘不可得回退 spec 精确版本；协议形态
-/// （github:/file: 等）来源不是 registry，恒不检（不猜）
+/// 插件更新检测的单包结果。检测范围 = 非受管、且"已装版本 + 可检上游"两件
+/// 事实都成立的插件（两件事实的唯一来源是 InstalledPlugin，见
+/// installed_facts_for_update）：实际版本优先取磁盘事实（node_modules 内
+/// package.json 的 version，范围 spec `^x.y.z` 就靠它参与检测），磁盘不可得
+/// 回退 spec 精确版本；上游仓库来自 spec 的 GitHub 形态或本地路径安装包自述
+/// 的 repository——registry 形态查 registry /latest，有上游仓库的查远端默认
+/// 分支 manifest，两者皆无（无上游的协议形态）恒不检（不猜）
 // 判定来源改版（Bug 修复）：范围 spec 不再排除出检测。—— Eric Tao, 2026-09-04 09:10:00
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
@@ -479,7 +487,7 @@ pub struct PluginUpdateInfo {
 /// 依赖 spec 值 → 具体当前版本。可检形态："pkg@1.2.3"、"npm:pkg@1.0.0"、
 /// "@scope/pkg@1.2.3"、裸版本 "1.2.3"；协议形态（github:/file: 等）与范围
 /// range（^ ~ * latest 等）返回 None。具体性由 parse_version 裁决，不另设规则。
-/// 范围 range 本身不含版本，由调用方经磁盘事实补齐（installed_version_for_update），
+/// 范围 range 本身不含版本，由调用方经磁盘事实补齐（installed_facts_for_update），
 /// 本函数语义不变
 pub(crate) fn installed_version_from_spec(spec: &str) -> Option<String> {
     let rest = spec.strip_prefix("npm:").unwrap_or(spec);
@@ -513,51 +521,92 @@ pub(crate) fn safe_package_name(name: &str) -> bool {
         && !name.starts_with('/')
 }
 
-/// 磁盘事实 → 实际安装版本：读 `<profile_dir>/node_modules/<name>/package.json`
-/// 的 version 字段（scope 包 `@scope/pkg` 即子路径 `node_modules/@scope/pkg/`，
-/// pnpm 的 junction/symlink 读穿即得真实版本）。为什么需要它：pnpm 落盘的
-/// 依赖 spec 常是 `^x.y.z` 范围形态，installed_version_from_spec 对其返回
-/// None，而 registry 比对必须有具体版本——磁盘上的实际版本是现成事实。
-/// 版本不可解析 → None
+/// 磁盘清单事实：一处读盘出两件事——实际安装版本与包自述的 GitHub 上游
+/// （同一个 package.json，不分两次读）
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct InstalledFacts {
+    pub version: Option<String>,
+    pub upstream_repo: Option<String>,
+}
+
+/// 磁盘事实 → 安装事实：读 `<profile_dir>/node_modules/<name>/package.json`
+/// （scope 包 `@scope/pkg` 即子路径 `node_modules/@scope/pkg/`，pnpm 的
+/// junction/symlink 读穿即得真实版本）。为什么需要它：pnpm 落盘的依赖 spec 常
+/// 是 `^x.y.z` 范围形态，installed_version_from_spec 对其返回 None，而比对必须
+/// 有具体版本——磁盘上的实际版本是现成事实；包自述的 repository（见
+/// github_upstream_from_manifest）则是本地路径安装唯一的上游事实来源。
+/// 版本不可解析、repository 不可得各按 None 处理，读盘失败两件都 None
 // 新增（Bug 修复）：市场插件更新检测的版本事实来源。—— Eric Tao, 2026-09-04 09:10:00
-pub(crate) fn installed_version_from_disk(
+pub(crate) fn installed_facts_from_disk(
     profile_dir: &std::path::Path,
     name: &str,
-) -> Option<String> {
+) -> InstalledFacts {
     if !safe_package_name(name) {
-        return None;
+        return InstalledFacts::default();
     }
-    let raw = std::fs::read_to_string(
+    let Ok(raw) = std::fs::read_to_string(
         profile_dir
             .join("node_modules")
             .join(name)
             .join("package.json"),
-    )
-    .ok()?;
-    let package: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    let version = package.get("version")?.as_str()?;
-    parse_version(version).map(|_| version.to_string())
+    ) else {
+        return InstalledFacts::default();
+    };
+    let Ok(package) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return InstalledFacts::default();
+    };
+    InstalledFacts {
+        version: package
+            .get("version")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|v| parse_version(v).map(|_| v.to_string())),
+        upstream_repo: github_upstream_from_manifest(&package),
+    }
 }
 
-/// 单包实际版本判定（纯函数，check_updates_once 的版本决策抽出来以便测试）：
-/// 可检形态（去掉 `npm:` 前缀后不含协议 `:`，与 installed_version_from_spec
-/// 判据一致）先读磁盘事实、磁盘不可得回退 spec 精确版本；GitHub 仓库形态
-/// （github:/git+https: 等，github_repo_id 认得）同样磁盘事实优先——检测比对
-/// 远端默认分支 manifest 的版本，更新动作按原仓重装，不存在按 registry 名
-/// 重装覆盖 git 源的路径；其余协议形态（file: 等）无远端可比，恒 None。
-/// profile_dir 不可得（极端环境）时按 None 传入，整体回退纯 spec 解析的现状行为
-pub(crate) fn installed_version_for_update(
+/// 单包安装事实判定（纯函数，check_updates_once 与已装列表共用的唯一事实源）。
+/// 版本：可检形态（去掉 `npm:` 前缀后不含协议 `:`，与 installed_version_from_spec
+/// 判据一致）与 GitHub 仓库形态先读磁盘事实、磁盘不可得回退 spec 精确版本。
+/// 上游仓库：spec 认得 GitHub 形态（github:/git+https: 等）即以 spec 为准——
+/// 落盘 spec 就是安装来源的事实，检测比对远端默认分支 manifest 的版本，更新
+/// 动作按原仓重装，不存在按 registry 名重装覆盖 git 源的路径；本地路径等其余
+/// 协议形态（file: 等）无远端 spec 可归一，回退包自述的 repository（本地 dev
+/// 安装的上游就是它声明的仓库，不是猜）；两者皆无则这个安装不可检——版本与
+/// 上游都留 None，卡片不显版本、不进检测，也不放大成"已是最新"。
+/// profile_dir 不可得（极端环境）时按 None 传入，整体回退纯 spec 解析
+// 改版（Bug 修复）：本地路径安装的上游事实加入检测范围。—— Eric Tao, 2026-09-22 10:20:00
+pub(crate) fn installed_facts_for_update(
     profile_dir: Option<&std::path::Path>,
     name: &str,
     spec: &str,
-) -> Option<String> {
+) -> InstalledFacts {
+    let disk = profile_dir
+        .map(|dir| installed_facts_from_disk(dir, name))
+        .unwrap_or_default();
     let rest = spec.strip_prefix("npm:").unwrap_or(spec);
-    if rest.contains(':') && github_repo_id(spec).is_none() {
-        return None;
+    if let Some(repo) = github_repo_id(spec) {
+        return InstalledFacts {
+            version: disk.version.or_else(|| installed_version_from_spec(spec)),
+            upstream_repo: Some(repo),
+        };
     }
-    profile_dir
-        .and_then(|dir| installed_version_from_disk(dir, name))
-        .or_else(|| installed_version_from_spec(spec))
+    // registry 形态（无协议前缀）：更新通道是 registry，包自述的 repository
+    // 不参与——npm 包的发布事实以 registry 为准，不回落到源码仓库的默认分支
+    if !rest.contains(':') {
+        return InstalledFacts {
+            version: disk.version.or_else(|| installed_version_from_spec(spec)),
+            upstream_repo: None,
+        };
+    }
+    // 其余协议形态（file:/link:/非 GitHub 的 git 等）：唯一可检上游是包自述的
+    // repository；不可得即不可检（不猜、不显版本）
+    match disk.upstream_repo {
+        Some(repo) => InstalledFacts {
+            version: disk.version,
+            upstream_repo: Some(repo),
+        },
+        None => InstalledFacts::default(),
+    }
 }
 
 /// registry /latest 与 GitHub raw HEAD 两种 manifest 的共用解析产物：latest
@@ -580,6 +629,28 @@ pub(crate) fn dsh_requirement_from_manifest(body: &serde_json::Value) -> Option<
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+/// 包 manifest 自述的 GitHub 上游仓库（owner/repo）：`repository` 字符串形态
+/// 或对象形态的 `url`，经 github_repo_id 归一（大小写、`.git` 后缀、#fragment
+/// 同一套语义）。带 `directory` 的 monorepo 子包不采信——远端默认分支根
+/// manifest 的版本是仓库根版本，与子包版本不可比，采信会读出假最新（fail
+/// closed，同"读不懂的声明不能装作满足"）。非 GitHub 形态（gitlab 等）返回
+/// None：检测只认 GitHub 默认分支 manifest 这一种远端事实
+// 新增（Bug 修复）：本地路径安装（file: 等）的更新上游来源。—— Eric Tao, 2026-09-22 10:20:00
+pub(crate) fn github_upstream_from_manifest(body: &serde_json::Value) -> Option<String> {
+    let (url, directory) = match body.get("repository")? {
+        serde_json::Value::String(url) => (url.as_str(), None),
+        serde_json::Value::Object(map) => (
+            map.get("url")?.as_str()?,
+            map.get("directory").and_then(serde_json::Value::as_str),
+        ),
+        _ => return None,
+    };
+    if directory.is_some_and(|d| !d.trim().is_empty()) {
+        return None;
+    }
+    github_repo_id(url)
 }
 
 /// 宿主 dsh 是否满足声明的版本范围（npm range 子集：^ ~ >= <= > < 精确 *
@@ -774,11 +845,12 @@ struct Resolved {
 }
 
 /// 更新检测执行体（market_check_updates 的阻塞部分）：逐包查询
-/// （已装列表是个位数），npm 形态查 registry /latest，GitHub 仓库形态
-/// （github:/git+https: 落盘形态）查 raw.githubusercontent 默认分支
-/// manifest——版本来自磁盘事实，比对远端 HEAD 的 package.json。实际版本复用
-/// 已装列表的磁盘事实（InstalledPlugin.version，installed_list_from_profile
-/// 统一判定）；latest 落在 pnpm minimumReleaseAge 窗口内的额外标记
+/// （已装列表是个位数），registry 形态（无上游仓库）查 registry /latest，
+/// 有上游仓库的（GitHub 仓库 spec 形态，或本地路径安装包自述的 repository）
+/// 查 raw.githubusercontent 默认分支 manifest——版本来自磁盘事实，比对远端
+/// HEAD 的 package.json。实际版本与上游仓库复用已装列表的事实
+/// （InstalledPlugin.version / upstream_repo，installed_facts_for_update 统一
+/// 判定）；latest 落在 pnpm minimumReleaseAge 窗口内的额外标记
 /// latest_in_release_age_window 并携带 latest_publish_time（窗口内 @latest
 /// 会被静默拦回旧版，前端据此先弹确认框并展示发布新鲜度；发布时间只有
 /// registry 有，git 形态不适用——其更新动作是原仓重装，不经 @latest）。
@@ -788,9 +860,12 @@ struct Resolved {
 /// 可检包都失败才报错——那是网络问题的信号
 fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, Message> {
     let list = installed_plugins()?;
-    let mut infos: Vec<PluginUpdateInfo> = list
-        .into_iter()
-        .map(|p| PluginUpdateInfo {
+    let mut infos: Vec<PluginUpdateInfo> = Vec::with_capacity(list.len());
+    // 上游仓库与已装事实同源（InstalledPlugin），随下标保留供并发查询用
+    let mut upstreams: Vec<Option<String>> = Vec::with_capacity(list.len());
+    for p in list {
+        upstreams.push(p.upstream_repo);
+        infos.push(PluginUpdateInfo {
             installed_version: p.version,
             update_available: false,
             latest_version: None,
@@ -801,16 +876,17 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, Message> {
             name: p.name,
             spec: p.spec,
             managed: p.managed,
-        })
-        .collect();
+        });
+    }
     // 窗口判定的事实源：策略（profile yaml + 内置默认）读一次，发布时间只对
     // 确有更新的包多付一次 HTTP；宿主 dsh 版本探测一次，供兼容门禁判定
     let (age_minutes, age_excludes) = release_age_policy();
     let dsh_host = super::components::dsh_version();
     let now = time::OffsetDateTime::now_utc();
     let client = update_http_client()?;
-    // 可检项下标（未受管且已装版本可得）。每项查询独立，并发发出后按下标
-    // 回填，顺序不漂移
+    // 可检项下标（未受管且已装版本可得；无上游仓库的协议形态在
+    // installed_facts_for_update 里就没有版本，天然落到这里之外）。每项查询
+    // 独立，并发发出后按下标回填，顺序不漂移
     let indexes: Vec<usize> = infos
         .iter()
         .enumerate()
@@ -832,9 +908,9 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, Message> {
             .iter()
             .map(|&i| {
                 let info = &infos[i];
-                let git_repo = github_repo_id(&info.spec);
+                let upstream = upstreams[i].clone();
                 scope.spawn(move || {
-                    let latest = match git_repo.as_deref() {
+                    let latest = match upstream.as_deref() {
                         Some(repo) => git_latest_with(client_ref, repo),
                         None => registry_latest_with(client_ref, &info.name),
                     };
@@ -849,7 +925,7 @@ fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, Message> {
                                 .as_ref()
                                 .map(|req| meets_dsh_minimum(dsh_host_str, req));
                             // 发布时间只对确有更新的 registry 包多付一次 HTTP
-                            let (window, publish) = if update_available && git_repo.is_none() {
+                            let (window, publish) = if update_available && upstream.is_none() {
                                 let publish = registry_publish_time(&info.name, &latest.version);
                                 let window = in_release_age_window(
                                     publish.as_deref(),
@@ -957,9 +1033,13 @@ pub(crate) fn installed_list_from_profile(
                 .iter()
                 .all(|(id, _)| patch_states.get(id).copied().unwrap_or(true));
             let spec = spec.as_str().unwrap_or_default().to_string();
+            // 版本与上游两件事实一次判定（installed_facts_for_update）：
+            // 卡片版本号、更新检测、更新重装 specifier 都读这一处结论
+            let facts = installed_facts_for_update(path.parent(), name, &spec);
             InstalledPlugin {
                 name: name.clone(),
-                version: installed_version_for_update(path.parent(), name, &spec),
+                version: facts.version,
+                upstream_repo: facts.upstream_repo,
                 spec,
                 managed: MANAGED_PLUGIN_PACKAGES.contains(&name.as_str()),
                 enabled,

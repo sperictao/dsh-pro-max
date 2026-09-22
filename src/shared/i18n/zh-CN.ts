@@ -409,6 +409,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Update": "更新",
   "Update all ({{count}})": "全部更新（{{count}}）",
   "Up to date": "已是最新",
+  "This update reinstalls from {{specifier}} instead of the local path.": "本次更新将从 {{specifier}} 重装，不再使用本地路径。",
   "Plugin updated: {{name}} ({{spec}})": "插件已更新: {{name}} ({{spec}})",
   "Plugin updated: {{name}}": "插件已更新: {{name}}",
   "Failed to update plugin: {{error}}": "插件更新失败: {{error}}",
