@@ -2318,7 +2318,18 @@ fn claimed_entry_rows_reads_bundle_patch_or_falls_back_to_package_name() {
 fn verify_landed_judges_disk_facts_not_exit_codes() {
     use super::market::{verify_landed, ProfileLayer};
     let layer = |deps: &[&str]| ProfileLayer {
-        dependencies: deps.iter().map(|s| s.to_string()).collect(),
+        dependencies: deps
+            .iter()
+            .map(|s| (s.to_string(), String::new()))
+            .collect(),
+        bundles: vec![],
+        row_ids: vec![],
+    };
+    let layer_specs = |deps: &[(&str, &str)]| ProfileLayer {
+        dependencies: deps
+            .iter()
+            .map(|(n, s)| (n.to_string(), s.to_string()))
+            .collect(),
         bundles: vec![],
         row_ids: vec![],
     };
@@ -2329,9 +2340,55 @@ fn verify_landed_judges_disk_facts_not_exit_codes() {
     assert!(verify_landed("new-pkg@1.0.0", &before, &layer(&["old-pkg"])).is_err());
     // npm 形态重装（键已在 before）：落盘事实成立
     assert!(verify_landed("old-pkg@2.0.0", &before, &layer(&["old-pkg"])).is_ok());
-    // 协议形态：以依赖集合变化为生效信号
+    // 协议形态：依赖集合变化（新键落盘）为生效信号
     assert!(verify_landed("github:owner/repo", &before, &after).is_ok());
     assert!(verify_landed("github:owner/repo", &before, &layer(&["old-pkg"])).is_err());
+    // 协议形态重装/更新同键：集合不变，落点仍在 → 生效。真机事实（web
+    // profile，2026-09-22）：github: 插件更新 = `dsh plugin add github:owner/repo`
+    // 重跑，pnpm 解析回同一 commit 时 package.json 逐字节不变（键集与 spec
+    // 都不变），此时按集合变化判定会把更新假报成"未生效"
+    let jev_before = layer_specs(&[
+        ("@dsh-external/dsh-auth-tailscale", "file:/x.tgz"),
+        (
+            "@dsh-external/dsh-auto-review-jev",
+            "github:sperictao/dsh-auto-review-jev",
+        ),
+    ]);
+    let jev_after = layer_specs(&[
+        ("@dsh-external/dsh-auth-tailscale", "file:/x.tgz"),
+        (
+            "@dsh-external/dsh-auto-review-jev",
+            "github:sperictao/dsh-auto-review-jev",
+        ),
+    ]);
+    assert!(verify_landed(
+        "github:sperictao/dsh-auto-review-jev",
+        &jev_before,
+        &jev_after
+    )
+    .is_ok());
+    // pnpm 规范化落盘形态（git+https）同样命中落点
+    let normalized = layer_specs(&[(
+        "@dsh-external/dsh-auto-review-jev",
+        "git+https://github.com/sperictao/dsh-auto-review-jev.git",
+    )]);
+    assert!(verify_landed(
+        "github:sperictao/dsh-auto-review-jev",
+        &jev_before,
+        &normalized
+    )
+    .is_ok());
+    // 同键但 spec 被改写（升级到新 ref）也是生效信号
+    let repinned = layer_specs(&[("pkg", "github:owner/repo#v2")]);
+    let pinned = layer_specs(&[("pkg", "github:owner/repo#v1")]);
+    assert!(verify_landed("github:owner/repo#v2", &pinned, &repinned).is_ok());
+    // 落点不存在且集合未变 → 仍然判未生效（B8 护栏本意不丢）
+    let empty = layer_specs(&[]);
+    assert!(verify_landed("github:owner/repo", &empty, &empty).is_err());
+    assert!(
+        verify_landed("github:owner/other", &jev_before, &jev_after).is_err(),
+        "仓库不同不算落点"
+    );
 }
 
 #[test]

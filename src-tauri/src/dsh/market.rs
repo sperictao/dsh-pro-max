@@ -1915,11 +1915,14 @@ pub enum InstallNotice {
     StrippedDuplicateBundle { name: String },
 }
 
-/// 护栏的层快照：dependencies 键 + `dsh.profile.bundles` + profile patch 的
-/// bare 行 id。容错读取：文件缺失/畸形 = 空集（CLI 拥有这些文件的写入，
-/// 其错误经 CLI 输出暴露，护栏不放大读取噪声）
+/// 护栏的层快照：dependencies（键 → 落盘 spec 原文）、`dsh.profile.bundles`、
+/// profile patch 的 bare 行 id。spec 是协议形态重装/更新的落盘证据：同键重装
+/// 时键集不变，只有 spec 值与落点仓库说得清这次 add 落到了哪。容错读取：文件
+/// 缺失/畸形 = 空集（CLI 拥有这些文件的写入，其错误经 CLI 输出暴露，护栏不
+/// 放大读取噪声）
 pub(crate) struct ProfileLayer {
-    pub(crate) dependencies: Vec<String>,
+    /// 依赖键 → `package.json` 落盘的 spec（非字符串值记空串，保键在）
+    pub(crate) dependencies: BTreeMap<String, String>,
     pub(crate) bundles: Vec<String>,
     pub(crate) row_ids: Vec<String>,
 }
@@ -1933,7 +1936,11 @@ fn capture_profile_layer() -> ProfileLayer {
         .as_ref()
         .and_then(|v| v.get("dependencies"))
         .and_then(serde_json::Value::as_object)
-        .map(|m| m.keys().cloned().collect())
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string()))
+                .collect()
+        })
         .unwrap_or_default();
     let bundles = manifest
         .as_ref()
@@ -2023,7 +2030,7 @@ fn before_row_mounted(before: &ProfileLayer) -> Vec<String> {
         .map(|raw| row_mounted_names(&raw, &disabled_ids))
         .unwrap_or_default();
     if let Ok(profile_dir) = web_profile_dir() {
-        for dep in &before.dependencies {
+        for dep in before.dependencies.keys() {
             let patch = profile_dir
                 .join("node_modules")
                 .join(dep)
@@ -2094,22 +2101,45 @@ fn strip_duplicate_mounts(
         .collect())
 }
 
-/// B8 落盘校验：退出码 0 不是落盘证明。npm 形态的落盘键可预知，缺失且
-/// before 也没有（非重装）即未生效；协议形态（github: 重装同键）以
-/// 「出现新依赖或 spec 变化」为生效信号
+/// B8 落盘校验：退出码 0 不是落盘证明。npm 形态的落盘键可预知：键在 after
+/// （新装落盘）或 before（重装/升版同键）即生效。协议形态（github:/file: 等）
+/// 键名不可预知，两件事实任一成立即生效：本次 add 让依赖集合发生变化（新键
+/// 落盘，或既有 spec 被改写），或 after 态已存在本次 specifier 的落点。
+/// 为什么必须有落点事实：更新 = 同键重装，pnpm 解析回同一 commit 时
+/// package.json 逐字节不变（键集与 spec 都不动），只按集合变化判定会把一次
+/// 真实落在 profile 里的更新假报成「未生效」
 pub(crate) fn verify_landed(
     specifier: &str,
     before: &ProfileLayer,
     after: &ProfileLayer,
 ) -> Result<(), Message> {
     let landed = match package_name_from_specifier(specifier) {
-        Some(name) => after.dependencies.contains(&name) || before.dependencies.contains(&name),
-        None => before.dependencies != after.dependencies,
+        Some(name) => {
+            after.dependencies.contains_key(&name) || before.dependencies.contains_key(&name)
+        }
+        None => {
+            before.dependencies != after.dependencies || protocol_landing_present(specifier, after)
+        }
     };
     if !landed {
         return Err(Message::key("dsh plugin add reported success but nothing landed in the web profile (install did not take effect)"));
     }
     Ok(())
+}
+
+/// after 态是否存在本次协议形态 specifier 的落点：任一依赖的落盘 spec 与
+/// specifier 归一到同一 GitHub 仓库标识（github_repo_id——pnpm 会把无
+/// fragment 的 github:owner/repo 落盘成 git+https://github.com/owner/repo.git，
+/// 字符串前缀认不出）即算落点存在。非 GitHub 协议形态（file: 等）返回 false，
+/// 维持集合变化判定，不猜
+fn protocol_landing_present(specifier: &str, layer: &ProfileLayer) -> bool {
+    let Some(repo) = github_repo_id(specifier) else {
+        return false;
+    };
+    layer
+        .dependencies
+        .values()
+        .any(|spec| github_repo_id(spec).as_deref() == Some(repo.as_str()))
 }
 
 /// `dsh --profile web --dump-config` 组合预检（解析每个入口但不绑定端口）。
@@ -2192,8 +2222,8 @@ fn post_install_guard(
     let notices = strip_duplicate_mounts(before, &after)?;
     let new_dep = after
         .dependencies
-        .iter()
-        .find(|n| !before.dependencies.contains(n))
+        .keys()
+        .find(|n| !before.dependencies.contains_key(*n))
         .cloned();
     // B5：新包 claimed 的入口 id 撞上既有占用（patch bare 行 + 其它依赖的
     // claimed 入口），下次启动必重复挂载失败。绝不写共享 disabled 行——
@@ -2207,7 +2237,7 @@ fn post_install_guard(
                 .map(|(id, _)| id)
                 .collect();
             let mut taken = after.row_ids.clone();
-            for dep in &after.dependencies {
+            for dep in after.dependencies.keys() {
                 if dep != name {
                     taken.extend(
                         claimed_entry_rows(&profile_dir, dep)
