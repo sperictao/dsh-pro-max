@@ -9,6 +9,7 @@
 - **dsh** — DeepSeek Harness CLI（`@deepseek-ai/dsh`，npm 全局安装），本应用 pin 支持版本（见 `src-tauri/src/dsh.rs` 的 `SUPPORTED_DSH_VERSION`），不兼容版本走修复流程重装。
 - **Web Profile** — dsh 的 `--profile web` 运行档，本应用只管理这一档，本地绑定 `127.0.0.1:3899`。
 - **授权插件（Auth Plugins）** — 两个 vendored npm 包（`vendor/dsh-client-connection-authz`、`vendor/dsh-auth-tailscale`），以 pin commit 的 tgz 打进安装包，运行时经 `dsh plugin --profile web add` 装入 web profile；连接鉴权 + Tailscale 身份授权都由它们承担。构建脚本为每个 tgz 产出同目录 `.sha256` 摘要并随 bundle resources 打包，装入前逐台复核（缺失或不符都按损坏拒绝）。
+- **本机会话（Local Session）** — Launcher 以本机身份访问 dsh 特权 API（`credentials/*` 等）所持的 `dsh-auth-*` cookie：从 `~/.dsh/dsh-web.log` 取当前实例打印的 launch token，经 `GET /?token=<token>` 的 303 换取，进程内缓存、被拒（401）重取一次，实现见 `src-tauri/src/dsh/session.rs`。授权插件在场时 loopback 直放，不产生也不使用它。
 - **访问模式（Access Mode）** — 本地（仅 127.0.0.1）或远程（叠加 Tailscale Serve HTTPS）。持久化在 localStorage `dsh-access-mode`，默认本地。
 - **Capability 域名（Capability Domain）** — 远程授权的应用能力域名（用户自有域名），拼成 `{domain}/cap/dsh-admin`（管理）与 `{domain}/cap/dsh`（使用）经环境变量注入 dsh 进程，并作为 `tailscale serve --accept-app-caps` 的值；空则不注入，远程特权接口恒 403。
 - **允许登录名（Allowed Logins）** — 允许远程访问的 Tailscale 登录名集合；本机当前用户始终自动包含，额外登录名在配置中以逗号分隔。
@@ -16,13 +17,14 @@
 
 ### 语义边界
 
-- dsh 进程由本应用 spawn 但**不受管**：不经 ProcessManager，不随应用退出而停止；停止只有显式 Stop（按命令行模式匹配杀进程）。日志在 `~/.dsh/dsh-web.log`。
+- dsh 进程由本应用 spawn 但**不受管**：不经 ProcessManager，不随应用退出而停止；停止只有显式 Stop（按命令行模式匹配杀进程）。日志在 `~/.dsh/dsh-web.log`（按 0600 新建：无授权插件时它是本机 launch token 的载体）。
 - dsh 的 credentials 写锁（`~/.dsh/.credentials.yaml.lock`，内容为持锁 PID）在持锁进程被强杀后成永久孤儿，dsh 自身不回收（其设计声明孤儿回收是 operator 动作）；Launcher 充当该 operator：启动前与强杀停止后按「持锁 PID 已死」判定清理，活锁（真实并发持有）不动。启动失败诊断对该锁超时指纹优先于插件链归因。
 - 自启动（dsh web 开机自起）事实来源是 OS 注册项（launchd / 启动文件夹 / autostart desktop），本应用不在配置里存布尔值。
 - 本应用不写 tailnet 侧任何配置：MagicDNS / HTTPS Certificates / Access Controls 都要求用户在 Tailscale 管理页自行配置，应用只检测并在失败步骤给出指引。
 - 任何异机远程访问都要求 tailnet policy 从访问身份到 dsh 节点放行 `tcp:443`；App Capability 只传递应用权限，不会自动放行网络连接。配置 capability 时，同一 grant 必须同时包含 `"ip": ["tcp:443"]` 与同名 `app` 项。
 - serve flag 与 tailnet grants 必须与所配 capability 同名——配置教程见 `docs/dsh-remote-access-setup.md`。
 - authz replacement 的浏览器 `connection.isLoopback` 只表示“允许尝试 Host-authority RPC”，不是授权结论；本地旁路仍要求 loopback Host + loopback peer，远程每个特权请求仍由 Host authorizer 的 admin capability 独立裁决。客户端不得再用页面 hostname 建第二套权限事实。
+- 无授权插件时 dsh 对**所有** `/api` 请求（含 Launcher 自己发的凭据 RPC）要求会话 cookie，裸请求一律 401：Launcher 走 dsh 原生 launch token 换本机会话，不绕过鉴权。直写 `~/.dsh/.credentials.yaml` 仍只用于 dsh 未运行的形态。launch token 是 base64url，解析必须收 `-`/`_`——按字母数字截断会让浏览器与 Launcher 都拿到换不到 cookie 的短 token。
 
 ## 界面多语言（i18n）
 

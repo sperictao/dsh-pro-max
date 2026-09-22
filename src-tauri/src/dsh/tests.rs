@@ -368,16 +368,18 @@ fn start_diagnosis_points_rewritten_credentials_at_migration() {
 
 #[test]
 fn local_access_url_parses_the_last_native_token_line() {
-    // 本地访问遵循 dsh 原生方式：多次启动追加日志，取最后一次带 token 的地址
+    // 本地访问遵循 dsh 原生方式：多次启动追加日志，取最后一次带 token 的地址。
+    // token 是 base64url，`-`/`_` 必须原样带进地址——按字母数字截断会让浏览器
+    // 拿到换不到 cookie 的短 token（401 页）
     let log = concat!(
         "dsh web: http://127.0.0.1:3899/?token=Old123\n",
         "dsh web: http://127.0.0.1:3899\n",
         "Node.js v26.0.0\n",
-        "dsh web: http://127.0.0.1:3899/?token=New456\n",
+        "dsh web: http://127.0.0.1:3899/?token=New-456_x\n",
     );
     assert_eq!(
         super::start::local_access_url_from_log_contents(log).as_deref(),
-        Some("http://127.0.0.1:3899/?token=New456")
+        Some("http://127.0.0.1:3899/?token=New-456_x")
     );
     // 授权插件在场时 dsh 打印裸地址，无 token 行则不返回
     assert_eq!(
@@ -1617,14 +1619,21 @@ fn remote_rpc_probe_distinguishes_capability_denial() {
 fn rpc_request_is_loopback_json_post() {
     // 敏感 API 校验请求：Host 为 loopback、无 Origin、JSON body 与
     // Content-Length 一致。
-    let req = rpc_request("settings/describe");
+    let req = rpc_request("settings/describe", None);
     assert!(req.starts_with("POST /api/settings/describe HTTP/1.1\r\n"));
     assert!(req.contains("Host: 127.0.0.1"));
     assert!(req.contains("Content-Type: application/json"));
     assert!(!req.contains("Origin:"));
+    assert!(!req.contains("Cookie:"));
     let body = r#"{"type":"client-request","rpcId":"t1","method":"settings/describe","payload":{"args":{}}}"#;
     assert!(req.contains(body));
     assert!(req.contains(&format!("Content-Length: {}\r\n", body.len())));
+
+    // 无授权插件时特权端点要会话 cookie：同一请求带上本机会话再问一次
+    let scoped = rpc_request("settings/describe", Some("dsh-auth-x=v1.sig"));
+    assert!(scoped.contains("Cookie: dsh-auth-x=v1.sig\r\n"));
+    assert!(scoped.starts_with("POST /api/settings/describe HTTP/1.1\r\n"));
+    assert!(scoped.contains(&format!("Content-Length: {}\r\n", body.len())));
 }
 
 #[test]

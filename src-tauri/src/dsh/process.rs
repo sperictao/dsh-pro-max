@@ -353,14 +353,19 @@ pub(crate) fn spawn_detached(
             &[("error", e.to_string())],
         )
     })?;
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log)
-        .map_err(|e| {
-            log::error!("[dsh 启动] 打开日志文件失败: {}", e);
-            Message::localized("Cannot open log file: {{error}}", &[("error", e.to_string())])
-        })?;
+    // 日志里含 dsh 打印的本机 launch token（无授权插件时 Launcher 换本机会话
+    // 的凭据来源），按凭据文件同样的 0600 新建；已存在的文件不动其权限
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(log).map_err(|e| {
+        log::error!("[dsh 启动] 打开日志文件失败: {}", e);
+        Message::localized("Cannot open log file: {{error}}", &[("error", e.to_string())])
+    })?;
     let mut cmd = cli_command(program, args);
     cmd.env("PATH", probe_path())
         .stdout(std::process::Stdio::from(file.try_clone().map_err(

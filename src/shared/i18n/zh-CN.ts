@@ -670,6 +670,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Credential {{name}} is supplied by the launch environment and is read-only; update the environment and restart DSH": "凭据 {{name}} 来自启动环境、只读；请修改该环境变量后重启 DSH",
   "Cannot reach the running DSH credential service": "无法连接正在运行的 DSH 凭据服务",
   "Running DSH rejected the credential request (HTTP {{status}})": "DSH 拒绝了凭据请求（HTTP {{status}}）",
+  "Running DSH rejected the credential request (HTTP 401) and DSH Pro Max could not obtain the local dsh session credential; start dsh web again from DSH Pro Max, then retry": "DSH 拒绝了凭据请求（HTTP 401），且 DSH Pro Max 未能取得本机会话凭据；请用 DSH Pro Max 重新启动 dsh web 后重试",
   "Credentials file declares unsupported version {{version}}; expected {{expected}}": "凭据文件声明的版本 {{version}} 不受支持；需要 {{expected}}",
   "Credentials file contains unknown top-level key \"{{name}}\"": "凭据文件包含未知的顶层键 \"{{name}}\"",
   "Credential reference \"{{name}}\" is invalid": "凭据引用 \"{{name}}\" 无效",

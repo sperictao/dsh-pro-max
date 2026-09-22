@@ -1,7 +1,7 @@
 //! 远程一键启动（8 步时间轴）：dsh web 拉起、Tailscale serve、失败诊断与重启编排（dsh_setup 命令）。
 
 use super::auth::{
-    http_get, http_ok, resolve_auth_config, resolve_fqdn, resolve_tailscale_login, rpc_ok,
+    any_http_status, http_get, resolve_auth_config, resolve_fqdn, resolve_tailscale_login, rpc_ok,
     serve_configured, tailscale_online, AuthConfig,
 };
 use super::autostart::{autostart_enabled, autostart_impl};
@@ -16,6 +16,7 @@ use super::process::{
     clear_stale_credentials_lock, cli_command, dsh_web_cmd_pattern, dsh_web_pid, kill_by_pattern,
     port_listening, run_capture, spawn_detached, stop_supervised_services, wait_web_start,
 };
+use super::session;
 use super::update::clear_web_profile_compat_entry;
 use super::StepEvent;
 use super::{
@@ -815,7 +816,10 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), Message> {
         ctx.running(Message::localized("Verifying remote access ({{url}})…",
             &[("url", url_text.clone())],
         ));
-        let web_ok = http_ok(http_get(WEB_PORT, "127.0.0.1", "/").as_deref());
+        // 裸 `/` 无 token 时的 401/404 是健康应答：授权插件不在场（被卸载/未
+        // 加载）时 dsh 对本机也要求会话 cookie，浏览器经 token 地址换 cookie
+        // 才是 200——不能沿用 2xx/3xx 门槛（与本地 ready 步同一判据）
+        let web_ok = any_http_status(http_get(WEB_PORT, "127.0.0.1", "/").as_deref());
         let plugins_ok = bundled_plugin_specs(app)
             .map(|specs| auth_plugins_installed(&specs))
             .unwrap_or(false);
@@ -842,7 +846,13 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), Message> {
             .map(|access| access == RemoteRpcAccess::Ready)
             .unwrap_or(true);
         let remote_url_access = remote_probe.map(|probe| probe.access);
-        let local_privileged_ok = rpc_ok(WEB_PORT, "settings/describe");
+        // 本机特权面可达性：授权插件在场时裸请求直放；插件不在场（被卸载或
+        // 装了但没加载）时 dsh 对 /api 要会话 cookie，先换本机会话再问一次。
+        // 判据是「Launcher 能不能以本机身份访问特权 API」，不是「裸请求能不能
+        // 过」——与凭据桥走同一套原生链路
+        let local_privileged_ok = rpc_ok(WEB_PORT, "settings/describe", None)
+            || session::session_cookie(WEB_PORT)
+                .is_some_and(|cookie| rpc_ok(WEB_PORT, "settings/describe", Some(&cookie)));
 
         let remote_stack_ok = web_ok
             && plugins_ok

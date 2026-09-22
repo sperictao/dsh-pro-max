@@ -21,7 +21,8 @@
 //!
 //! 模块布局：process（CLI/进程）→ components（组件定位/插件）→ auth（远程授权配置）
 //! → detect（状态检测）/ setup（远程一键启动）/ start（本地一键启动）/
-//! compat（启动前 peer 兼容预检）/ repair（profile 修复核：影子副本 + 保留预设）/
+//! session（本机会话：原生 launch token → 会话 cookie）/ compat（启动前 peer 兼容预检）/
+//! repair（profile 修复核：影子副本 + 保留预设）/
 //! update（更新与版本管理）/ probe（远程 URL 探测）/ autostart（开机自启）。
 //! 共享常量与 IPC 数据结构在本文件；子模块条目统一
 //! pub(crate)，经 glob 重导出互见。
@@ -41,9 +42,16 @@ mod models;
 mod probe;
 mod process;
 mod repair;
+mod session;
 mod setup;
 mod start;
 mod update;
+
+// 本机会话（dsh 原生 launch token → 会话 cookie）供 dsh 域外的凭据桥使用：
+// 跨域只经这一条显式入口，模块本身保持域内私有
+pub(crate) use session::{
+    cached_session_cookie, invalidate_session_cookie, session_cookie, LOOPBACK_HTTP_TIMEOUT_SECS,
+};
 
 // 命令注册路径保持 dsh::xxx（main.rs 不动）：tauri 命令是「函数 + 宏生成的
 // __cmd__<name> / __tauri_command_name_<name> 两个隐藏符号」三件套，paste 拼接

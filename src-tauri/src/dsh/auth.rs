@@ -274,28 +274,16 @@ pub(crate) fn http_get(port: u16, host_header: &str, path: &str) -> Option<Strin
         .map(|l| l.to_string())
 }
 
-/// 状态码首行是否成功（200/3xx 均视为可达；dsh 根路径可能 302 到登录页）
-pub(crate) fn http_ok(line: Option<&str>) -> bool {
-    match line {
-        Some(l) => {
-            let status = l.split_whitespace().nth(1).unwrap_or("");
-            status.starts_with('2') || status.starts_with('3')
-        }
-        None => false,
-    }
-}
-
-/// 状态行是否为合法的三位状态码（不问语义）。本地模式的就绪判定用：
-/// 无授权插件时裸 `/` 未带 token 的 401/404 是健康应答（浏览器经 token
-/// URL 换 cookie 后才是 200），不能沿用 http_ok 的 2xx/3xx 门槛
+/// 状态行是否为合法的三位状态码（不问语义）。本机 loopback 探活一律用它：
+/// 无授权插件时裸 `/` 未带 token 的 401/404 是健康应答（浏览器经 token URL
+/// 换 cookie 后才是 200），2xx/3xx 门槛会把健康的 dsh 判成没应答
 pub(crate) fn any_http_status(line: Option<&str>) -> bool {
     line.and_then(|l| l.split_whitespace().nth(1))
         .map(|code| code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit()))
         .unwrap_or(false)
 }
 
-/// 构造 JSON-RPC POST 请求（本地验证用）。Host 为 loopback、不带 Origin，
-/// 专门验证「本机仍可访问特权 API」这条不变式。
+/// 构造 JSON-RPC 请求体（本地验证用）
 pub(crate) fn rpc_body(method: &str) -> String {
     format!(
         r#"{{"type":"client-request","rpcId":"t1","method":"{}","payload":{{"args":{{}}}}}}"#,
@@ -303,19 +291,26 @@ pub(crate) fn rpc_body(method: &str) -> String {
     )
 }
 
-pub(crate) fn rpc_request(method: &str) -> String {
+/// 构造 JSON-RPC POST 请求（本地验证用）。Host 为 loopback、不带 Origin；
+/// cookie 为 Some 时带上本机会话（无授权插件的 web 对 /api 要会话 cookie），
+/// 专门验证「本机仍可访问特权 API」这条不变式
+pub(crate) fn rpc_request(method: &str, cookie: Option<&str>) -> String {
     let body = rpc_body(method);
+    let cookie = cookie
+        .map(|value| format!("Cookie: {value}\r\n"))
+        .unwrap_or_default();
     format!(
-        "POST /api/{} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "POST /api/{} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n{}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
         method,
+        cookie,
         body.len(),
         body
     )
 }
 
 /// 极简 RPC POST（本地验证用）：POST JSON-RPC 到本地端口，响应含
-/// `"ok":true` 即通过。
-pub(crate) fn rpc_ok(port: u16, method: &str) -> bool {
+/// `"ok":true` 即通过
+pub(crate) fn rpc_ok(port: u16, method: &str, cookie: Option<&str>) -> bool {
     use std::io::{Read, Write};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
     let mut s = match TcpStream::connect_timeout(
@@ -325,7 +320,7 @@ pub(crate) fn rpc_ok(port: u16, method: &str) -> bool {
         Ok(s) => s,
         Err(_) => return false,
     };
-    if s.write_all(rpc_request(method).as_bytes()).is_err() {
+    if s.write_all(rpc_request(method, cookie).as_bytes()).is_err() {
         return false;
     }
     if s.set_read_timeout(Some(Duration::from_secs(5))).is_err() {

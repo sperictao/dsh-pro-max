@@ -19,6 +19,10 @@ mod updater;
 mod version;
 mod window;
 
+/// 测试专用 HTTP 桩（会话换取与凭据 RPC 的线上字节断言）
+#[cfg(test)]
+mod test_http;
+
 use config::LauncherConfig;
 use i18n::Message;
 

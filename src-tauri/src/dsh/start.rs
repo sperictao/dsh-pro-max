@@ -26,24 +26,14 @@ use crate::i18n::Message;
 /// 步骤编排序列的唯一事实来源：super::steps() 供派生时间轴与前端 schema 共用
 pub(crate) const LOCAL_STEPS: [&str; 4] = ["node", "install", "start", "ready"];
 
-/// 从 dsh-web.log 内容解析最近一次启动打印的本机访问地址。dsh 原生方式：
-/// 无授权插件的 web 以 launch token 鉴权，启动时把带 token 的地址打印进
-/// 日志，浏览器打开后以 303 换取持久 cookie。只认带 ?token= 的行（授权
-/// 插件在场时 dsh 打印的是裸地址，无 token 也可访问，不必返回）；多次
-/// 启动追加日志，取最后一次。纯函数供测试
+/// 从日志区域解析最近一次启动打印的本机访问地址。dsh 原生方式：无授权插件的
+/// web 以 launch token 鉴权，启动时把带 token 的地址打印进日志，浏览器打开后
+/// 以 303 换取持久 cookie。只认带 `?token=` 的行（授权插件在场时 dsh 打印的是
+/// 裸地址，无 token 也可访问，不必返回）；token 前缀与字母表只在 session 里
+/// 实现一次。多次启动追加日志，取最后一条；调用方按需圈定只看本次启动的区域
 pub(crate) fn local_access_url_from_log_contents(contents: &str) -> Option<String> {
-    let prefix = format!("dsh web: http://127.0.0.1:{WEB_PORT}/?token=");
-    contents
-        .lines()
-        .rfind(|line| line.contains(&prefix))
-        .and_then(|line| {
-            let rest = line.split_once(&prefix)?.1;
-            let token: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric())
-                .collect();
-            (!token.is_empty()).then(|| format!("http://127.0.0.1:{WEB_PORT}/?token={token}"))
-        })
+    super::session::launch_token(contents, WEB_PORT)
+        .map(|token| super::session::local_access_url(WEB_PORT, token))
 }
 
 /// 读取 dsh-web.log 解析本机访问地址；日志缺失/无 token 行返回 None。
@@ -158,8 +148,8 @@ pub(crate) fn poll_local_ready(
 }
 
 /// dsh 是否对本机 HTTP 请求给出了状态行。本地模式裸 `/` 未带 token 时
-/// 401/404 是健康应答（浏览器经 token URL 换 cookie 后才是 200），不沿用
-/// http_ok 的 2xx/3xx 门槛
+/// 401/404 是健康应答（浏览器经 token URL 换 cookie 后才是 200），只认
+/// 状态行、不问语义
 fn local_http_responding() -> bool {
     any_http_status(http_get(WEB_PORT, "127.0.0.1", "/").as_deref())
 }

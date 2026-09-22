@@ -4,7 +4,14 @@
 //! settings.yaml。dsh web 运行时优先调用官方 credentials/describe|set|unset RPC，
 //! 由 dsh 自己处理 precedence、writer lock 与热更新；dsh 未运行时才直接读写
 //! `~/.dsh/.credentials.yaml`，并复用 dsh 的 `<file>.lock` writer 协议。
+//!
+//! 无授权插件的 web（本地模式不依赖授权插件、Windows 等原生 token 环境）对
+//! `/api` 一律要会话 cookie，裸请求 401：凭据 RPC 因此经 `dsh::session` 用原生
+//! launch token 换一次本机会话 cookie，被拒再重试一次（见 rpc_with_native_auth）。
 
+use crate::dsh::{
+    cached_session_cookie, invalidate_session_cookie, session_cookie, LOOPBACK_HTTP_TIMEOUT_SECS,
+};
 use crate::i18n::Message;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -29,7 +36,6 @@ const DOCUMENT_VERSION: i64 = 1;
 const LOCK_WAIT_MS: u64 = 30_000;
 const LOCK_RETRY_INITIAL_MS: u64 = 20;
 const LOCK_RETRY_MAX_MS: u64 = 200;
-const RPC_TIMEOUT_SECS: u64 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
@@ -502,34 +508,103 @@ fn mutate_credential_ref_at(path: &Path, name: &str, value: Option<&str>) -> Res
     write_private_atomic(path, &text)
 }
 
-fn rpc_call(method: &str, args: serde_json::Value) -> Result<serde_json::Value, Message> {
+fn rpc_call(port: u16, method: &str, args: serde_json::Value) -> Result<serde_json::Value, Message> {
+    rpc_with_native_auth(
+        cached_session_cookie(),
+        |cookie| rpc_post(port, method, &args, cookie),
+        || {
+            // 被拒说明缓存里的 cookie 已经不作数（web 换了实例或轮换了签名
+            // 密钥）：先作废，再按当前 launch token 重取一次（mint 契约）
+            invalidate_session_cookie();
+            session_cookie(port)
+        },
+        invalidate_session_cookie,
+    )
+}
+
+/// 一次特权 RPC 的回答。401 不是普通失败，而是「dsh 要求本机会话」的信号：
+/// 决策核据此换一次会话 cookie 再试，其余错误原样上抛
+#[derive(Debug)]
+enum RpcError {
+    Unauthorized,
+    Failed(Message),
+}
+
+/// 特权 RPC 的本机会话编排（决策核）：先用手上已有的 cookie 发一次；被 dsh
+/// 以 401 拒绝时换一次会话 cookie 再试；换来或重试后仍 401 就把原因与下一步
+/// 摆给用户、并作废已经不作数的缓存，绝不无限重试。
+/// post / mint / forget 是注入口，薄壳接真实 IO；mint 的契约是「绕开并作废
+/// 缓存后重取」，forget 只用于重试仍被拒的那次清理
+fn rpc_with_native_auth(
+    initial: Option<String>,
+    mut post: impl FnMut(Option<&str>) -> Result<serde_json::Value, RpcError>,
+    mut mint: impl FnMut() -> Option<String>,
+    mut forget: impl FnMut(),
+) -> Result<serde_json::Value, Message> {
+    match post(initial.as_deref()) {
+        Ok(value) => Ok(value),
+        Err(RpcError::Failed(message)) => Err(message),
+        Err(RpcError::Unauthorized) => match mint() {
+            Some(cookie) => match post(Some(&cookie)) {
+                Ok(value) => Ok(value),
+                Err(RpcError::Failed(message)) => Err(message),
+                Err(RpcError::Unauthorized) => {
+                    forget();
+                    Err(local_session_missing())
+                }
+            },
+            None => Err(local_session_missing()),
+        },
+    }
+}
+
+/// 401 且拿不到（或换不到）本机会话：说明原因并给出下一步，不让用户对着
+/// dsh 的 401 页面猜。覆盖的实况：web 由外部手工启动、token 只落在终端，
+/// 日志里没有可换的本机 launch token
+fn local_session_missing() -> Message {
+    Message::key("Running DSH rejected the credential request (HTTP 401) and DSH Pro Max could not obtain the local dsh session credential; start dsh web again from DSH Pro Max, then retry")
+}
+
+fn rpc_post(
+    port: u16,
+    method: &str,
+    args: &serde_json::Value,
+    cookie: Option<&str>,
+) -> Result<serde_json::Value, RpcError> {
     let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(RPC_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(LOOPBACK_HTTP_TIMEOUT_SECS))
         .build()
-        .map_err(|_| Message::key("Cannot initialize the HTTP client"))?;
-    let url = format!("http://127.0.0.1:{WEB_PORT}/api/{method}");
-    let response = client
-        .post(&url)
-        .json(&json!({
-            "type": "client-request",
-            "rpcId": "dsh-pro-max-credentials",
-            "method": method,
-            "payload": { "args": args }
-        }))
+        .map_err(|_| RpcError::Failed(Message::key("Cannot initialize the HTTP client")))?;
+    let url = format!("http://127.0.0.1:{port}/api/{method}");
+    let mut request = client.post(&url).json(&json!({
+        "type": "client-request",
+        "rpcId": "dsh-pro-max-credentials",
+        "method": method,
+        "payload": { "args": args }
+    }));
+    if let Some(cookie) = cookie {
+        request = request.header("cookie", cookie);
+    }
+    let response = request
         .send()
-        .map_err(|_| Message::key("Cannot reach the running DSH credential service"))?;
+        .map_err(|_| RpcError::Failed(Message::key("Cannot reach the running DSH credential service")))?;
+    // 无授权插件的 web 以会话 cookie 鉴权（令牌交换见 dsh::session）：裸请求
+    // 到 /api 一律 401，这里把它当「需要本机会话」的信号而不是终点
+    if response.status().as_u16() == 401 {
+        return Err(RpcError::Unauthorized);
+    }
     if !response.status().is_success() {
-        return Err(Message::localized(
+        return Err(RpcError::Failed(Message::localized(
             "Running DSH rejected the credential request (HTTP {{status}})",
             &[("status", response.status().as_u16().to_string())],
-        ));
+        )));
     }
     let body: serde_json::Value = response
         .json()
-        .map_err(|_| Message::key("Running DSH returned an invalid credential response"))?;
-    let result = body
-        .get("result")
-        .ok_or_else(|| Message::key("Running DSH returned an invalid credential response"))?;
+        .map_err(|_| RpcError::Failed(Message::key("Running DSH returned an invalid credential response")))?;
+    let result = body.get("result").ok_or_else(|| {
+        RpcError::Failed(Message::key("Running DSH returned an invalid credential response"))
+    })?;
     if result.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
         return Ok(result
             .get("value")
@@ -541,24 +616,32 @@ fn rpc_call(method: &str, args: serde_json::Value) -> Result<serde_json::Value, 
         .and_then(serde_json::Value::as_str)
         .unwrap_or("Running DSH rejected the credential request");
     // 文本来自运行中的 DSH（另一个进程的错误原文），无法本地化，整串当 key
-    Err(message.into())
+    Err(RpcError::Failed(message.into()))
 }
 
-fn rpc_describe(names: &[String]) -> Result<BTreeMap<String, ModelCredentialInfo>, Message> {
-    let value = rpc_call("credentials/describe", json!({ "refs": names }))?;
+fn rpc_describe(port: u16, names: &[String]) -> Result<BTreeMap<String, ModelCredentialInfo>, Message> {
+    let value = rpc_call(port, "credentials/describe", json!({ "refs": names }))?;
     serde_json::from_value(value)
         .map_err(|_| Message::key("Running DSH returned an invalid credential description"))
 }
 
-fn rpc_set(name: &str, value: &str) -> Result<(), Message> {
-    rpc_call("credentials/set", json!({ "ref": name, "value": value })).map(|_| ())
+fn rpc_set(port: u16, name: &str, value: &str) -> Result<(), Message> {
+    rpc_call(
+        port,
+        "credentials/set",
+        json!({ "ref": name, "value": value }),
+    )
+    .map(|_| ())
 }
 
-fn rpc_unset(name: &str) -> Result<(), Message> {
-    rpc_call("credentials/unset", json!({ "ref": name })).map(|_| ())
+fn rpc_unset(port: u16, name: &str) -> Result<(), Message> {
+    rpc_call(port, "credentials/unset", json!({ "ref": name })).map(|_| ())
 }
 
-fn describe_many(names: Vec<String>) -> Result<BTreeMap<String, ModelCredentialInfo>, Message> {
+fn describe_many(
+    port: u16,
+    names: Vec<String>,
+) -> Result<BTreeMap<String, ModelCredentialInfo>, Message> {
     let names = names
         .into_iter()
         .map(|name| checked_ref(&name))
@@ -566,8 +649,8 @@ fn describe_many(names: Vec<String>) -> Result<BTreeMap<String, ModelCredentialI
     if names.is_empty() {
         return Ok(BTreeMap::new());
     }
-    if port_listening(WEB_PORT) {
-        return rpc_describe(&names);
+    if port_listening(port) {
+        return rpc_describe(port, &names);
     }
     let path = credentials_path()?;
     names
@@ -576,14 +659,14 @@ fn describe_many(names: Vec<String>) -> Result<BTreeMap<String, ModelCredentialI
         .collect()
 }
 
-fn set_one(name: String, value: String) -> Result<ModelCredentialInfo, Message> {
+fn set_one(port: u16, name: String, value: String) -> Result<ModelCredentialInfo, Message> {
     let name = checked_ref(&name)?;
     if value.is_empty() {
         return Err(Message::key("Credential value cannot be empty"));
     }
-    if port_listening(WEB_PORT) {
-        rpc_set(&name, &value)?;
-        return rpc_describe(std::slice::from_ref(&name))?
+    if port_listening(port) {
+        rpc_set(port, &name, &value)?;
+        return rpc_describe(port, std::slice::from_ref(&name))?
             .remove(&name)
             .ok_or_else(|| Message::key("Running DSH did not describe the stored credential"));
     }
@@ -592,11 +675,11 @@ fn set_one(name: String, value: String) -> Result<ModelCredentialInfo, Message> 
     offline_describe_one(&name, &path)
 }
 
-fn unset_one(name: String) -> Result<ModelCredentialInfo, Message> {
+fn unset_one(port: u16, name: String) -> Result<ModelCredentialInfo, Message> {
     let name = checked_ref(&name)?;
-    if port_listening(WEB_PORT) {
-        rpc_unset(&name)?;
-        return rpc_describe(std::slice::from_ref(&name))?
+    if port_listening(port) {
+        rpc_unset(port, &name)?;
+        return rpc_describe(port, std::slice::from_ref(&name))?
             .remove(&name)
             .ok_or_else(|| Message::key("Running DSH did not describe the removed credential"));
     }
@@ -609,7 +692,7 @@ fn unset_one(name: String) -> Result<ModelCredentialInfo, Message> {
 pub async fn model_credential_describe(
     names: Vec<String>,
 ) -> Result<BTreeMap<String, ModelCredentialInfo>, Message> {
-    crate::dsh::ipc_blocking(move || describe_many(names)).await
+    crate::dsh::ipc_blocking(move || describe_many(WEB_PORT, names)).await
 }
 
 #[tauri::command]
@@ -617,12 +700,12 @@ pub async fn model_credential_set(
     name: String,
     value: String,
 ) -> Result<ModelCredentialInfo, Message> {
-    crate::dsh::ipc_blocking(move || set_one(name, value)).await
+    crate::dsh::ipc_blocking(move || set_one(WEB_PORT, name, value)).await
 }
 
 #[tauri::command]
 pub async fn model_credential_unset(name: String) -> Result<ModelCredentialInfo, Message> {
-    crate::dsh::ipc_blocking(move || unset_one(name)).await
+    crate::dsh::ipc_blocking(move || unset_one(WEB_PORT, name)).await
 }
 
 #[cfg(test)]
@@ -650,6 +733,221 @@ mod tests {
         for invalid in ["", "1KEY", "bad-key", "HAS SPACE"] {
             assert!(!valid_credential_ref(invalid), "{invalid}");
         }
+    }
+
+    #[test]
+    fn rpc_prefers_the_cached_session_cookie() {
+        let mut posts = Vec::new();
+        let value = rpc_with_native_auth(
+            Some("dsh-auth-x=v1".to_string()),
+            |cookie| {
+                posts.push(cookie.map(str::to_string));
+                Ok(json!({ "configured": true }))
+            },
+            || panic!("a cached cookie that works must never be re-minted"),
+            || panic!("a working cookie must never be forgotten"),
+        )
+        .expect("accepted");
+        assert_eq!(value, json!({ "configured": true }));
+        assert_eq!(posts, vec![Some("dsh-auth-x=v1".to_string())]);
+    }
+
+    #[test]
+    fn rpc_mints_a_session_cookie_after_401_and_retries_once() {
+        // 无授权插件的 web：裸请求 401 → 用 launch token 换 cookie → 重试成功
+        let mut posts = Vec::new();
+        let mut mints = 0;
+        let value = rpc_with_native_auth(
+            None,
+            |cookie| {
+                posts.push(cookie.map(str::to_string));
+                match cookie {
+                    None => Err(RpcError::Unauthorized),
+                    Some(_) => Ok(json!({ "configured": true })),
+                }
+            },
+            || {
+                mints += 1;
+                Some("dsh-auth-new=v1".to_string())
+            },
+            || panic!("a retry that succeeded must not forget the cookie"),
+        )
+        .expect("retry with the native session succeeds");
+        assert_eq!(value, json!({ "configured": true }));
+        assert_eq!(posts, vec![None, Some("dsh-auth-new=v1".to_string())]);
+        assert_eq!(mints, 1);
+    }
+
+    #[test]
+    fn rpc_does_not_loop_when_the_minted_cookie_is_rejected_too() {
+        let mut posts = 0;
+        let mut mints = 0;
+        let mut forgotten = 0;
+        let error = rpc_with_native_auth(
+            None,
+            |_| {
+                posts += 1;
+                Err(RpcError::Unauthorized)
+            },
+            || {
+                mints += 1;
+                Some("dsh-auth-stale=v1".to_string())
+            },
+            || forgotten += 1,
+        )
+        .expect_err("two 401s must surface as an error");
+        assert_eq!(posts, 2);
+        assert_eq!(mints, 1);
+        // 重试也被拒：换来的 cookie 同样不作数，必须清掉，别让下一次调用
+        // 先拿这颗死 cookie 白跑一轮
+        assert_eq!(forgotten, 1);
+        assert!(error.contains("HTTP 401"), "{error}");
+    }
+
+    #[test]
+    fn rpc_reports_the_local_session_gap_without_a_launch_token() {
+        let error = rpc_with_native_auth(
+            None,
+            |_| Err(RpcError::Unauthorized),
+            || None,
+            || panic!("nothing was minted, so nothing needs forgetting"),
+        )
+        .expect_err("no native token means no retry");
+        assert!(error.contains("local dsh session credential"), "{error}");
+        assert!(error.contains("start dsh web again from DSH Pro Max"), "{error}");
+    }
+
+    #[test]
+    fn rpc_passes_other_failures_through_without_minting() {
+        let error = rpc_with_native_auth(
+            None,
+            |_| {
+                Err(RpcError::Failed(Message::localized(
+                    "Running DSH rejected the credential request (HTTP {{status}})",
+                    &[("status", "403".to_string())],
+                )))
+            },
+            || panic!("only a 401 asks for the native session"),
+            || panic!("a non-401 failure must not touch the session cache"),
+        )
+        .expect_err("403 stays a plain failure");
+        assert!(error.contains("HTTP 403"), "{error}");
+    }
+
+    #[test]
+    fn rpc_post_attaches_the_session_cookie_and_reads_the_envelope() {
+        let body = r#"{"type":"server-response","rpcId":"dsh-pro-max-credentials","result":{"ok":true,"value":{"configured":true,"source":"file","writable":true}}}"#;
+        let (port, request) = crate::test_http::one_shot(&format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        ));
+        let value = rpc_post(
+            port,
+            "credentials/describe",
+            &json!({ "refs": ["OPENAI_API_KEY"] }),
+            Some("dsh-auth-sig=v1.body.sig"),
+        )
+        .expect("ok envelope");
+        assert_eq!(
+            value,
+            json!({ "configured": true, "source": "file", "writable": true })
+        );
+        let request = request.recv().expect("request captured");
+        assert!(
+            request.starts_with("POST /api/credentials/describe HTTP/1.1\r\n"),
+            "{request}"
+        );
+        let request_lower = request.to_ascii_lowercase();
+        assert!(
+            request_lower.contains("cookie: dsh-auth-sig=v1.body.sig"),
+            "{request}"
+        );
+        assert!(
+            request_lower.contains(r#""method":"credentials/describe""#),
+            "{request}"
+        );
+    }
+
+    #[test]
+    fn rpc_post_maps_401_to_the_session_signal() {
+        // dsh 浏览器鉴权门的真实回包：401 + text/plain "unauthorized"
+        let (port, _request) = crate::test_http::one_shot(
+            "HTTP/1.1 401 Unauthorized\r\ncontent-type: text/plain\r\ncontent-length: 12\r\nconnection: close\r\n\r\nunauthorized",
+        );
+        match rpc_post(port, "credentials/describe", &json!({ "refs": ["A"] }), None) {
+            Err(RpcError::Unauthorized) => {}
+            other => panic!("expected Unauthorized, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rpc_post_reports_other_statuses_with_the_http_code() {
+        let (port, _request) = crate::test_http::one_shot(
+            "HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\ncontent-length: 9\r\nconnection: close\r\n\r\nforbidden",
+        );
+        match rpc_post(port, "credentials/describe", &json!({ "refs": ["A"] }), None) {
+            Err(RpcError::Failed(message)) => assert!(message.contains("HTTP 403"), "{message}"),
+            other => panic!("expected a plain 403 failure, got {other:?}"),
+        }
+    }
+
+    /// 真机链路回归（依赖本机真实进程，默认 ignore，只跑这一个用例）。适合在
+    /// 「本地模式不装授权插件」的机器上手动跑，验证的是整条原生链路而不是打桩：
+    ///
+    /// 1. 用独立 DSH_HOME 起一个**无授权插件**的 dsh web（启动日志会打印
+    ///    带 launch token 的地址）：
+    ///    `DSH_HOME=/tmp/dsh-stock dsh web --port 3898 --no-open`
+    /// 2. 让 Launcher 侧拿到同一个 token：HOME 指向临时目录（本测试会**覆盖**
+    ///    `$HOME/.dsh/dsh-web.log`，故必须显式声明隔离）：
+    ///    `HOME=/tmp/live-home DSH_PROBE_ISOLATED_HOME=1 DSH_PROBE_PORT=3898 \
+    ///     DSH_PROBE_TOKEN=<token> cargo test live_native_session -- --ignored --nocapture`
+    ///
+    /// 断言：裸 RPC 401 → launch token 换会话 cookie → 重试成功 → 凭据由 dsh
+    /// 自己落盘（`$DSH_HOME/.credentials.yaml`）→ unset 生效。
+    /// 装了授权插件的实例（如本机 3899）同样可跑：loopback 直放、不需要 cookie，
+    /// 用来确认这条修复没有改动插件在场时的行为
+    #[ignore] // 需要本机跑着无授权插件的 dsh web，仅手动验证链路时跑
+    #[test]
+    fn live_native_session_authenticates_privileged_rpc() {
+        let port: u16 = std::env::var("DSH_PROBE_PORT")
+            .expect("set DSH_PROBE_PORT to a running stock dsh web port")
+            .parse()
+            .expect("DSH_PROBE_PORT must be a port number");
+        let token = std::env::var("DSH_PROBE_TOKEN")
+            .expect("set DSH_PROBE_TOKEN to that instance's launch token");
+        // 隔离闸门：本测试要覆盖 $HOME/.dsh/dsh-web.log，误在真实 HOME 下跑会把
+        // Launcher 交给浏览器的 token 行清掉。探针 HOME 由运行者显式声明
+        assert!(
+            std::env::var("DSH_PROBE_ISOLATED_HOME").is_ok(),
+            "refusing to run: this test overwrites $HOME/.dsh/dsh-web.log; point HOME at a scratch directory and set DSH_PROBE_ISOLATED_HOME=1"
+        );
+        let log = dsh_dir().expect("dsh dir").join("dsh-web.log");
+        fs::create_dir_all(log.parent().expect("parent")).expect("create .dsh");
+        fs::write(
+            &log,
+            format!("dsh web: http://127.0.0.1:{port}/?token={token}\n"),
+        )
+        .expect("seed dsh-web.log");
+        invalidate_session_cookie();
+
+        let name = "DSH_PRO_MAX_LIVE_PROBE_KEY";
+        let stored = set_one(port, name.to_string(), "live-probe-secret".to_string())
+            .expect("set through the native session");
+        assert!(stored.configured, "dsh must report the stored credential");
+        let described = describe_many(port, vec![name.to_string()]).expect("describe");
+        assert!(described[name].configured);
+        let removed = unset_one(port, name.to_string()).expect("unset");
+        assert!(!removed.configured);
+        // 授权插件在场时 loopback 直放，全程不需要会话 cookie；插件不在场时
+        // 每一步都靠换来的 cookie 才拿到 200——两种情况都由同一条链路覆盖
+        println!(
+            "live ok on port {port}: dsh stored and removed {name}; native session cookie {}",
+            if cached_session_cookie().is_some() {
+                "minted (launch token → 303 → cookie)"
+            } else {
+                "not needed (authz plugin allows loopback)"
+            }
+        );
     }
 
     #[test]

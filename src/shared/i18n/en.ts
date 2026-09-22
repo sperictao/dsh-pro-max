@@ -666,6 +666,7 @@ export const en = {
   "Credential {{name}} is supplied by the launch environment and is read-only; update the environment and restart DSH": "Credential {{name}} is supplied by the launch environment and is read-only; update the environment and restart DSH",
   "Cannot reach the running DSH credential service": "Cannot reach the running DSH credential service",
   "Running DSH rejected the credential request (HTTP {{status}})": "Running DSH rejected the credential request (HTTP {{status}})",
+  "Running DSH rejected the credential request (HTTP 401) and DSH Pro Max could not obtain the local dsh session credential; start dsh web again from DSH Pro Max, then retry": "Running DSH rejected the credential request (HTTP 401) and DSH Pro Max could not obtain the local dsh session credential; start dsh web again from DSH Pro Max, then retry",
   "Credentials file declares unsupported version {{version}}; expected {{expected}}": "Credentials file declares unsupported version {{version}}; expected {{expected}}",
   "Credentials file contains unknown top-level key \"{{name}}\"": "Credentials file contains unknown top-level key \"{{name}}\"",
   "Credential reference \"{{name}}\" is invalid": "Credential reference \"{{name}}\" is invalid",
