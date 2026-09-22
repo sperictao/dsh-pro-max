@@ -34,7 +34,7 @@ describe("ModelPanes fetch failure retry", () => {
     const { rerender } = render(
       <ModelPanes
         provider={provider}
-        catalog={[]}
+        catalog={null}
         remote={["cached-chat", "cached-reasoner"]}
         fetching={false}
         fetchError="503 Service Unavailable"
@@ -56,7 +56,7 @@ describe("ModelPanes fetch failure retry", () => {
     rerender(
       <ModelPanes
         provider={provider}
-        catalog={[]}
+        catalog={null}
         remote={["cached-chat", "cached-reasoner"]}
         fetching
         fetchError={null}
@@ -71,7 +71,7 @@ describe("ModelPanes fetch failure retry", () => {
     rerender(
       <ModelPanes
         provider={provider}
-        catalog={[]}
+        catalog={null}
         remote={["fresh-chat", "fresh-reasoner", "cached-chat"]}
         fetching={false}
         fetchError={null}

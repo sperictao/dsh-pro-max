@@ -26,10 +26,11 @@ const provider = {
   extra: null,
 };
 const modelConfig = { defaultProvider: "deepseek", defaultModel: "deepseek-chat", defaultReasoningEffort: null, providers: [provider] };
+const catalogEntries = [{ id: "deepseek-chat", name: "DeepSeek Chat", context: 65536, maxTokens: 8192, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] }];
 const modelCatalog = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  providerCount: 1,
-  entries: [{ id: "deepseek-chat", name: "DeepSeek Chat", family: "openai", context: 65536, maxTokens: 8192, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] }],
+  providers: [{ id: "mock-catalog", name: "Mock Catalog", family: "openai", models: catalogEntries }],
+  models: catalogEntries,
 };
 const appConfig = { minimize_to_tray_on_close: false, language: "en", dsh_admin_cap_domain: "", dsh_use_cap_domain: "", dsh_extra_allowed_logins: "", market_catalog_url: "" };
 const dshStatus = {
@@ -38,7 +39,7 @@ const dshStatus = {
   tailscaleInstalled: false, tailscaleOnline: false, hostname: null, localUrl: null, url: null,
   remoteUrlAccess: null, magicDnsEnabled: false, serveConfigured: false, autostartEnabled: false,
   error: null,
-  readyTimeline: ["node", "install", "start", "ready"].map((id, index) => ({ index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
+  readyTimeline: ["node", "install", "start", "ready"].map((id, index) => ({ index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}` })),
 };
 
 async function launchBrowser() {
@@ -78,7 +79,7 @@ async function main() {
         get_updater_config_health: () => ({ configured: true, message: "ready" }),
         check_update: () => ({ currentVersion: "0.4.0", availableVersion: null, hasUpdate: false, releaseNotes: null, message: null }),
         dsh_detect: () => dshStatus,
-        dsh_step_schema: ({ remote } = {}) => (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({ index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
+        dsh_step_schema: ({ remote } = {}) => (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({ index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}` })),
         model_config_load: () => structuredClone(currentModelConfig),
         model_config_save: ({ config }) => { currentModelConfig = structuredClone(config); window.__auditSavedConfigs.push(structuredClone(config)); return null; },
         model_catalog_load: () => structuredClone(modelCatalog),

@@ -13,6 +13,18 @@ const PORT = 5192;
 const BASE = `http://127.0.0.1:${PORT}`;
 const OUT_DIR = resolve(ROOT, ".artifacts", "e2e", "models-reasoning-effort");
 
+const catalogEntries = [
+  {
+    id: "glm-5.2",
+    name: "GLM 5.2",
+    context: 131072,
+    maxTokens: 32768,
+    input: ["text"],
+    reasoning: true,
+    reasoningLevels: ["low", "medium", "high", "max"],
+    capabilities: ["text", "reasoning", "tools"],
+  },
+];
 const mock = {
   config: {
     minimize_to_tray_on_close: false,
@@ -42,7 +54,7 @@ const mock = {
     autostartEnabled: false,
     error: null,
     readyTimeline: ["node", "install", "start", "ready"].map((id, index) => ({
-      index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}`,
+      index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}`,
     })),
   },
   modelConfig: {
@@ -76,20 +88,8 @@ const mock = {
   },
   modelCatalog: {
     fetchedAt: Math.floor(Date.now() / 1000),
-    providerCount: 1,
-    entries: [
-      {
-        id: "glm-5.2",
-        name: "GLM 5.2",
-        family: "openai",
-        context: 131072,
-        maxTokens: 32768,
-        input: ["text"],
-        reasoning: true,
-        reasoningLevels: ["low", "medium", "high", "max"],
-        capabilities: ["text", "reasoning", "tools"],
-      },
-    ],
+    providers: [{ id: "mock-catalog", name: "Mock Catalog", family: "openai", models: catalogEntries }],
+    models: catalogEntries,
   },
 };
 
@@ -140,7 +140,7 @@ async function main() {
         get_updater_config_health: () => ({ configured: true, message: "ready" }),
         check_update: () => ({ currentVersion: "0.4.0", availableVersion: null, hasUpdate: false, releaseNotes: null, message: null }),
         dsh_detect: () => dshStatus,
-        dsh_step_schema: ({ remote } = {}) => (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({ index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
+        dsh_step_schema: ({ remote } = {}) => (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({ index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}` })),
         model_config_load: () => modelConfig,
         model_config_save: ({ config }) => { window.__auditSavedConfigs.push(structuredClone(config)); return null; },
         model_catalog_load: () => modelCatalog,

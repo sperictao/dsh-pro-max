@@ -39,20 +39,26 @@ const config: ModelConfig = {
 
 const catalog: ModelCatalogFile = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  providerCount: 1,
-  entries: [
+  providers: [
     {
-      id: "deepseek-chat",
-      name: "DeepSeek Chat",
+      id: "deepseek",
+      name: "DeepSeek",
       family: "openai",
-      context: 65536,
-      maxTokens: 8192,
-      input: ["text"],
-      reasoning: false,
-      reasoningLevels: [],
-      capabilities: ["text"],
+      models: [
+        {
+          id: "deepseek-chat",
+          name: "DeepSeek Chat",
+          context: 65536,
+          maxTokens: 8192,
+          input: ["text"],
+          reasoning: false,
+          reasoningLevels: [],
+          capabilities: ["text"],
+        },
+      ],
     },
   ],
+  models: [],
 };
 
 beforeEach(() => {
@@ -74,7 +80,7 @@ describe("ModelsView provider save recovery", () => {
   it("keeps the draft, retires stale errors after a later edit, and retries without duplicate failure feedback", async () => {
     const save = vi
       .spyOn(cmd, "modelConfigSave")
-      .mockRejectedValueOnce("Failed to write settings.yaml")
+      .mockRejectedValueOnce("Failed to write cordis.patch.yml")
       .mockResolvedValueOnce(undefined);
     const user = userEvent.setup();
 
@@ -91,13 +97,13 @@ describe("ModelsView provider save recovery", () => {
     await user.click(saveButton);
 
     const submitError = await within(dialog).findByTestId("provider-submit-error");
-    expect(submitError).toHaveTextContent("Failed to write settings.yaml");
+    expect(submitError).toHaveTextContent("Failed to write cordis.patch.yml");
     expect(displayName).toHaveValue("DeepSeek Recovery");
     expect(saveButton).toBeEnabled();
     expect(
       useAppStore
         .getState()
-        .toasts.some((toast) => toast.message.includes("Failed to write settings.yaml")),
+        .toasts.some((toast) => toast.message.includes("Failed to write cordis.patch.yml")),
     ).toBe(false);
 
     await user.click(within(dialog).getByRole("button", { name: "Advanced settings" }));

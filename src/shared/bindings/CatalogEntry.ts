@@ -2,13 +2,10 @@
 
 /**
  * models.dev 投影条目：模型身份 + 核心容量/能力元数据。
+ * provider 侧与 canonical 侧共用同一投影，各自保留 models.dev 发布的字段。
  * 新增字段保持 optional，使旧快照仍可反序列化；新投影会完整填充这些字段。
  */
 export type CatalogEntry = { id: string, name: string, 
-/**
- * openai | anthropic（dsh pi-ai 无 gemini 原生协议，google 端点经 openai 兼容）
- */
-family: string, 
 /**
  * 目录标注的上下文窗口（token）；缺失为 null（UI 不显示缩写）
  */

@@ -21,6 +21,7 @@ export type { ImportGroup } from "./bindings/ImportGroup";
 export type { ImportRunResult } from "./bindings/ImportRunResult";
 export type { CatalogEntry as ModelCatalogEntry } from "./bindings/CatalogEntry";
 export type { CatalogFile as ModelCatalogFile } from "./bindings/CatalogFile";
+export type { CatalogProvider as ModelCatalogProvider } from "./bindings/CatalogProvider";
 export type { MarketPlugin } from "./bindings/MarketPlugin";
 export type { MarketCatalog } from "./bindings/MarketCatalog";
 export type { InstalledPlugin } from "./bindings/InstalledPlugin";

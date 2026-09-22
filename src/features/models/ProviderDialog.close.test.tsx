@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import type { ModelCatalogEntry, ProviderConfig } from "@/shared/types";
 import { ProviderDialog } from "./ProviderDialog";
+import { catalogFile } from "./catalog-fixtures";
 
 const provider: ProviderConfig = {
   route: "deepseek",
@@ -33,7 +34,6 @@ const catalog: ModelCatalogEntry[] = [
   {
     id: "deepseek-chat",
     name: "DeepSeek Chat",
-    family: "openai",
     context: 65536,
     maxTokens: 8192,
     input: ["text"],
@@ -55,7 +55,7 @@ function renderEdit(onClose = vi.fn(), onSubmit = vi.fn().mockResolvedValue(unde
   render(
     <ProviderDialog
       state={{ mode: "edit", index: 0, provider }}
-      catalog={catalog}
+      catalog={catalogFile(catalog)}
       onClose={onClose}
       onSubmit={onSubmit}
     />,
@@ -164,7 +164,7 @@ describe("ProviderDialog close behavior", () => {
     const { unmount } = render(
       <ProviderDialog
         state={{ mode: "add" }}
-        catalog={catalog}
+        catalog={catalogFile(catalog)}
         onClose={pristineClose}
         onSubmit={vi.fn().mockResolvedValue(undefined)}
       />,
@@ -179,7 +179,7 @@ describe("ProviderDialog close behavior", () => {
     render(
       <ProviderDialog
         state={{ mode: "add" }}
-        catalog={catalog}
+        catalog={catalogFile(catalog)}
         onClose={dirtyClose}
         onSubmit={vi.fn().mockResolvedValue(undefined)}
       />,
@@ -234,7 +234,7 @@ describe("ProviderDialog close behavior", () => {
           {open && (
             <ProviderDialog
               state={{ mode: "edit", index: 0, provider }}
-              catalog={catalog}
+              catalog={catalogFile(catalog)}
               onClose={() => setOpen(false)}
               onSubmit={vi.fn().mockResolvedValue(undefined)}
             />

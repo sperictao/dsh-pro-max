@@ -34,7 +34,7 @@ function renderDialog() {
   render(
     <ProviderDialog
       state={{ mode: "edit", index: 0, provider }}
-      catalog={[]}
+      catalog={null}
       onClose={vi.fn()}
       onSubmit={onSubmit}
     />,

@@ -15,7 +15,7 @@ DSH Pro Max 不再使用 3898 回环反代，也不会改写 `Host` / `Origin` �
 
 Launcher 把以下三部分当成一个不可拆分的兼容单元：
 
-- DeepSeek Harness `0.1.6-alpha.1`；
+- DeepSeek Harness `0.1.7-alpha.1`；
 - [dsh-client-connection-authz](https://github.com/sperictao/dsh-client-connection-authz)；
 - [dsh-auth-tailscale](https://github.com/sperictao/dsh-auth-tailscale)。
 

@@ -9,11 +9,11 @@ import { ModelsView } from "./ModelsView";
 
 const catalog: ModelCatalogFile = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  entries: [
+  providers: [],
+  models: [
     {
       id: "glm-5.2",
       name: "GLM-5.2",
-      family: "openai",
       context: 262144,
       maxTokens: 32768,
       input: ["text", "image"],
@@ -24,7 +24,6 @@ const catalog: ModelCatalogFile = {
     {
       id: "deepseek-v4-pro",
       name: "DeepSeek V4 Pro",
-      family: "openai",
       context: 131072,
       maxTokens: 16384,
       input: ["text"],
@@ -35,7 +34,6 @@ const catalog: ModelCatalogFile = {
     {
       id: "claude-opus-4",
       name: "Claude Opus 4",
-      family: "anthropic",
       context: null,
       reasoning: true,
       reasoningLevels: ["low", "medium", "high"],
@@ -505,7 +503,7 @@ describe("ModelsView provider studio", () => {
 
   it("keeps a failed provider save inside the dialog with an actionable inline error", async () => {
     loadWith();
-    vi.mocked(cmd.modelConfigSave).mockRejectedValueOnce("Failed to write settings.yaml");
+    vi.mocked(cmd.modelConfigSave).mockRejectedValueOnce("Failed to write cordis.patch.yml");
     const user = userEvent.setup();
     render(createElement(ModelsView));
     await waitFor(() => expect(screen.getByRole("button", { name: "Edit provider" })).toBeInTheDocument());
@@ -517,7 +515,7 @@ describe("ModelsView provider studio", () => {
     await user.type(displayName, "Spero Save Failure");
     await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Failed to write settings.yaml");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Failed to write cordis.patch.yml");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
@@ -525,7 +523,8 @@ describe("ModelsView provider studio", () => {
     loadWith();
     vi.spyOn(cmd, "modelCatalogRefresh").mockResolvedValue({
       fetchedAt: Math.floor(Date.now() / 1000),
-      entries: [{ id: "fresh-model", name: "Fresh", family: "openai", context: null }],
+      providers: [],
+      models: [{ id: "fresh-model", name: "Fresh", context: null }],
     });
     const user = userEvent.setup();
     render(createElement(ModelsView));

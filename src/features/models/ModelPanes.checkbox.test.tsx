@@ -39,7 +39,7 @@ function Harness({
   return (
     <ModelPanes
       provider={provider}
-      catalog={[]}
+      catalog={null}
       remote={remote}
       fetching={false}
       fetchError={null}

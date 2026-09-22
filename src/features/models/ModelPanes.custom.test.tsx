@@ -4,12 +4,12 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import { ModelPanes } from "./ModelPanes";
+import { catalogFile } from "./catalog-fixtures";
 
 const catalog: ModelCatalogEntry[] = [
   {
     id: "deepseek-chat",
     name: "DeepSeek Chat",
-    family: "openai",
     context: 65536,
     maxTokens: 8192,
     input: ["text"],
@@ -20,7 +20,6 @@ const catalog: ModelCatalogEntry[] = [
   {
     id: "deepseek-reasoner",
     name: "DeepSeek Reasoner",
-    family: "openai",
     context: 65536,
     maxTokens: 8192,
     input: ["text"],
@@ -59,7 +58,7 @@ function Harness() {
   return (
     <ModelPanes
       provider={provider}
-      catalog={catalog}
+      catalog={catalogFile(catalog)}
       remote={["deepseek-chat", "deepseek-reasoner"]}
       fetching={false}
       fetchError={null}

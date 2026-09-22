@@ -4,12 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import type { ModelCatalogEntry, ProviderConfig } from "@/shared/types";
 import { ProviderDialog } from "./ProviderDialog";
+import { catalogFile } from "./catalog-fixtures";
 
 const catalog: ModelCatalogEntry[] = [
   {
     id: "catalog-only-model",
     name: "Catalog Only",
-    family: "openai",
     context: 64000,
     maxTokens: 8192,
     input: ["text"],
@@ -20,7 +20,6 @@ const catalog: ModelCatalogEntry[] = [
   {
     id: "acme-chat-pro",
     name: "Acme Chat Pro",
-    family: "openai",
     context: 128000,
     maxTokens: 16384,
     input: ["text"],
@@ -48,7 +47,7 @@ describe("ProviderDialog Custom endpoint", () => {
     render(
       <ProviderDialog
         state={{ mode: "add" }}
-        catalog={catalog}
+        catalog={catalogFile(catalog)}
         onClose={vi.fn()}
         onSubmit={onSubmit}
       />,

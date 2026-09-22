@@ -33,10 +33,11 @@ const modelConfig = {
   providers: [provider],
 };
 
+const catalogEntries = [{ id: "glm-5.2", name: "GLM 5.2", context: 131072, maxTokens: 32768, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning"] }];
 const modelCatalog = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  providerCount: 1,
-  entries: [{ id: "glm-5.2", name: "GLM 5.2", family: "openai", context: 131072, maxTokens: 32768, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning"] }],
+  providers: [{ id: "mock-catalog", name: "Mock Catalog", family: "openai", models: catalogEntries }],
+  models: catalogEntries,
 };
 
 const appConfig = {
@@ -71,7 +72,7 @@ const dshStatus = {
     index,
     id,
     state: "pending",
-    detail: null,
+    detail: [],
     problem: null,
     solution: null,
     titleKey: `step.${id}`,
@@ -127,7 +128,7 @@ async function main() {
         dsh_detect: () => dshStatus,
         dsh_step_schema: ({ remote } = {}) =>
           (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({
-            index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}`,
+            index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}`,
           })),
         model_config_load: () => structuredClone(modelConfig),
         model_config_save: () => { throw new Error("Service picker audit must not save model configuration"); },

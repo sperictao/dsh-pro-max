@@ -4,13 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import type { ModelCatalogEntry, ProviderConfig } from "@/shared/types";
 import { ProviderDialog } from "./ProviderDialog";
+import { catalogFile } from "./catalog-fixtures";
 import type { CredentialWrite } from "./credentials";
 
 const catalog: ModelCatalogEntry[] = [
   {
     id: "deepseek-v4-pro",
     name: "DeepSeek V4 Pro",
-    family: "openai",
     context: 131072,
     maxTokens: 16384,
     input: ["text"],
@@ -21,7 +21,6 @@ const catalog: ModelCatalogEntry[] = [
   {
     id: "deepseek-chat",
     name: "DeepSeek Chat",
-    family: "openai",
     context: 65536,
     maxTokens: 8192,
     input: ["text"],
@@ -55,7 +54,7 @@ describe("ProviderDialog Add provider", () => {
     render(
       <ProviderDialog
         state={{ mode: "add" }}
-        catalog={catalog}
+        catalog={catalogFile(catalog)}
         onClose={vi.fn()}
         onSubmit={onSubmit}
       />,

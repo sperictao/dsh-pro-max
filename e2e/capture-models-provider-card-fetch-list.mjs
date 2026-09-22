@@ -53,8 +53,11 @@ const modelConfig = {
 
 const modelCatalog = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  providerCount: 2,
-  entries: [],
+  providers: [
+    { id: "mock-catalog", name: "Mock Catalog", family: "openai", models: [] },
+    { id: "mock-provider-2", name: "Mock Provider 2", family: "openai", models: [] },
+  ],
+  models: [],
 };
 
 const appConfig = {
@@ -89,7 +92,7 @@ const dshStatus = {
     index,
     id,
     state: "pending",
-    detail: null,
+    detail: [],
     problem: null,
     solution: null,
     titleKey: `step.${id}`,
@@ -156,7 +159,7 @@ async function main() {
             index,
             id,
             state: "pending",
-            detail: null,
+            detail: [],
             problem: null,
             solution: null,
             titleKey: `step.${id}`,

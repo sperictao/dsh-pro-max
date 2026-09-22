@@ -11,7 +11,7 @@ use super::components::{
     install_auth_plugins, install_supported_dsh, magic_dns_info, npm_bin, resolve_dsh_bin,
     resolve_host_and_url, resolve_node_bin, tailscale_path, PinnedDshDecision,
 };
-use super::probe::{probe_remote_url, proxy_bypass_host};
+use super::probe::{guard_active, probe_remote_url, proxy_bypass_host};
 use super::process::{
     clear_stale_credentials_lock, cli_command, dsh_web_cmd_pattern, dsh_web_pid, kill_by_pattern,
     port_listening, run_capture, spawn_detached, stop_supervised_services, wait_web_start,
@@ -21,7 +21,7 @@ use super::update::clear_web_profile_compat_entry;
 use super::StepEvent;
 use super::{
     RemoteRpcAccess, RemoteUrlAccess, AUTH_PLUGIN_PACKAGE, CONNECTION_PLUGIN_PACKAGE, DSH_PACKAGE,
-    SUPPORTED_DSH_VERSION, WEB_PORT,
+    REMOTE_BLOCKED_BODY, REMOTE_BLOCKED_MOUNT, SUPPORTED_DSH_VERSION, WEB_PORT,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -507,6 +507,20 @@ pub(crate) fn serve_command(auth: &AuthConfig) -> Vec<String> {
     args
 }
 
+/// Serve 层拦截命令：把 dsh 的 open-in-app 前缀挂到一个 `text:` handler 上。
+/// Serve 按 mount 逐个写入（`Web[host:port].Handlers[mount]`），所以这条只覆盖
+/// 被拦前缀，根挂载照旧代理 dsh；macOS 上 Path 型 target 被沙箱禁用，text 是
+/// 唯一可用的拒绝型 target。
+pub(crate) fn serve_guard_command() -> Vec<String> {
+    vec![
+        "serve".to_string(),
+        "--https=443".to_string(),
+        "--bg".to_string(),
+        format!("--set-path={REMOTE_BLOCKED_MOUNT}"),
+        format!("text:{REMOTE_BLOCKED_BODY}"),
+    ]
+}
+
 /// serve 配置失败时的针对性方案：错误文本含 TLS 证书类提示（教程 3.3 强调
 /// HTTPS Certificates 是与 MagicDNS 独立的开关）→ 指向 admin/dns；否则 →
 /// serve 首次启用授权链接
@@ -768,6 +782,34 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), Message> {
             id: steps[6],
         };
         ctx.running("Configuring Tailscale Serve directly to dsh…");
+        // 先挂被拦前缀、再挂根：Serve 逐个 mount 合并，守卫先就位意味着拦截
+        // 失败时不会有任何东西被暴露到 tailnet（顺序本身就是 fail-closed）
+        let guard_args = serve_guard_command();
+        let guard_refs: Vec<&str> = guard_args.iter().map(|s| s.as_str()).collect();
+        match run_capture(&tailscale.0, &guard_refs) {
+            Ok((_, _, true)) => {}
+            Ok((_, err, _)) => {
+                let error = if err.is_empty() {
+                    "tailscale serve path guard failed".to_string()
+                } else {
+                    err
+                };
+                return ctx.fail(
+                    Message::localized("Remote access stays off: {{error}}",
+                        &[("error", error)],
+                    ),
+                    "Update Tailscale, then retry: Serve path mounts are required to keep the dsh file-open route off the tailnet",
+                    &remaining_after(6),
+                );
+            }
+            Err(error) => {
+                return ctx.fail(
+                    &error,
+                    "Run tailscale up first to sign in, then retry",
+                    &remaining_after(6),
+                )
+            }
+        }
         let serve_args = serve_command(&auth);
         let serve_refs: Vec<&str> = serve_args.iter().map(|s| s.as_str()).collect();
         let result = run_capture(&tailscale.0, &serve_refs);
@@ -846,6 +888,10 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), Message> {
             .map(|access| access == RemoteRpcAccess::Ready)
             .unwrap_or(true);
         let remote_url_access = remote_probe.map(|probe| probe.access);
+        // 守卫必须真的生效：Serve 层拦住 dsh 的 open-in-app 前缀。探到 dsh 的
+        // 应答就说明拦截没挂上（或被别处清掉），远程暴露面已经打开；URL 解析
+        // 不出时交给其它检查报错，这里不重复定性
+        let guard_ok = url.as_deref().map(guard_active).unwrap_or(true);
         // 本机特权面可达性：授权插件在场时裸请求直放；插件不在场（被卸载或
         // 装了但没加载）时 dsh 对 /api 要会话 cookie，先换本机会话再问一次。
         // 判据是「Launcher 能不能以本机身份访问特权 API」，不是「裸请求能不能
@@ -861,7 +907,8 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), Message> {
             && ws_ok
             && remote_use_ok
             && remote_settings_ok
-            && local_privileged_ok;
+            && local_privileged_ok
+            && guard_ok;
         if remote_stack_ok && remote_url_access == Some(RemoteUrlAccess::ProxyInterference) {
             let host = url
                 .as_deref()
@@ -890,6 +937,9 @@ fn dsh_setup_once(app: &tauri::AppHandle) -> Result<(), Message> {
             }
             if !serve_ok {
                 checks.push("Tailscale Serve is not targeting 127.0.0.1:3899".into());
+            }
+            if !guard_ok {
+                checks.push("The dsh file-open route is still reachable over Tailscale Serve".into());
             }
             if !https_ok {
                 checks.push(Message::localized("HTTPS endpoint is not responding: {{url}}",

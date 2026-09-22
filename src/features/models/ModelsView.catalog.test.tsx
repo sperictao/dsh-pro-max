@@ -14,10 +14,20 @@ const emptyConfig: ModelConfig = {
   defaultReasoningEffort: null,
   providers: [],
 };
-const snapshot = (providerCount: number): ModelCatalogFile => ({
+/** models.dev 站点同构快照：providers 是服务商页行数，models 是 provider-agnostic 模型页行数 */
+const snapshot = (providerCount: number, modelCount = 0): ModelCatalogFile => ({
   fetchedAt: now(),
-  providerCount,
-  entries: [],
+  providers: Array.from({ length: providerCount }, (_, index) => ({
+    id: `provider-${index}`,
+    name: `Provider ${index}`,
+    family: "openai",
+    models: [],
+  })),
+  models: Array.from({ length: modelCount }, (_, index) => ({
+    id: `model-${index}`,
+    name: `Model ${index}`,
+    context: null,
+  })),
 });
 
 beforeEach(() => {
@@ -53,8 +63,13 @@ describe("ModelsView catalog observability", () => {
     );
     const fresh: ModelCatalogFile = {
       fetchedAt: now(),
-      providerCount: 9,
-      entries: [{ id: "gpt-test", name: "GPT Test", family: "openai", context: null }],
+      providers: Array.from({ length: 9 }, (_, index) => ({
+        id: `provider-${index}`,
+        name: `Provider ${index}`,
+        family: "openai" as const,
+        models: [],
+      })),
+      models: [{ id: "gpt-test", name: "GPT Test", context: null }],
     };
     const user = userEvent.setup();
     render(createElement(ModelsView));
@@ -128,8 +143,9 @@ describe("ModelsView catalog observability", () => {
     expect(useAppStore.getState().toasts.at(-1)?.type).toBe("success");
   });
 
-  it("background-refreshes a legacy snapshot that lacks providerCount", async () => {
-    vi.mocked(cmd.modelCatalogLoad).mockResolvedValue({ fetchedAt: now(), entries: [] });
+  it("background-refreshes when the cache holds no readable snapshot", async () => {
+    // 旧 api.json 结构的快照在 Rust 侧反序列化失败 → load 返回 null（缓存失效）
+    vi.mocked(cmd.modelCatalogLoad).mockResolvedValue(null);
     vi.mocked(cmd.modelCatalogRefresh).mockResolvedValue(snapshot(8));
     render(createElement(ModelsView));
 

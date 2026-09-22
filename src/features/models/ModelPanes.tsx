@@ -1,4 +1,4 @@
-// 模型双栏：左栏该服务的候选模型（上游拉取 ∪ models.dev 目录，搜索/全选/点选），
+// 模型双栏：左栏该服务的候选模型（上游拉取 ∪ 该服务在 models.dev 的目录，搜索/全选/点选），
 // 右栏已选模型（每条可展开高级面板：显示名/上下文窗口/最大输出/推理档/原生图片输入/目录 PDF 能力）。
 // 候选列表由 useProviderModels 以 cache-first SWR 提供；连接指纹变化时旧结果立即失效。
 
@@ -6,13 +6,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { BTN_DANGER_SM, BTN_SM, INPUT, INPUT_MONO, SELECT } from "@/shared/lib/ui";
-import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
+import type { ModelCatalogEntry, ModelCatalogFile, ModelEntry, ProviderConfig } from "@/shared/types";
 import {
   EFFORT_OPTIONS,
   MODEL_PRESETS,
+  catalogCandidates,
+  catalogIndex,
   emptyModelEntry,
   fmtTokens,
-  familyOf,
   inputView,
   reasoningView,
   validateBaseUrl,
@@ -39,7 +40,7 @@ export function ModelPanes({
   canFetch,
 }: {
   provider: ProviderConfig;
-  catalog: ModelCatalogEntry[];
+  catalog: ModelCatalogFile | null;
   remote: string[] | null;
   fetching: boolean;
   fetchError: string | null;
@@ -54,13 +55,9 @@ export function ModelPanes({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [candidateScrollTop, setCandidateScrollTop] = useState(0);
   const candidateListRef = useRef<HTMLUListElement>(null);
-  const index = useMemo(
-    () => new Map(catalog.map((entry) => [modelIdKey(entry.id), entry] as const)),
-    [catalog],
-  );
+  const index = useMemo(() => catalogIndex(catalog, provider), [catalog, provider]);
 
   const selectedIds = new Set(provider.models.map((m) => modelIdKey(m.id)));
-  const family = familyOf(provider.api);
   const preset = MODEL_PRESETS.find((entry) => entry.id === provider.route.trim()) ?? null;
   // 与 useProviderModels 的 active/canDiscover 边界保持一致：已知服务在 Add/Edit
   // 没有显式凭据时不会发匿名探测，自定义端点仍允许无鉴权服务。
@@ -72,8 +69,9 @@ export function ModelPanes({
       validateBaseUrl(provider.baseURL ?? "") == null &&
       (!preset || Boolean(provider.apiKeyEnv?.trim())));
 
-  // 候选池：live 结果优先；已知服务尚未 live 拉取时只回落该服务自己的内置目录，
-  // 不再把同协议家族的其它 Provider 模型冒充成“Models from this service”。
+  // 候选池：live 结果优先；已知服务尚未 live 拉取时回落它自己的内置目录，再回落
+  // models.dev 上该服务发布的模型列表；只有服务不在目录里时才用同协议家族的候选池，
+  // 不把别家模型冒充成“Models from this service”。
   const candidates = useMemo(() => {
     const pool = new Map<string, { id: string; name: string; context: number | null }>();
     const push = (id: string, name?: string, context?: number | null) => {
@@ -92,9 +90,8 @@ export function ModelPanes({
         push(id, published?.name, published?.context);
       }
     } else {
-      for (const e of catalog) {
-        if (!family || e.family === family) push(e.id, e.name, e.context);
-      }
+      // 该服务自己发布的目录模型；服务未命中目录时才回落同协议家族的候选池。
+      for (const e of catalogCandidates(catalog, provider)) push(e.id, e.name, e.context);
     }
     // Model ID identity follows PI-Desktop: case-insensitive for merging/selection, original spelling for display/save.
     // 已选但上游/目录不再返回的模型仍保留在完整候选池，未搜索时可继续对照和取消。
@@ -114,13 +111,13 @@ export function ModelPanes({
     // display name 继续只作为展示元数据，避免出现“看似按 ID 搜索、实际命中名称”的隐藏语义。
     const visible = q ? rows.filter((e) => e.id.toLowerCase().includes(q)) : rows;
     return visible;
-  }, [remote, catalog, family, query, provider.models, index, preset]);
+  }, [remote, catalog, query, provider, index, preset]);
 
   useEffect(() => {
     // 上游/目录切换会改变候选顺序；回到顶部避免保留一个已经无意义的旧滚动位置。
     setCandidateScrollTop(0);
     if (candidateListRef.current) candidateListRef.current.scrollTop = 0;
-  }, [remote, catalog, family, preset?.id]);
+  }, [remote, catalog, provider, preset?.id]);
 
   const candidateWindow = useMemo(() => {
     if (candidates.length <= CANDIDATE_VIRTUALIZE_AT) {

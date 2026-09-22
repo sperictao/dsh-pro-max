@@ -35,7 +35,7 @@ const renderPanes = (
   render(
     <ModelPanes
       provider={provider(models)}
-      catalog={[]}
+      catalog={null}
       remote={remote}
       fetching={false}
       fetchError={null}

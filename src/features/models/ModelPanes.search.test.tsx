@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import { ModelPanes } from "./ModelPanes";
+import { catalogFile } from "./catalog-fixtures";
 
 const provider = (models: ModelEntry[] = []): ProviderConfig => ({
   route: "acme",
@@ -21,7 +22,6 @@ const catalog: ModelCatalogEntry[] = [
   {
     id: "acme-chat-pro-0813",
     name: "Acme Pro",
-    family: "openai",
     context: 131072,
     maxTokens: 16384,
     input: ["text"],
@@ -32,7 +32,6 @@ const catalog: ModelCatalogEntry[] = [
   {
     id: "acme-chat-flash",
     name: "Friendly Alias",
-    family: "openai",
     context: 65536,
     maxTokens: 8192,
     input: ["text"],
@@ -43,7 +42,6 @@ const catalog: ModelCatalogEntry[] = [
   {
     id: "vision-max",
     name: "Search Alias Only",
-    family: "openai",
     context: 32768,
     maxTokens: 4096,
     input: ["text", "image"],
@@ -62,7 +60,7 @@ const renderPanes = (
     <div onKeyDown={onKeyDown}>
       <ModelPanes
         provider={provider()}
-        catalog={catalog}
+        catalog={catalogFile(catalog)}
         remote={remote}
         fetching={false}
         fetchError={null}

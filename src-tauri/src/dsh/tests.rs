@@ -11,8 +11,8 @@ use super::components::{
 };
 use super::probe::{
     classify_remote_rpc_response, classify_remote_url_access, curl_direct_args,
-    curl_remote_rpc_args, parse_macos_https_proxy, proxy_bypass_host, proxy_bypasses_host,
-    REMOTE_WS_PATH,
+    curl_remote_rpc_args, guard_response_ok, parse_macos_https_proxy, proxy_bypass_host,
+    proxy_bypasses_host, REMOTE_WS_PATH,
 };
 use super::process::{
     credentials_lock_is_stale, dsh_web_cmd_pattern, ere_to_ps_wildcards, run_capture,
@@ -20,10 +20,10 @@ use super::process::{
 };
 use super::setup::{
     format_verification_checks, plugin_failure_from_log_tail, read_log_tail, serve_command,
-    serve_failure_solution, start_failure_diagnosis,
+    serve_failure_solution, serve_guard_command, start_failure_diagnosis,
 };
 use super::update::remove_web_profile_compat_entry;
-use super::{RemoteRpcAccess, RemoteUrlAccess, SUPPORTED_DSH_VERSION};
+use super::{RemoteRpcAccess, RemoteUrlAccess, REMOTE_BLOCKED_BODY, REMOTE_BLOCKED_MOUNT, SUPPORTED_DSH_VERSION};
 use crate::i18n::{set_current, Message};
 use crate::version::parse_version;
 use std::path::Path;
@@ -170,16 +170,20 @@ fn dsh_version_compatible_pins_to_supported_line() {
     // 已装插件的 peer——那会在「CLI 已升、插件未升」的跟线窗口里自相
     // 矛盾）。常量自身和同线更高 rc/稳定版兼容。
     assert!(dsh_version_is_compatible(Some(SUPPORTED_DSH_VERSION)));
-    assert!(dsh_version_is_compatible(Some("0.1.6-alpha.2")));
-    assert!(dsh_version_is_compatible(Some("0.1.6")));
-    // 跨线一律不兼容：旧线 0.1.2/0.1.3/0.1.5 与更远的线都拒绝。0.1.3-alpha.2
-    // 曾满足 ">= 下限"的宽松判定，但跨线重排了运行时与数据格式（实机教训）
+    assert!(dsh_version_is_compatible(Some("0.1.7-alpha.2")));
+    assert!(dsh_version_is_compatible(Some("0.1.7")));
+    // 跨线一律不兼容：旧线 0.1.2/0.1.3/0.1.5/0.1.6 与更远的线都拒绝。
+    // 0.1.3-alpha.2 曾满足 ">= 下限"的宽松判定，但跨线重排了运行时与数据格式
+    // （实机教训）；0.1.7 同样改了 Connection 契约与设置的落盘位置
+    assert!(!dsh_version_is_compatible(Some("0.1.6-alpha.2")));
+    assert!(!dsh_version_is_compatible(Some("0.1.6")));
     assert!(!dsh_version_is_compatible(Some("0.1.5-alpha.2")));
     assert!(!dsh_version_is_compatible(Some("0.1.2-rc.1")));
     assert!(!dsh_version_is_compatible(Some("0.1.3-alpha.2")));
     assert!(!dsh_version_is_compatible(Some("1.0.0")));
     // 低于锁定版本或无法解析的版本不兼容；alpha.0 位于 floor 之下，
     // bump 常量会翻转判定方向
+    assert!(!dsh_version_is_compatible(Some("0.1.7-alpha.0")));
     assert!(!dsh_version_is_compatible(Some("0.1.6-alpha.0")));
     assert!(!dsh_version_is_compatible(Some("0.1.5-alpha.0")));
     assert!(!dsh_version_is_compatible(Some("0.1.2-alpha.5")));
@@ -231,13 +235,15 @@ fn decide_pinned_dsh_keeps_newer_but_lower_line_installs() {
     // 启动/自启不该悄悄降回），如实披露而不装回；同线更高/等于也保留；
     // 低于下限或未装才装回锁定版。
     assert_eq!(decide_pinned_dsh(Some(SUPPORTED_DSH_VERSION)), PinnedDshDecision::KeepCurrent);
-    assert_eq!(decide_pinned_dsh(Some("0.1.6-alpha.2")), PinnedDshDecision::KeepCurrent);
-    assert_eq!(decide_pinned_dsh(Some("0.1.6")), PinnedDshDecision::KeepCurrent);
+    assert_eq!(decide_pinned_dsh(Some("0.1.7-alpha.2")), PinnedDshDecision::KeepCurrent);
+    assert_eq!(decide_pinned_dsh(Some("0.1.7")), PinnedDshDecision::KeepCurrent);
     // 跨线新版本（高于下限）保留并如实披露
     assert_eq!(decide_pinned_dsh(Some("0.2.0")), PinnedDshDecision::KeepCrossLine);
-    assert_eq!(decide_pinned_dsh(Some("0.1.7-alpha.1")), PinnedDshDecision::KeepCrossLine);
+    assert_eq!(decide_pinned_dsh(Some("0.1.8-alpha.1")), PinnedDshDecision::KeepCrossLine);
     // 低于下限 / 解析失败 / 未装 → 装回锁定版
-    assert_eq!(decide_pinned_dsh(Some("0.1.6-alpha.0")), PinnedDshDecision::InstallPinned);
+    assert_eq!(decide_pinned_dsh(Some("0.1.7-alpha.0")), PinnedDshDecision::InstallPinned);
+    assert_eq!(decide_pinned_dsh(Some("0.1.6-alpha.2")), PinnedDshDecision::InstallPinned);
+    assert_eq!(decide_pinned_dsh(Some("0.1.6")), PinnedDshDecision::InstallPinned);
     assert_eq!(decide_pinned_dsh(Some("0.1.5-alpha.2")), PinnedDshDecision::InstallPinned);
     assert_eq!(decide_pinned_dsh(Some("0.1.2-alpha.5")), PinnedDshDecision::InstallPinned);
     assert_eq!(decide_pinned_dsh(Some("not-a-version")), PinnedDshDecision::InstallPinned);
@@ -476,6 +482,42 @@ fn tailscale_login_maps_self_user_id_exactly() {
         r#"{"Self":{"UserID":42},"User":{"42":{"LoginName":"bad%PATH%@example.com"}}}"#;
     assert!(tailscale_login_from_status_json(cmd_expansion).is_err());
     assert!(tailscale_login_from_status_json("{}").is_err());
+}
+
+#[test]
+fn guard_response_classification_is_fail_closed() {
+    // 命中守卫：200 + 正文恰为守卫文案（首尾空白与末尾换行不计）
+    assert!(guard_response_ok(&format!("{REMOTE_BLOCKED_BODY}\n200"), true));
+    assert!(guard_response_ok(&format!("  {REMOTE_BLOCKED_BODY}  \n200\n"), true));
+    // dsh 的 JSON 应答 = 请求到了后端，守卫没生效
+    assert!(!guard_response_ok("{\"name\":\"client-connection\"}\n200", true));
+    // 非 200（502/404）与 curl 失败都不算生效
+    assert!(!guard_response_ok(&format!("{REMOTE_BLOCKED_BODY}\n502"), true));
+    assert!(!guard_response_ok(&format!("{REMOTE_BLOCKED_BODY}\n200"), false));
+    // 没有状态行 / 空输出 → 读不懂，不能当作已拦住
+    assert!(!guard_response_ok("no status line", true));
+    assert!(!guard_response_ok("", true));
+}
+
+#[test]
+fn serve_guard_command_mounts_the_blocked_prefix_as_text() {
+    // dsh 0.1.7 的 open-in-app 在 /api 之外注册了无鉴权路由（可在本机启动
+    // 应用），替换连接插件拦不到；这条命令在 Serve 层按 mount 前缀把它挂到
+    // text handler，根挂载不受影响。target 必须是 text:（macOS 上 Path 型
+    // target 被沙箱禁用，Proxy 型会把请求放行到真实后端）
+    assert_eq!(
+        serve_guard_command(),
+        vec![
+            "serve".to_string(),
+            "--https=443".to_string(),
+            "--bg".to_string(),
+            format!("--set-path={REMOTE_BLOCKED_MOUNT}"),
+            format!("text:{REMOTE_BLOCKED_BODY}"),
+        ]
+    );
+    // 挂载点是不带尾斜杠的前缀：Serve 从请求路径逐级向上找 mount，仍能命中
+    // /open-in-app/apps 这类子路径
+    assert!(!REMOTE_BLOCKED_MOUNT.ends_with('/'));
 }
 
 #[test]
@@ -1681,16 +1723,16 @@ fn plain_model() -> ModelEntry {
     }
 }
 
-fn temp_settings_path(tag: &str) -> std::path::PathBuf {
+fn temp_patch_path(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("dsh-pro-max-models-{}-{tag}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create temp dir");
-    dir.join("settings.yaml")
+    dir.join("cordis.patch.yml")
 }
 
 #[test]
 fn model_config_save_then_load_roundtrip() {
     set_current("en");
-    let path = temp_settings_path("roundtrip");
+    let path = temp_patch_path("roundtrip");
     let config = ModelConfig {
         default_provider: Some("spero-ai".into()),
         default_model: Some("glm-5.2".into()),
@@ -1732,14 +1774,17 @@ fn model_config_save_then_load_roundtrip() {
     };
     save_model_config_at(&path, &config).expect("save");
     let text = std::fs::read_to_string(&path).unwrap();
-    // 管理键写入 YAML 形态正确（camelCase 与 dsh schema 一致）
-    assert!(text.contains("agent-default-model:"));
-    assert!(text.contains("reasoningEffort: max"));
+    // 模型域写成 profile 补丁的两行 config（camelCase 与 dsh schema 一致）
+    assert!(text.contains("- id: agent-default-model"));
+    assert!(text.contains("- id: llm-pi-ai"));
+    assert!(text.contains("    provider: spero-ai"));
+    assert!(text.contains("    model: glm-5.2"));
+    assert!(text.contains("    reasoningEffort: max"));
+    assert!(text.contains("providers:"));
     assert!(text.contains("apiKeyEnv: SPERO_AI_API_KEY"));
     assert!(text.contains("contextWindow: 262144"));
     assert!(text.contains("reasoningEfforts:"));
     assert!(text.contains("timeoutMs: 60000"));
-    assert!(text.contains("reasoning: high"));
     assert!(text.contains("X-Title: my-app"));
 
     let loaded = load_model_config_at(&path).expect("load");
@@ -1771,15 +1816,46 @@ fn model_config_save_then_load_roundtrip() {
 }
 
 #[test]
-fn model_config_save_preserves_foreign_keys_and_strips_managed_from_extra() {
+fn model_config_resave_is_byte_stable_and_skips_the_write() {
     set_current("en");
-    let path = temp_settings_path("preserve");
-    // 预置 settings.yaml：模型域之外的键 + 既有 provider 的高级字段
-    std::fs::write(
-            &path,
-            "ui-onboarding:\n  welcomeNoticeVersion: 2026-08-13.1\nllm-deepseek:\n  baseURL: https://api.deepseek.com\n  apiKeyEnv: DEEPSEEK_API_KEY\nllm-pi-ai:\n  providers:\n    old-route:\n      displayName: Old\n      streamIdleTimeoutMs: 1000\n",
-        )
-        .unwrap();
+    let path = temp_patch_path("idempotent");
+    std::fs::write(&path, "# keep me\n- id: ui-theme\n  config:\n    theme: vercel\n").unwrap();
+    let config = ModelConfig {
+        default_provider: Some("spero-ai".into()),
+        default_model: Some("glm-5.2".into()),
+        default_reasoning_effort: None,
+        providers: vec![ProviderConfig {
+            route: "spero-ai".into(),
+            display_name: None,
+            base_url: None,
+            api: Some("openai-responses".into()),
+            api_key_env: None,
+            models: Vec::new(),
+            headers: None,
+            timeout_ms: None,
+            reasoning: None,
+            extra: serde_json::Value::Null,
+        }],
+    };
+    save_model_config_at(&path, &config).expect("save");
+    let first = std::fs::read_to_string(&path).unwrap();
+    // 我们只追加自己的行，别人的行与注释留在文件开头
+    assert!(first.starts_with("# keep me\n- id: ui-theme\n  config:\n    theme: vercel\n"));
+    save_model_config_at(&path, &config).expect("save again");
+    let second = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(second, first, "同一配置再存必须逐字节相同");
+    // 内容未变时免写盘：不经过 temp + rename，也就不留临时文件
+    assert!(!path.with_file_name("cordis.patch.yml.tmp").exists());
+    std::fs::remove_dir_all(path.parent().unwrap()).ok();
+}
+
+#[test]
+fn model_config_save_preserves_other_rows_and_strips_managed_from_extra() {
+    set_current("en");
+    let path = temp_patch_path("preserve");
+    // 预置 profile 补丁：注释、别人的覆盖行、`!!js` 表达式与模型域旧行
+    let seeded = "# 这行注释必须逐字节保留\n- id: connection\n  name: \"@deepseek-ai/dsh-client-connection\"\n  disabled: true\n\n- id: ui-theme\n  config:\n    theme: !!js process.env.DSH_THEME\n\n- id: llm-pi-ai\n  config:\n    providers:\n      old-route:\n        displayName: Old\n        streamIdleTimeoutMs: 1000\n";
+    std::fs::write(&path, seeded).unwrap();
     let config = ModelConfig {
         default_provider: Some("deepseek-official".into()),
         default_model: Some("deepseek-v4-pro".into()),
@@ -1800,15 +1876,17 @@ fn model_config_save_preserves_foreign_keys_and_strips_managed_from_extra() {
     };
     save_model_config_at(&path, &config).expect("save");
     let text = std::fs::read_to_string(&path).unwrap();
-    // 模型域之外的顶层键原样保留
-    assert!(text.contains("ui-onboarding:"));
-    assert!(text.contains("llm-deepseek:"));
-    assert!(text.contains("DEEPSEEK_API_KEY"));
+    // 我们那行之前的字节逐字节保留：注释、别人的 disabled 覆盖行、`!!js` 表达式
+    let head = seeded.split("- id: llm-pi-ai").next().unwrap();
+    assert!(text.starts_with(head), "prefix before our row must be byte-identical");
+    assert!(text.contains("theme: !!js process.env.DSH_THEME"));
+    assert!(text.contains("  disabled: true"));
     // 旧路由被 UI 状态整体替换；新路由高级字段保留、混入的管理键被剥离
     assert!(!text.contains("old-route"));
     assert!(text.contains("new-route"));
     assert!(text.contains("retryPolicy:"));
     assert!(!text.contains("HACK"));
+    assert!(text.contains("- id: agent-default-model"));
     // agent-default-model 无 reasoningEffort 时不得写出空值
     let loaded = load_model_config_at(&path).unwrap();
     assert_eq!(loaded.default_reasoning_effort, None);
@@ -1820,10 +1898,14 @@ fn model_config_save_preserves_foreign_keys_and_strips_managed_from_extra() {
 }
 
 #[test]
-fn model_config_empty_providers_removes_llm_pi_ai_key() {
+fn model_config_unset_removes_model_rows_and_keeps_other_rows() {
     set_current("en");
-    let path = temp_settings_path("empty");
-    std::fs::write(&path, "llm-pi-ai:\n  providers:\n    a:\n      api: openai-responses\nagent-presets:\n  default: minimal\n").unwrap();
+    let path = temp_patch_path("empty");
+    std::fs::write(
+        &path,
+        "- id: llm-pi-ai\n  config:\n    providers:\n      a:\n        api: openai-responses\n\n- id: ui-theme\n  config:\n    theme: vercel\n",
+    )
+    .unwrap();
     let config = ModelConfig {
         default_provider: None,
         default_model: None,
@@ -1834,18 +1916,20 @@ fn model_config_empty_providers_removes_llm_pi_ai_key() {
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(!text.contains("llm-pi-ai"));
     assert!(!text.contains("agent-default-model"));
-    assert!(text.contains("agent-presets:"));
+    // 非模型域的行原样保留
+    assert!(text.contains("- id: ui-theme"));
+    assert!(text.contains("theme: vercel"));
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
 
 #[test]
 fn model_config_roundtrip_disabled_reasoning_empty_models_and_wrong_typed_managed_keys() {
     set_current("en");
-    let path = temp_settings_path("roundtrip-edge");
+    let path = temp_patch_path("roundtrip-edge");
     // 手写形态：reasoningEfforts=false 声明、headers 值非字符串、timeoutMs 布尔
     std::fs::write(
         &path,
-        "llm-pi-ai:\n  providers:\n    a:\n      headers:\n        X-Ok: fine\n        Authorization: 123\n      timeoutMs: true\n      models:\n        - id: m1\n          reasoningEfforts: false\n          contextWindow: \"not-a-number\"\n",
+        "- id: llm-pi-ai\n  config:\n    providers:\n      a:\n        headers:\n          X-Ok: fine\n          Authorization: 123\n        timeoutMs: true\n        models:\n          - id: m1\n            reasoningEfforts: false\n            contextWindow: \"not-a-number\"\n",
     )
     .unwrap();
     let loaded = load_model_config_at(&path).expect("load");
@@ -1886,9 +1970,9 @@ fn model_config_roundtrip_disabled_reasoning_empty_models_and_wrong_typed_manage
 #[test]
 fn model_config_missing_file_loads_empty() {
     set_current("en");
-    let path = temp_settings_path("missing-nonexistent")
+    let path = temp_patch_path("missing-nonexistent")
         .join("nested")
-        .join("settings.yaml");
+        .join("cordis.patch.yml");
     let loaded = load_model_config_at(&path).expect("load");
     assert_eq!(loaded.providers.len(), 0);
     assert_eq!(loaded.default_provider, None);
@@ -4258,13 +4342,13 @@ fn peer_preflight_warning_lines_cap_at_three_then_fold() {
 
 use super::models::{
     fetch_remote_models, load_model_catalog_snapshot, parse_remote_models, project_catalog,
-    remote_models_url, CatalogEntry, CatalogFile,
+    remote_models_url, CatalogEntry, CatalogFile, CatalogProvider,
 };
 
 #[test]
 fn model_config_save_leaves_no_temp_file() {
     set_current("en");
-    let path = temp_settings_path("atomic");
+    let path = temp_patch_path("atomic");
     let config = ModelConfig {
         default_provider: Some("p".into()),
         default_model: Some("m".into()),
@@ -4273,7 +4357,7 @@ fn model_config_save_leaves_no_temp_file() {
     };
     save_model_config_at(&path, &config).expect("save");
     // 原子写经 temp+rename：保存后不得残留临时文件，目标完整可读
-    assert!(!path.with_extension("yaml.tmp").exists());
+    assert!(!path.with_file_name("cordis.patch.yml.tmp").exists());
     assert!(load_model_config_at(&path).is_ok());
     std::fs::remove_dir_all(path.parent().unwrap()).ok();
 }
@@ -4309,31 +4393,43 @@ fn parse_remote_models_dedupes_and_sorts() {
 }
 
 #[test]
-fn project_catalog_maps_family_and_dedupes() {
+fn project_catalog_mirrors_providers_and_canonical_models() {
     let raw = r#"{
-        "anthropic": {"models": {
-            "claude-opus-4": {"id": "claude-opus-4", "name": "Claude Opus 4"},
-            "key-only": {"name": "Key Fallback"}
-        }},
-        "google": {"models": {"gemini-2.5-pro": {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro"}}},
-        "deepseek": {"models": {"deepseek-chat": {"id": "deepseek-chat"}}},
-        "empty-family": {"models": {"": {"id": "", "name": "blank id"}}}
+        "providers": {
+            "anthropic": {"name": "Anthropic", "npm": "@ai-sdk/anthropic", "models": {
+                "claude-opus-4": {"id": "claude-opus-4", "name": "Claude Opus 4"},
+                "key-only": {"name": "Key Fallback"}
+            }},
+            "google": {"name": "Google", "npm": "@ai-sdk/openai-compatible", "models": {
+                "gemini-2.5-pro": {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro"}
+            }},
+            "gateway": {"name": "Gateway", "npm": "@ai-sdk/openai-compatible", "models": {
+                "claude-opus-4": {"id": "claude-opus-4", "name": "Claude Opus 4 (Gateway)"}
+            }},
+            "empty-family": {"name": "Blank", "models": {"": {"id": "", "name": "blank id"}}}
+        },
+        "models": {
+            "anthropic/claude-opus-4": {"id": "anthropic/claude-opus-4", "name": "Claude Opus 4"}
+        }
     }"#;
     let file = project_catalog(raw, 1_000).expect("project");
     assert_eq!(file.fetched_at, 1_000);
-    // 按 id 排序
-    let ids: Vec<&str> = file.entries.iter().map(|e| e.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        vec!["claude-opus-4", "deepseek-chat", "gemini-2.5-pro", "key-only"]
-    );
-    let by_id = |id: &str| file.entries.iter().find(|e| e.id == id).unwrap();
-    // anthropic 官方键 → anthropic；google/其余 → openai
-    assert_eq!(by_id("claude-opus-4").family, "anthropic");
-    assert_eq!(by_id("gemini-2.5-pro").family, "openai");
-    assert_eq!(by_id("deepseek-chat").family, "openai");
+    // 服务商页行数：provider 不去重、空 provider 也计
+    assert_eq!(file.providers.len(), 4);
+    // 模型页行数：provider-agnostic canonical 模型
+    assert_eq!(file.models.len(), 1);
+    assert_eq!(file.models[0].id, "anthropic/claude-opus-4");
+    let provider = |id: &str| file.providers.iter().find(|p| p.id == id).unwrap();
+    // provider 侧保留该服务自己的模型条目：同一 id 不再跨服务合并
+    assert_eq!(provider("anthropic").models.len(), 2);
+    assert_eq!(provider("gateway").models.len(), 1);
+    // 家族由服务自己的协议声明决定：Claude id 被网关同步发布也仍是 anthropic
+    assert_eq!(provider("anthropic").family, "anthropic");
+    assert_eq!(provider("gateway").family, "openai");
     // id 字段缺失回落 dict 键（CCursor 同款 m.id || modelId）；空 id 条目丢弃
-    assert_eq!(by_id("key-only").name, "Key Fallback");
+    assert_eq!(provider("anthropic").models[1].id, "key-only");
+    assert_eq!(provider("anthropic").models[1].name, "Key Fallback");
+    assert_eq!(provider("empty-family").models.len(), 0);
 }
 
 #[test]
@@ -4341,26 +4437,36 @@ fn catalog_snapshot_roundtrip_and_corruption() {
     let dir = std::env::temp_dir().join(format!("dsh-pro-max-catalog-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("snapshot.json");
+    let entry = CatalogEntry {
+        id: "glm-5.2".into(),
+        name: "GLM-5.2".into(),
+        context: Some(262144),
+        max_tokens: None,
+        input: None,
+        reasoning: None,
+        reasoning_levels: None,
+        capabilities: None,
+    };
     let file = CatalogFile {
         fetched_at: 5_000,
-        provider_count: Some(1),
-        entries: vec![CatalogEntry {
-            id: "glm-5.2".into(),
-            name: "GLM-5.2".into(),
+        providers: vec![CatalogProvider {
+            id: "zai".into(),
+            name: "Z.ai".into(),
             family: "openai".into(),
-            context: Some(262144),
-            max_tokens: None,
-            input: None,
-            reasoning: None,
-            reasoning_levels: None,
-            capabilities: None,
+            api: Some("https://api.z.ai/api/paas/v4".into()),
+            models: vec![entry.clone()],
+        }],
+        models: vec![CatalogEntry {
+            id: "zai/glm-5.2".into(),
+            ..entry
         }],
     };
     std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
     let loaded = load_model_catalog_snapshot(&path).expect("loaded");
     assert_eq!(loaded.fetched_at, 5_000);
-    assert_eq!(loaded.provider_count, Some(1));
-    assert_eq!(loaded.entries[0].id, "glm-5.2");
+    assert_eq!(loaded.providers.len(), 1);
+    assert_eq!(loaded.models[0].id, "zai/glm-5.2");
+    assert_eq!(loaded.providers[0].models[0].id, "glm-5.2");
 
     // 快照是缓存：损坏一律 None
     std::fs::write(&path, "{broken").unwrap();
@@ -4531,7 +4637,7 @@ api_key = "sk-real-value"
 }
 
 #[test]
-fn import_scan_and_run_merge_into_settings_then_dedupe() {
+fn import_scan_and_run_merge_into_patch_then_dedupe() {
     set_current("en");
     let home = std::env::temp_dir().join(format!("dsh-pro-max-import-{}", std::process::id()));
     std::fs::create_dir_all(home.join(".codex")).unwrap();
@@ -4540,10 +4646,10 @@ fn import_scan_and_run_merge_into_settings_then_dedupe() {
         "[model_providers.openrouter]\nname = \"OpenRouter\"\nbase_url = \"https://openrouter.ai/api/v1\"\nenv_key = \"OPENROUTER_API_KEY\"\nwire_api = \"responses\"\n",
     )
     .unwrap();
-    let settings = home.join("settings.yaml");
-    std::fs::write(&settings, "agent-presets:\n  default: minimal\n").unwrap();
+    let settings = home.join("cordis.patch.yml");
+    std::fs::write(&settings, "- id: ui-theme\n  config:\n    theme: vercel\n").unwrap();
 
-    // 空 keys：结构化返回且不动 settings
+    // 空 keys：结构化返回且不动补丁
     let result = run_at(&home, &settings, &[]).unwrap();
     assert_eq!(result.imported, 0);
 
@@ -4558,8 +4664,8 @@ fn import_scan_and_run_merge_into_settings_then_dedupe() {
     let text = std::fs::read_to_string(&settings).unwrap();
     assert!(text.contains("openrouter"));
     assert!(text.contains("OPENROUTER_API_KEY"));
-    // 非模型域顶层键原样保留
-    assert!(text.contains("agent-presets:"));
+    // 非模型域的行原样保留
+    assert!(text.contains("- id: ui-theme"));
 
     // 重复导入：端点+凭据引用全同 → skipped
     let groups = scan_at(&home);
@@ -4574,26 +4680,37 @@ fn import_scan_and_run_merge_into_settings_then_dedupe() {
 #[test]
 fn project_catalog_projects_capability_metadata() {
     let raw = r#"{
-      "openai": {
-        "models": {
-          "gpt-test": {
-            "id": "gpt-test",
-            "name": "GPT Test",
-            "reasoning": true,
-            "reasoning_options": [
-              {"type": "effort", "values": ["none", "low", "high"]}
-            ],
-            "modalities": {"input": ["text", "image", "pdf"], "output": ["text"]},
-            "tool_call": true,
-            "structured_output": true,
-            "attachment": true,
-            "limit": {"context": 200000, "output": 64000}
+      "providers": {
+        "openai": {
+          "name": "OpenAI",
+          "npm": "@ai-sdk/openai",
+          "models": {
+            "gpt-test": {
+              "id": "gpt-test",
+              "name": "GPT Test",
+              "reasoning": true,
+              "reasoning_options": [
+                {"type": "effort", "values": ["none", "low", "high"]}
+              ],
+              "modalities": {"input": ["text", "image", "pdf"], "output": ["text"]},
+              "tool_call": true,
+              "structured_output": true,
+              "attachment": true,
+              "limit": {"context": 200000, "output": 64000}
+            }
           }
+        }
+      },
+      "models": {
+        "openai/gpt-test": {
+          "id": "openai/gpt-test",
+          "name": "GPT Test",
+          "limit": {"context": 400000, "output": 128000}
         }
       }
     }"#;
     let file = super::models::project_catalog(raw, 42).unwrap();
-    let model = &file.entries[0];
+    let model = &file.providers[0].models[0];
     assert_eq!(model.id, "gpt-test");
     assert_eq!(model.context, Some(200000));
     assert_eq!(model.max_tokens, Some(64000));

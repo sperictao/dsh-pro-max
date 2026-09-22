@@ -51,33 +51,32 @@ const modelConfig = {
   providers: [deepseek],
 };
 
+const catalogEntries = [
+  {
+    id: "deepseek-chat",
+    name: "DeepSeek Chat",
+    context: 65536,
+    maxTokens: 8192,
+    input: ["text"],
+    reasoning: false,
+    reasoningLevels: [],
+    capabilities: ["text"],
+  },
+  {
+    id: "deepseek-reasoner",
+    name: "DeepSeek Reasoner",
+    context: 65536,
+    maxTokens: 8192,
+    input: ["text"],
+    reasoning: true,
+    reasoningLevels: ["low", "medium", "high"],
+    capabilities: ["text", "reasoning"],
+  },
+];
 const modelCatalog = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  providerCount: 1,
-  entries: [
-    {
-      id: "deepseek-chat",
-      name: "DeepSeek Chat",
-      family: "openai",
-      context: 65536,
-      maxTokens: 8192,
-      input: ["text"],
-      reasoning: false,
-      reasoningLevels: [],
-      capabilities: ["text"],
-    },
-    {
-      id: "deepseek-reasoner",
-      name: "DeepSeek Reasoner",
-      family: "openai",
-      context: 65536,
-      maxTokens: 8192,
-      input: ["text"],
-      reasoning: true,
-      reasoningLevels: ["low", "medium", "high"],
-      capabilities: ["text", "reasoning"],
-    },
-  ],
+  providers: [{ id: "mock-catalog", name: "Mock Catalog", family: "openai", models: catalogEntries }],
+  models: catalogEntries,
 };
 
 const appConfig = {
@@ -112,7 +111,7 @@ const dshStatus = {
     index,
     id,
     state: "pending",
-    detail: null,
+    detail: [],
     problem: null,
     solution: null,
     titleKey: `step.${id}`,
@@ -183,7 +182,7 @@ async function main() {
             index,
             id,
             state: "pending",
-            detail: null,
+            detail: [],
             problem: null,
             solution: null,
             titleKey: `step.${id}`,

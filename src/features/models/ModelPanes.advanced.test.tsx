@@ -4,12 +4,13 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import { ModelPanes } from "./ModelPanes";
+import { catalogForProviders } from "./catalog-fixtures";
 
+// 条目按 provider-agnostic 模型页提供：deepseek 路由未命中该 fixture 服务，元数据经 canonical 回落解析。
 const catalog: ModelCatalogEntry[] = [
   {
     id: "deepseek-reasoner",
     name: "DeepSeek Reasoner",
-    family: "openai",
     context: 65536,
     maxTokens: 8192,
     input: ["text", "image"],
@@ -48,7 +49,7 @@ function Harness() {
   return (
     <ModelPanes
       provider={provider}
-      catalog={catalog}
+      catalog={catalogForProviders([], catalog)}
       remote={["deepseek-reasoner"]}
       fetching={false}
       fetchError={null}

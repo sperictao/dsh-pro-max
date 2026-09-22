@@ -2,7 +2,7 @@
 
 use super::auth::{resolve_auth_config, resolve_fqdn, resolve_tailscale_login};
 use super::components::{
-    dsh_dir, dsh_version, dsh_version_is_compatible, install_auth_plugins, install_supported_dsh,
+    dsh_version, dsh_version_is_compatible, install_auth_plugins, install_supported_dsh,
     npm_bin, resolve_dsh_bin, resolve_node_bin, tailscale_path, web_profile_has_auth_plugins,
 };
 use super::process::{port_listening, run_capture};
@@ -115,9 +115,9 @@ pub(crate) fn remove_web_profile_compat_entry(contents: &str) -> String {
 /// 启动、修复与版本安装路径都会调用，存量安装随下一次动作自动完成清理。
 /// 幂等：无条目或文件不存在直接返回；写失败只记日志不打断调用方。
 pub(crate) fn clear_web_profile_compat_entry() {
-    let patch_path = match dsh_dir() {
-        Ok(d) => d.join("profiles").join("web").join("cordis.patch.yml"),
-        Err(_) => return,
+    // profile 补丁路径由 market 单点持有，不在此另取一份
+    let Ok(patch_path) = super::market::profile_patch_path() else {
+        return;
     };
     let Ok(contents) = fs::read_to_string(&patch_path) else {
         return;

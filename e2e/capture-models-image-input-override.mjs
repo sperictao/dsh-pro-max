@@ -37,13 +37,14 @@ const modelConfig = {
   providers: [deepseek],
 };
 
+const catalogEntries = [
+  { id: "deepseek-chat", name: "DeepSeek Chat", context: 65536, maxTokens: 8192, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
+  { id: MODEL_ID, name: "DeepSeek Reasoner", context: 65536, maxTokens: 8192, input: ["text", "image"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning", "vision"] },
+];
 const modelCatalog = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  providerCount: 1,
-  entries: [
-    { id: "deepseek-chat", name: "DeepSeek Chat", family: "openai", context: 65536, maxTokens: 8192, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
-    { id: MODEL_ID, name: "DeepSeek Reasoner", family: "openai", context: 65536, maxTokens: 8192, input: ["text", "image"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning", "vision"] },
-  ],
+  providers: [{ id: "mock-catalog", name: "Mock Catalog", family: "openai", models: catalogEntries }],
+  models: catalogEntries,
 };
 
 const appConfig = {
@@ -78,7 +79,7 @@ const dshStatus = {
     index,
     id,
     state: "pending",
-    detail: null,
+    detail: [],
     problem: null,
     solution: null,
     titleKey: `step.${id}`,
@@ -136,7 +137,7 @@ async function main() {
         dsh_detect: () => dshStatus,
         dsh_step_schema: ({ remote } = {}) =>
           (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({
-            index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}`,
+            index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}`,
           })),
         model_config_load: () => structuredClone(currentModelConfig),
         model_config_save: ({ config }) => {

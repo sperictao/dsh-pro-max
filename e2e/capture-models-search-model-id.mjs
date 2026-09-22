@@ -52,17 +52,18 @@ const modelConfig = {
   providers: [provider],
 };
 
+const catalogEntries = [
+  { id: "deepseek-chat", name: "DeepSeek Chat", context: 65536, maxTokens: 8192, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
+  { id: "deepseek-reasoner", name: "DeepSeek Reasoner", context: 65536, maxTokens: 8192, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning"] },
+  { id: "deepseek-v4-pro", name: "DeepSeek Pro", context: 131072, maxTokens: 16384, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning"] },
+  { id: "deepseek-v4-pro-0813", name: "DeepSeek Pro August", context: 131072, maxTokens: 16384, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning"] },
+  { id: "deepseek-v4-flash", name: "Friendly Alias", context: 131072, maxTokens: 16384, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
+  { id: "coder-lite", name: "Coder Lite", context: 32768, maxTokens: 4096, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
+];
 const modelCatalog = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  providerCount: 1,
-  entries: [
-    { id: "deepseek-chat", name: "DeepSeek Chat", family: "openai", context: 65536, maxTokens: 8192, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
-    { id: "deepseek-reasoner", name: "DeepSeek Reasoner", family: "openai", context: 65536, maxTokens: 8192, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning"] },
-    { id: "deepseek-v4-pro", name: "DeepSeek Pro", family: "openai", context: 131072, maxTokens: 16384, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning"] },
-    { id: "deepseek-v4-pro-0813", name: "DeepSeek Pro August", family: "openai", context: 131072, maxTokens: 16384, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning"] },
-    { id: "deepseek-v4-flash", name: "Friendly Alias", family: "openai", context: 131072, maxTokens: 16384, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
-    { id: "coder-lite", name: "Coder Lite", family: "openai", context: 32768, maxTokens: 4096, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
-  ],
+  providers: [{ id: "mock-catalog", name: "Mock Catalog", family: "openai", models: catalogEntries }],
+  models: catalogEntries,
 };
 
 const appConfig = {
@@ -97,7 +98,7 @@ const dshStatus = {
     index,
     id,
     state: "pending",
-    detail: null,
+    detail: [],
     problem: null,
     solution: null,
     titleKey: `step.${id}`,
@@ -165,7 +166,7 @@ async function main() {
             index,
             id,
             state: "pending",
-            detail: null,
+            detail: [],
             problem: null,
             solution: null,
             titleKey: `step.${id}`,

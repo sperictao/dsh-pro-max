@@ -10,7 +10,7 @@ export type ModelPreset = {
   api: string | null;
   /** 目录模型数量（选择器副行展示） */
   models: number;
-  /** pi-ai 同版本内置目录模型 id，保持上游目录顺序；仅供继承目录选择，不写回 settings.yaml */
+  /** pi-ai 同版本内置目录模型 id，保持上游目录顺序；仅供继承目录选择，不写回 profile 补丁 */
   modelIds: string[];
 };
 

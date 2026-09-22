@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as cmd from "@/shared/commands";
 import { BTN, BTN_DANGER, BTN_PRIMARY, BTN_SM, INPUT, INPUT_MONO, MODAL_OVERLAY, MODAL_PANEL, SELECT } from "@/shared/lib/ui";
-import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
+import type { ModelCatalogFile, ModelEntry, ProviderConfig } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 import { HeadersEditor } from "./HeadersEditor";
 import { ModelPanes } from "./ModelPanes";
@@ -53,7 +53,7 @@ export function ProviderDialog({
   onSubmit,
 }: {
   state: ProviderDialogState;
-  catalog: ModelCatalogEntry[];
+  catalog: ModelCatalogFile | null;
   onClose: () => void;
   onSubmit: (provider: ProviderConfig, originalRoute: string | null, credential: CredentialWrite | null) => Promise<void>;
 }) {
@@ -648,7 +648,7 @@ export function ProviderDialog({
                 provider={draft}
                 // Custom endpoint 只有拿到远端结果后才可声称“Models from this service”。
                 // catalog 仍用于远端结果的名称/上下文元数据，但不再充当未连接时的候选池。
-                catalog={knownService || discovery.models !== null ? catalog : []}
+                catalog={knownService || discovery.models !== null ? catalog : null}
                 remote={discovery.models}
                 fetching={discovery.status === "loading"}
                 fetchError={

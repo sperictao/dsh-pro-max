@@ -1,6 +1,6 @@
 //! Provider 模型发现请求适配。
 //!
-//! `dsh::models` 负责 settings.yaml 模型域；这里承接带自定义 headers 的
+//! `dsh::models` 负责 profile 补丁的模型域；这里承接带自定义 headers 的
 //! `/models` HTTP 探测与最小推理测试。凭据值只在 Rust 内解析或作为一次性
 //! write-only 请求参数进入，绝不从 IPC 返回前端。
 

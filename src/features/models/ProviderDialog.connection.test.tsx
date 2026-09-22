@@ -41,7 +41,7 @@ describe("ProviderDialog connection test", () => {
     render(
       <ProviderDialog
         state={{ mode: "edit", index: 0, provider }}
-        catalog={[]}
+        catalog={null}
         onClose={vi.fn()}
         onSubmit={vi.fn()}
       />,
@@ -76,7 +76,7 @@ describe("ProviderDialog connection test", () => {
             apiKeyEnv: null,
           },
         }}
-        catalog={[]}
+        catalog={null}
         onClose={vi.fn()}
         onSubmit={vi.fn()}
       />,

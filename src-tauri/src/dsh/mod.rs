@@ -119,11 +119,11 @@ pub(crate) async fn ipc_blocking<T: Send + 'static>(
 /// 升级时与 vendor 插件 pin、bundle tgz 文件名三处同步 bump（见
 /// scripts/build-dsh-plugins.mjs 与 src-tauri/tauri.conf.json）。
 const DSH_PACKAGE: &str = "@deepseek-ai/dsh";
-const SUPPORTED_DSH_VERSION: &str = "0.1.6-alpha.1";
+const SUPPORTED_DSH_VERSION: &str = "0.1.7-alpha.1";
 const CONNECTION_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-client-connection-authz";
 const AUTH_PLUGIN_PACKAGE: &str = "@dsh-external/dsh-auth-tailscale";
-const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-c7464b8629bf.tgz";
-const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-ec56f199107d.tgz";
+const CONNECTION_PLUGIN_TARBALL: &str = "dsh-client-connection-authz-c2ab111b43b0.tgz";
+const AUTH_PLUGIN_TARBALL: &str = "dsh-auth-tailscale-d2ddce1dd90d.tgz";
 const TAILSCALE_LOGIN_ENV: &str = "DSH_TAILSCALE_ALLOWED_LOGINS";
 /// 远程特权接口（settings/credentials/host 等 loopback authority）与普通远程
 /// API/WS 各自所需的 App Capability 环境变量。capability 路径固定为
@@ -135,6 +135,18 @@ const ADMIN_CAP_ENV: &str = "DSH_TAILSCALE_ADMIN_CAPABILITY";
 const USE_CAP_ENV: &str = "DSH_TAILSCALE_USE_CAPABILITY";
 const ADMIN_CAP_PATH: &str = "/cap/dsh-admin";
 const USE_CAP_PATH: &str = "/cap/dsh";
+
+/// 远程模式下必须在 Serve 层挡住的 dsh 路由前缀。dsh 0.1.7 的 open-in-app
+/// 宿主插件在 `/api` 之外注册了三条路由（`GET /open-in-app/apps`、
+/// `GET /open-in-app/icon/<id>`、`POST /open-in-app/open`），它自己确实会问
+/// `connection.requestRejection` 把关，但那个 seam 在替换连接插件里只按
+/// `trusted-host` 档裁决——与普通 API 同档，因此**任何被放行的远程 use 档身份
+/// 都能列出并启动宿主机上的应用**（0.1.7 实测：use 档拿到 `{"apps":[…]}` 与
+/// `{"ok":true}`，同身份打 `settings/describe` 才是 403）。Launcher 的策略是
+/// 「在本机启动应用只能是本机操作」，所以整条前缀在 Serve 层按 mount 拦下。
+const REMOTE_BLOCKED_MOUNT: &str = "/open-in-app";
+/// 被拦路径的应答体：只是拒绝，不含任何 dsh 信息。
+const REMOTE_BLOCKED_BODY: &str = "open-in-app is not available over remote access";
 
 /// dsh web 端口。
 const WEB_PORT: u16 = 3899;

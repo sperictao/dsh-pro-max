@@ -2,8 +2,9 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
+import type { ModelCatalogEntry, ModelCatalogFile, ModelEntry, ProviderConfig } from "@/shared/types";
 import { ModelPanes } from "./ModelPanes";
+import { catalogForProviders } from "./catalog-fixtures";
 
 const MODEL_ID = "vision-model";
 
@@ -36,18 +37,22 @@ function catalogEntry(overrides: Partial<ModelCatalogEntry> = {}): ModelCatalogE
   return {
     id: MODEL_ID,
     name: "Vision Model",
-    family: "openai",
     context: 128000,
     ...overrides,
   };
 }
 
+// custom-ai 未收录为目录服务：条目按 provider-agnostic 模型页（canonical）提供，元数据经回落解析。
+const canonicalCatalog = (models: ModelCatalogEntry[]): ModelCatalogFile => catalogForProviders([], models);
+
 function Harness({
   initialInput = null,
-  catalog = [catalogEntry({ input: ["text", "image"], capabilities: ["text", "vision"] })],
+  catalog = canonicalCatalog([
+    catalogEntry({ input: ["text", "image"], capabilities: ["text", "vision"] }),
+  ]),
 }: {
   initialInput?: string[] | null;
-  catalog?: ModelCatalogEntry[];
+  catalog?: ModelCatalogFile | null;
 }) {
   const [provider, setProvider] = useState(() => providerWith(initialInput));
   const onModelsChange = (models: ModelEntry[]) => setProvider((current) => ({ ...current, models }));
@@ -101,7 +106,7 @@ describe("ModelPanes image input override", () => {
     const user = userEvent.setup();
     render(
       <Harness
-        catalog={[catalogEntry({ input: ["text"], capabilities: ["text"] })]}
+        catalog={canonicalCatalog([catalogEntry({ input: ["text"], capabilities: ["text"] })])}
       />,
     );
 
@@ -113,7 +118,7 @@ describe("ModelPanes image input override", () => {
 
   it("does not invent an inherited capability when an older catalog entry has no input metadata", async () => {
     const user = userEvent.setup();
-    render(<Harness catalog={[catalogEntry()]} />);
+    render(<Harness catalog={canonicalCatalog([catalogEntry()])} />);
 
     const select = await imageInputSelect(user);
     expect(within(select).getByRole("option", { name: "Follow catalog" })).toBeInTheDocument();

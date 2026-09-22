@@ -2,7 +2,10 @@
 
 use super::auth::{rpc_body, AuthConfig};
 use super::process::{run_capture, string_args, which};
-use super::{MacosHttpsProxy, RemoteRpcAccess, RemoteUrlAccess, RemoteUrlProbe};
+use super::{
+    MacosHttpsProxy, RemoteRpcAccess, RemoteUrlAccess, RemoteUrlProbe, REMOTE_BLOCKED_BODY,
+    REMOTE_BLOCKED_MOUNT,
+};
 
 pub(crate) const REMOTE_WS_PATH: &str = "/api/remote.mux";
 
@@ -119,6 +122,45 @@ pub(crate) fn https_endpoint_ok_via_proxy(url: &str, proxy: &MacosHttpsProxy) ->
         }
         Err(_) => false,
     }
+}
+
+/// Serve 层守卫是否真的生效：请求被拦前缀下的一个真实子路径
+/// （`<url>/open-in-app/apps`），应答必须是守卫文案本身——那是 Serve 的
+/// `text:` handler 直接写回的，与 dsh 无关。拿到 dsh 的 JSON、404、502 或
+/// 连不上都说明请求没被拦住（或守卫没挂上），一律按未生效处理。
+pub(crate) fn guard_active(url: &str) -> bool {
+    let target = format!("{}{REMOTE_BLOCKED_MOUNT}/apps", url.trim_end_matches('/'));
+    let mut args: Vec<String> = [
+        "-sk",
+        "--noproxy",
+        "*",
+        "--connect-timeout",
+        "3",
+        "--max-time",
+        "6",
+        "-w",
+        "\n%{http_code}",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+    args.push(target);
+    match run_capture("curl", &string_args(&args)) {
+        Ok((out, _, ok)) => guard_response_ok(&out, ok),
+        Err(_) => false,
+    }
+}
+
+/// 守卫应答判定：HTTP 200 且正文恰为守卫文案（首尾空白不计）才算生效。
+/// 判定 fail-closed——读不懂的应答不能当作「已拦住」。
+pub(crate) fn guard_response_ok(output: &str, command_ok: bool) -> bool {
+    if !command_ok {
+        return false;
+    }
+    let Some((body, status)) = output.trim_end().rsplit_once('\n') else {
+        return false;
+    };
+    status.trim() == "200" && body.trim() == REMOTE_BLOCKED_BODY
 }
 
 #[cfg(any(target_os = "macos", test))]

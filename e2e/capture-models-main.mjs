@@ -12,6 +12,18 @@ const PORT = 5190;
 const BASE = `http://127.0.0.1:${PORT}`;
 const OUT_DIR = resolve(ROOT, ".artifacts", "e2e", "models-main");
 
+const catalogEntries = [
+  {
+    id: "glm-5.2",
+    name: "GLM 5.2",
+    context: 131072,
+    maxTokens: 32768,
+    input: ["text"],
+    reasoning: true,
+    reasoningLevels: ["low", "medium", "high", "max"],
+    capabilities: ["text", "reasoning", "tools"],
+  },
+];
 const mock = {
   config: {
     minimize_to_tray_on_close: false,
@@ -44,7 +56,7 @@ const mock = {
       index,
       id,
       state: "pending",
-      detail: null,
+      detail: [],
       problem: null,
       solution: null,
       titleKey: `step.${id}`,
@@ -102,20 +114,11 @@ const mock = {
   },
   modelCatalog: {
     fetchedAt: Math.floor(Date.now() / 1000),
-    providerCount: 2,
-    entries: [
-      {
-        id: "glm-5.2",
-        name: "GLM 5.2",
-        family: "openai",
-        context: 131072,
-        maxTokens: 32768,
-        input: ["text"],
-        reasoning: true,
-        reasoningLevels: ["low", "medium", "high", "max"],
-        capabilities: ["text", "reasoning", "tools"],
-      },
+    providers: [
+      { id: "mock-catalog", name: "Mock Catalog", family: "openai", models: catalogEntries },
+      { id: "mock-provider-2", name: "Mock Provider 2", family: "openai", models: [] },
     ],
+    models: catalogEntries,
   },
 };
 
@@ -179,7 +182,7 @@ async function main() {
             index,
             id,
             state: "pending",
-            detail: null,
+            detail: [],
             problem: null,
             solution: null,
             titleKey: `step.${id}`,

@@ -1,7 +1,8 @@
-//! DSH 模型凭据桥：对齐 dsh 0.1.6-alpha.1 的 `ctx.credentials` 语义。
+//! DSH 模型凭据桥：对齐 dsh `ctx.credentials` 语义（0.1.7 实测同一份 v1 文件与
+//! 0600 属主门槛）。
 //!
 //! `apiKeyEnv` 只是 CredentialRef（POSIX 环境变量形状的引用名），secret 不进入
-//! settings.yaml。dsh web 运行时优先调用官方 credentials/describe|set|unset RPC，
+//! profile 补丁。dsh web 运行时优先调用官方 credentials/describe|set|unset RPC，
 //! 由 dsh 自己处理 precedence、writer lock 与热更新；dsh 未运行时才直接读写
 //! `~/.dsh/.credentials.yaml`，并复用 dsh 的 `<file>.lock` writer 协议。
 //!
@@ -105,7 +106,9 @@ fn document_from_text(text: &str, filename: &Path) -> Result<Mapping, Message> {
         .cloned()
         .ok_or_else(|| format!("Credentials file {} must be a mapping", filename.display()))?;
 
-    // dsh 0.1.6-alpha.1 接受预发布 flat layout，并在下一次写入升级到 v1。
+    // dsh（0.1.6 与 0.1.7 同）在启动时直接拒收预发布 flat layout 并拒绝启动，
+    // 报错要求补上 `version: 1` 并把条目嵌到 `refs:` 下。这里仍按扁平形态读入以便
+    // 迁移存量文件，但落盘一律是 v1（下一条分支）。
     if !root.contains_key(mapping_key("version")) && !root.is_empty() {
         let mut refs = Mapping::new();
         for (key, value) in root.clone() {

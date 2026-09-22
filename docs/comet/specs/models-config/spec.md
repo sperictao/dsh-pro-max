@@ -1,8 +1,8 @@
 # models-config 完整目标规格
 
-本模块管理 dsh 的模型接入配置：读写 `~/.dsh/settings.yaml` 的 `agent-default-model` 与 `llm-pi-ai.providers` 两个顶层键，呈现为"默认模型 + AI 服务列表 + 添加/编辑对话框 + 模型双栏 + 目录 + 导入"的管理页面。归档后本规格即该能力的完整行为描述。
+本模块管理 dsh 的模型接入配置：读写 web profile 补丁层（`~/.dsh/profiles/web/cordis.patch.yml`）里 `agent-default-model` 与 `llm-pi-ai` 两条目的 `config`，呈现为"默认模型 + AI 服务列表 + 添加/编辑对话框 + 模型双栏 + 目录 + 导入"的管理页面。归档后本规格即该能力的完整行为描述。
 
-数据事实来源：dsh `@deepseek-ai/dsh-llm-pi-ai/lib/types/{config,catalog,adapter}.d.ts`（schema）、`dsh-settings-file`（热加载）、`dsh-agent-default-model`（默认模型）。settings.yaml 是唯一事实来源；目录快照与预设表是缓存的引用数据。
+数据事实来源：dsh `@deepseek-ai/dsh-llm-pi-ai/lib/types/{config,catalog,adapter}.d.ts`（schema）、`dsh-settings`（profile 补丁热重载）、`dsh-agent-default-model`（默认模型）。profile 补丁是唯一事实来源（`~/.dsh/settings.yaml` 自 dsh 0.1.7 起只被一次性导入，导入后改名 `settings.yaml.imported`）；目录快照与预设表是缓存的引用数据。
 
 ## 页面结构（`src/features/models/`）
 
@@ -72,15 +72,15 @@ Rust `ProviderConfig`（`src-tauri/src/dsh/models.rs`）对齐 dsh `PiAiProvider
 
 - 入口：模型页"导入配置"，页面草稿有未保存修改时先要求保存或撤销。
 - 扫描源（本机已知路径，缺失静默跳过）：Claude Code（`~/.claude/settings.json(.local)`）、Codex（`~/.codex/config.toml`）、OpenCode（`~/.config/opencode/opencode.json(c)` + `auth.json`）、CC Switch（`~/.cc-switch/`）、Pi（`~/.pi/agent/models.json`）。
-- 扫描结果按来源分组展示、分组勾选；导入将所选写入 settings.yaml（经既有保存管道，原子写）。
+- 扫描结果按来源分组展示、分组勾选；导入将所选写入 profile 补丁的模型域（经既有保存管道，原子写）。
 - 去重：route 键已存在，或端点+凭据引用均相同 → skipped 计数。
 - 凭据映射：源持环境变量引用 → `apiKeyEnv`；源仅明文密钥 → 导入不含凭据的声明并在结果计数提示（内置目录路由可靠 pi-ai 环境发现兜底）；明文值不读取、不展示、不落盘、不进日志。
 - 结果 toast：`导入完成：X 已导入，Y 已跳过，Z 失败`。
 
 ## 保存与生效语义
 
-- 保存 = 原子写 settings.yaml（temp + fsync + rename，管理键整体重建、其余顶层键原样保留、extra 逐层透传）。
-- 生效文案：保存成功即热加载生效（dsh-settings-file 监听 + llm-pi-ai 按请求解析），不得宣称"需重启"。
+- 保存 = 原子写 profile 补丁（temp + fsync + rename；只重建模型域两行的 `config` 块，行内其它键与其它行逐字节保留，extra 逐层透传）。
+- 生效文案：保存成功即热加载生效（dsh 监听 profile 补丁并热重载 + llm-pi-ai 按请求解析），不得宣称"需重启"。
 
 ## 校验与错误路径
 

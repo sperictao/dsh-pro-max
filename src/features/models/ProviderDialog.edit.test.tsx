@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import type { ModelCatalogEntry, ProviderConfig } from "@/shared/types";
 import { ProviderDialog } from "./ProviderDialog";
+import { catalogFile } from "./catalog-fixtures";
 import type { CredentialWrite } from "./credentials";
 
 const provider: ProviderConfig = {
@@ -41,7 +42,6 @@ const provider: ProviderConfig = {
 const catalog: ModelCatalogEntry[] = provider.models.map((model) => ({
   id: model.id,
   name: model.name ?? model.id,
-  family: "openai",
   context: model.contextWindow ?? null,
   maxTokens: model.maxTokens ?? undefined,
   input: model.input ?? ["text"],
@@ -65,7 +65,7 @@ describe("ProviderDialog Edit provider", () => {
     render(
       <ProviderDialog
         state={{ mode: "edit", index: 0, provider }}
-        catalog={catalog}
+        catalog={catalogFile(catalog)}
         onClose={vi.fn()}
         onSubmit={onSubmit}
       />,
@@ -98,7 +98,7 @@ describe("ProviderDialog Edit provider", () => {
     render(
       <ProviderDialog
         state={{ mode: "edit", index: 1, provider }}
-        catalog={catalog}
+        catalog={catalogFile(catalog)}
         onClose={vi.fn()}
         onSubmit={onSubmit}
       />,

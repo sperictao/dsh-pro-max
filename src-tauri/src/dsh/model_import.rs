@@ -1,4 +1,4 @@
-//! 模型配置导入：扫描本机其他 agent 工具的 provider 声明并导入 settings.yaml。
+//! 模型配置导入：扫描本机其他 agent 工具的 provider 声明并导入 profile 补丁的模型域。
 //!
 //! 凭据语义对齐本应用的 apiKeyEnv 设计：来源是环境变量引用（`{env:VAR}`、
 //! `env:VAR`、Codex `env_key`）的直接映射为 apiKeyEnv；来源是明文密钥的
@@ -12,7 +12,7 @@
 use crate::config::home_dir;
 use crate::i18n::Message;
 use super::models::{
-    load_model_config_at, save_model_config_at, settings_path, ModelEntry, ProviderConfig,
+    load_model_config_at, model_patch_path, save_model_config_at, ModelEntry, ProviderConfig,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
@@ -784,10 +784,10 @@ fn matches_existing(candidate: &ImportCandidate, providers: &[ProviderConfig]) -
     })
 }
 
-/// 把选中候选合并进 settings.yaml（重新扫描后按 key 选择，保证与展示一致）
+/// 把选中候选合并进 profile 补丁的模型域（重新扫描后按 key 选择，保证与展示一致）
 pub(crate) fn run_at(
     home: &Path,
-    settings: &Path,
+    patch: &Path,
     keys: &[String],
 ) -> Result<ImportRunResult, Message> {
     let selected: Vec<ImportCandidate> = scan_at(home)
@@ -804,7 +804,7 @@ pub(crate) fn run_at(
     if selected.is_empty() {
         return Ok(result);
     }
-    let mut config = load_model_config_at(&settings.to_path_buf())?;
+    let mut config = load_model_config_at(patch)?;
     let mut batch_routes: BTreeSet<String> = BTreeSet::new();
     for candidate in selected {
         if matches_existing(&candidate, &config.providers)
@@ -839,7 +839,7 @@ pub(crate) fn run_at(
         });
         result.imported += 1;
     }
-    save_model_config_at(&settings.to_path_buf(), &config)?;
+    save_model_config_at(patch, &config)?;
     Ok(result)
 }
 
@@ -848,7 +848,7 @@ fn import_scan() -> Result<Vec<ImportGroup>, Message> {
 }
 
 fn import_run(keys: Vec<String>) -> Result<ImportRunResult, Message> {
-    run_at(&home_dir()?, &settings_path()?, &keys)
+    run_at(&home_dir()?, &model_patch_path()?, &keys)
 }
 
 #[tauri::command]

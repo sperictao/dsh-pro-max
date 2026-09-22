@@ -1562,9 +1562,9 @@ fn web_profile_dir() -> Result<std::path::PathBuf, Message> {
         .ok_or_else(|| Message::key("Web profile has no parent directory"))
 }
 
-/// profile 的 cordis.patch.yml 路径（dsh loader 的用户覆盖层，启停开关的
-/// 落盘位置）
-fn profile_patch_path() -> Result<std::path::PathBuf, Message> {
+/// profile 的 cordis.patch.yml 路径（dsh loader 的用户覆盖层，启停开关与模型
+/// 域配置的落盘位置）
+pub(crate) fn profile_patch_path() -> Result<std::path::PathBuf, Message> {
     Ok(web_profile_dir()?.join("cordis.patch.yml"))
 }
 
@@ -1826,8 +1826,8 @@ pub(crate) fn set_entries_enabled(
 /// 顶层 item 的切分结果：(起始行, 结束行(不含), id 字段值, 是否 bare 行)。
 /// 列 0 的 `- ` 开启新 item，直到下一个顶层 item 或 EOF；嵌套的 `    - `
 /// 行（insert 序列项）不在列 0，天然排除。bare = 不含 insert 键（首行内联
-/// 或两空格字段行）
-fn top_level_item_ranges(
+/// 或两空格字段行）。启停开关与模型域的 config 行都按这份切分做行级编辑
+pub(crate) fn top_level_item_ranges(
     lines: &[String],
     raw: &str,
 ) -> Result<Vec<(usize, usize, String, bool)>, Message> {
@@ -1886,7 +1886,7 @@ fn unquote(v: &str) -> String {
 /// 覆盖行值的 YAML 安全标量编码（与 `unquote` 对偶）：包名/入口 id 白名单内
 /// 的裸词原样落盘，其余（`@scope/pkg` 的 `@` 是 YAML 保留字符，裸写会让
 /// overlay 解析全灭——2026-09-20 启动即崩事故）双引号包裹并转义
-fn yaml_scalar(v: &str) -> String {
+pub(crate) fn yaml_scalar(v: &str) -> String {
     let head_safe = v
         .chars()
         .next()

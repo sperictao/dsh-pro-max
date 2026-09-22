@@ -42,22 +42,28 @@ const modelConfig = {
   defaultReasoningEffort: "max",
   providers: [spero, deepseek],
 };
+const catalogEntries = [
+  { id: "glm-5.2", name: "GLM 5.2", context: 131072, maxTokens: 32768, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high", "max"], capabilities: ["text", "reasoning", "tools"] },
+  { id: "deepseek-chat", name: "DeepSeek Chat", context: 65536, maxTokens: 8192, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
+  { id: "deepseek-reasoner", name: "DeepSeek Reasoner", context: 65536, maxTokens: 8192, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning"] },
+];
+const claudeSonnet = { id: "claude-sonnet-4", name: "Claude Sonnet 4", context: 200000, maxTokens: 32000, input: ["text", "image"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "vision", "reasoning"] };
 const snapshotCatalog = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  providerCount: 2,
-  entries: [
-    { id: "glm-5.2", name: "GLM 5.2", family: "openai", context: 131072, maxTokens: 32768, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high", "max"], capabilities: ["text", "reasoning", "tools"] },
-    { id: "deepseek-chat", name: "DeepSeek Chat", family: "openai", context: 65536, maxTokens: 8192, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
-    { id: "deepseek-reasoner", name: "DeepSeek Reasoner", family: "openai", context: 65536, maxTokens: 8192, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "reasoning"] },
+  providers: [
+    { id: "mock-catalog", name: "Mock Catalog", family: "openai", models: catalogEntries },
+    { id: "mock-provider-2", name: "Mock Provider 2", family: "openai", models: [] },
   ],
+  models: catalogEntries,
 };
 const refreshedCatalog = {
   fetchedAt: snapshotCatalog.fetchedAt + 120,
-  providerCount: 3,
-  entries: [
-    ...snapshotCatalog.entries,
-    { id: "claude-sonnet-4", name: "Claude Sonnet 4", family: "anthropic", context: 200000, maxTokens: 32000, input: ["text", "image"], reasoning: true, reasoningLevels: ["low", "medium", "high"], capabilities: ["text", "vision", "reasoning"] },
+  providers: [
+    { id: "mock-catalog", name: "Mock Catalog", family: "openai", models: snapshotCatalog.models },
+    { id: "mock-anthropic", name: "Mock Anthropic", family: "anthropic", models: [claudeSonnet] },
+    { id: "mock-provider-2", name: "Mock Provider 2", family: "openai", models: [] },
   ],
+  models: [...snapshotCatalog.models, claudeSonnet],
 };
 const mock = {
   config: { minimize_to_tray_on_close: false, language: "en", dsh_admin_cap_domain: "", dsh_use_cap_domain: "", dsh_extra_allowed_logins: "", market_catalog_url: "" },
@@ -66,7 +72,7 @@ const mock = {
     dshVersionAboveSupported: false, pluginsInstalled: false, dshRunning: false, tailscaleInstalled: false,
     tailscaleOnline: false, hostname: null, localUrl: null, url: null, remoteUrlAccess: null, magicDnsEnabled: false,
     serveConfigured: false, autostartEnabled: false, error: null,
-    readyTimeline: ["node", "install", "start", "ready"].map((id, index) => ({ index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
+    readyTimeline: ["node", "install", "start", "ready"].map((id, index) => ({ index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}` })),
   },
 };
 
@@ -106,7 +112,7 @@ async function main() {
         get_updater_config_health: () => ({ configured: true, message: "ready" }),
         check_update: () => ({ currentVersion: "0.4.0", availableVersion: null, hasUpdate: false, releaseNotes: null, message: null }),
         dsh_detect: () => dshStatus,
-        dsh_step_schema: ({ remote } = {}) => (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({ index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
+        dsh_step_schema: ({ remote } = {}) => (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({ index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}` })),
         model_config_load: () => structuredClone(modelConfig),
         model_catalog_load: () => structuredClone(snapshotCatalog),
         model_catalog_refresh: () => new Promise((resolve) => {

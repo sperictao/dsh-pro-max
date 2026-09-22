@@ -39,13 +39,13 @@
 
 ## 3. dsh 版本兼容与修复
 
-Launcher 当前验证栈为 **dsh 0.1.6-alpha.1**（与内置授权插件一同钉版发布）。兼容判定按
+Launcher 当前验证栈为 **dsh 0.1.7-alpha.1**（与内置授权插件一同钉版发布）。兼容判定按
 「支持线」进行，不要求与钉版逐字相等：
 
-- **同线且 ≥ 0.1.6-alpha.1**（如 0.1.6）：兼容，可直接使用。主页会提示
+- **同线且 ≥ 0.1.7-alpha.1**（如 0.1.7）：兼容，可直接使用。主页会提示
   "Newer than the verified stack"，表示比已验证组合新；插件出现不兼容症状时，
   点主页的 **Repair dsh stack** 一键回到验证栈（重装钉版 dsh + 两个授权插件）
-- **低于 0.1.6-alpha.1 或跨线**（如 0.1.5-alpha.2、0.1.5-rc.1、0.2.0）：标记不兼容，
+- **低于 0.1.7-alpha.1 或跨线**（如 0.1.6-alpha.2、0.1.5-rc.1、0.2.0）：标记不兼容，
   主页出现 **Repair dsh stack** 按钮；设置 → dsh Version 的逐版本安装仍可进行
   （版本闸门已放开，风险以红字与 toast 披露，不阻断安装）
 - **版本达标但缺授权插件**：不再强制降级 dsh，状态行引导直接点一键启动补装插件
@@ -208,12 +208,12 @@ capability 名必须在三处**同名**：
 远程模式下点**一键启动**，时间轴应依次通过 8 步：
 
 1. Node.js 与 npm
-2. 支持线内的 dsh（缺装或不兼容时自动装回验证栈 0.1.6-alpha.1，见第 3 节）
+2. 支持线内的 dsh（缺装或不兼容时自动装回验证栈 0.1.7-alpha.1，见第 3 节）
 3. 两个授权插件
 4. Tailscale 在线与当前登录身份
 5. MagicDNS / HTTPS Certificates
 6. dsh 监听 `127.0.0.1:3899`
-7. Tailscale Serve 直接指向 3899
+7. Tailscale Serve 指向 3899，并在 Serve 层拦住 dsh 的 `open-in-app` 前缀
 8. 本地 HTTP、宿主侧远程 HTTPS / WSS、已配置 capability 对应的远程 API、
    本机浏览器代理路径和本地特权 API 验证
 
@@ -228,7 +228,25 @@ tailscale status --json
 tailscale serve status
 ```
 
-`tailscale serve status` 的根路由应显示 `proxy http://127.0.0.1:3899`。
+`tailscale serve status` 的根路由应显示 `proxy http://127.0.0.1:3899`，并且**必须**另有一条
+`/open-in-app` 挂载，指向 `text`（见下）。手动配置的部署要照做。
+
+dsh 0.1.7 的 `open-in-app` 宿主插件注册了 `GET /open-in-app/apps`、
+`GET /open-in-app/icon/<id>`、`POST /open-in-app/open`（最后一条在宿主机上启动应用）。
+它并非无鉴权——每条路由都会问 `connection.requestRejection`——但那个判定在我们的替换连接
+插件里只按 `trusted-host` 档裁决，与普通 API 同档：**任何被放行的远程身份都能列出并启动
+宿主机上的应用**（0.1.7 实测：use 能力档拿到应用目录与 `{"ok":true}`，同身份打
+`settings/describe` 才是 403）。Launcher 的策略是「在本机启动应用只能是本机操作」，所以
+在 Serve 层按 mount 最长前缀把整条前缀挂到 `text` 上终止：
+
+```bash
+tailscale serve --https=443 --bg --set-path=/open-in-app \
+  'text:open-in-app is not available over remote access'
+```
+
+一键启动的第 7 步会先挂这条、再挂根路由（顺序即 fail-closed：守卫挂不上就不会有任何东西
+被暴露），第 8 步还会实际探测该前缀必须返回守卫文案；探测到 dsh 的应答时以
+`The dsh file-open route is still reachable over Tailscale Serve` 判定失败并保持远程不可用。
 
 ## 9. 常见错误与排查
 
@@ -238,7 +256,7 @@ tailscale serve status
 | 保存时报"Tailscale login name contains unsupported characters" | 登录名含非法字符（如空格、中文）。只允许 ASCII 字母数字及 `@._+-` |
 | Tailscale ping 正常，但异机 HTTPS / RPC / WSS 超时 | tailnet grant 缺少 `"ip": ["tcp:443"]`，或 `src` / `dst` 未匹配实际远程身份与 dsh 节点。App Capability 本身不会放行端口 |
 | 启动时间轴卡在最后一步 / 远程打开提示无权限 | grant 缺少 `tcp:443` 网络授权、capability 只配了设置页没配 `app`，或 capability 名不一致。核对第 7 节 |
-| 主页提示 "Newer than the verified stack (…)" | dsh 版本高于验证栈但仍在支持线内（如 0.1.6-rc.1），可继续使用；插件出现不兼容症状时点 **Repair dsh stack** 回到验证栈 |
+| 主页提示 "Newer than the verified stack (…)" | dsh 版本高于验证栈但仍在支持线内（如 0.1.7-alpha.2），可继续使用；插件出现不兼容症状时点 **Repair dsh stack** 回到验证栈 |
 | 状态行显示 "dsh version is not supported by the auth plugins" / 时间轴卡在 Install DeepSeek Harness (dsh) | 装了跨线版本（如 0.1.5-alpha.1）→ 点 **Repair dsh stack**（回装验证栈 + 插件）；版本达标但缺插件 → 直接一键启动补装，无需降级 |
 | serve 报 `unknown flag: --accept-app-caps` | Tailscale 版本过旧，需 1.92+。升级 Tailscale |
 | 已确认 `tcp:443` grant 匹配，但开启代理时打不开 `https://<hostname>.ts.net` | 多被 Shadowrocket / Clash / Surge 或系统代理抢走 tailnet 流量；宿主 Mac 上把 Launcher 显示的精确主机名加入 Shadowrocket“通用 → 跳过代理（skip-proxy）”，其他访问端设备再配置精确 `DOMAIN,<hostname>.<tailnet>.ts.net,DIRECT`（详见 dsh-remote-access.md 的排查节） |

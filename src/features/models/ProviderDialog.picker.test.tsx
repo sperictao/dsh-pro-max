@@ -16,7 +16,7 @@ function renderDialog(onClose = vi.fn()) {
   render(
     <ProviderDialog
       state={{ mode: "add" }}
-      catalog={[]}
+      catalog={null}
       onClose={onClose}
       onSubmit={vi.fn().mockResolvedValue(undefined)}
     />,

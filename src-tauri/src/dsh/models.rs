@@ -1,8 +1,14 @@
-//! 模型配置：读写 ~/.dsh/settings.yaml 的模型相关两键。
+//! 模型配置：读写 web profile 补丁层里模型域两行的 `config`。
+//!
+//! dsh 0.1.7 起设置不再落 `~/.dsh/settings.yaml`：那份文件只被一次性导入
+//! （首次写入前改名 `settings.yaml.imported`），设置的真身是活动 profile 的
+//! Cordis 补丁层，即 profile 的 `cordis.patch.yml`。写盘按补丁的行级纪律——
+//! 只替换本域两行的 `config` 块，行内其它键（name、disabled…）、其它行与注释
+//! 逐字节保留（loader 依赖 `!!js` 表达式，而 serde_yaml 会静默剥掉标签）。
 //!
 //! UI 管理域 = `agent-default-model`（默认模型选择）+ `llm-pi-ai.providers`
-//! （自定义提供商路由）。settings.yaml 其余顶层键（llm-deepseek、
-//! agent-presets、ui-onboarding 等）不属于本域，save 一律原样保留。管理键
+//! （自定义提供商路由）。补丁里其余行（llm-deepseek、agent-presets 等）不属于
+//! 本域，save 一律原样保留。管理键
 //! 以 dsh `PiAiProviderProfile` / `PiAiModelProfile` schema（UI 子集）为准：
 //! 提供商级 = displayName/baseURL/api/apiKeyEnv/models/headers/timeoutMs/
 //! reasoning，模型条目级 = id/name/contextWindow/maxTokens/input/
@@ -10,11 +16,11 @@
 //! 分别经 extra 原样透传，编辑不丢失。凭据只存环境变量名（apiKeyEnv），
 //! 密钥永不进配置文件。
 
-use super::components::dsh_dir;
+use super::market::{is_empty_patch, profile_patch_path, top_level_item_ranges, yaml_scalar};
 use crate::i18n::Message;
 use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value as Yaml};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -38,12 +44,15 @@ const MANAGED_MODEL_KEYS: [&str; 6] = [
     "input",
     "reasoningEfforts",
 ];
-/// agent-default-model 与 llm-pi-ai 在 settings.yaml 的键名
+/// 模型域两条目在 profile 补丁里的 id；与 dsh base composition 的条目 id 一一
+/// 对应（dsh-settings 的 legacy 导入同样按「同名 section → 条目 id」映射，同源）
 const DEFAULT_MODEL_KEY: &str = "agent-default-model";
 const PI_AI_KEY: &str = "llm-pi-ai";
 
-/// models.dev 全量模型目录（与 CCursor 同源）
-pub(crate) const MODELS_DEV_API: &str = "https://models.dev/api.json";
+/// models.dev 全量目录（与 CCursor 同源）。站点显示的是全部 model types（默认端点会
+/// 省略 specialized 模型），因此取 `type=all` 的合并目录：providers 对应服务商页，
+/// models 对应 provider-agnostic 模型页。
+pub(crate) const MODELS_DEV_API: &str = "https://models.dev/catalog.json?type=all";
 const REMOTE_LIST_TIMEOUT_SECS: u64 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
@@ -138,8 +147,10 @@ pub struct ModelConfig {
     pub providers: Vec<ProviderConfig>,
 }
 
-pub(crate) fn settings_path() -> Result<PathBuf, Message> {
-    Ok(dsh_dir()?.join("settings.yaml"))
+/// 模型域的落盘位置：web profile 补丁层。profile 路径由 market 单点持有，
+/// 此处不另取一份
+pub(crate) fn model_patch_path() -> Result<PathBuf, Message> {
+    profile_patch_path()
 }
 
 // ============ load ============
@@ -243,29 +254,33 @@ fn provider_from_yaml(route: &str, value: &Yaml) -> Option<ProviderConfig> {
     })
 }
 
-/// 从 settings.yaml 内容解析模型配置；文件不存在或为空 = 空配置
-pub(crate) fn load_model_config_at(path: &PathBuf) -> Result<ModelConfig, Message> {
+/// 从 profile 补丁解析模型配置：补丁缺失、没有这两行、或行内没有 config 都按
+/// 空配置处理。只读解析走 serde_yaml（与 market 读补丁同一姿势：`!!js` 只是
+/// 带标签的值，只读判定不必写盘）
+pub(crate) fn load_model_config_at(path: &Path) -> Result<ModelConfig, Message> {
     if !path.exists() {
         return Ok(ModelConfig::default());
     }
     let raw = fs::read_to_string(path).map_err(|e| {
-        crate::logging::warn("读取 settings.yaml", &e.to_string());
-        Message::localized("Failed to read settings.yaml: {{error}}",
-            &[("error", e.to_string())],
+        crate::logging::warn("读取 profile 补丁", &e.to_string());
+        Message::localized("Failed to read {{file}}: {{error}}",
+            &[("file", file_label(path)), ("error", e.to_string())],
         )
     })?;
     let root: Yaml = serde_yaml::from_str(&raw).map_err(|e| {
-        crate::logging::warn("解析 settings.yaml", &e.to_string());
-        Message::localized("Failed to parse settings.yaml: {{error}}",
-            &[("error", e.to_string())],
+        crate::logging::warn("解析 profile 补丁", &e.to_string());
+        Message::localized("Failed to parse {{file}}: {{error}}",
+            &[("file", file_label(path)), ("error", e.to_string())],
         )
     })?;
-    let map = root.as_mapping();
-    let default = map
-        .and_then(|m| m.get(Yaml::String(DEFAULT_MODEL_KEY.into())))
-        .and_then(Yaml::as_mapping);
-    let providers = map
-        .and_then(|m| m.get(Yaml::String(PI_AI_KEY.into())))
+    let row_config = |id: &str| {
+        root.as_sequence()?
+            .iter()
+            .find(|item| item.get("id").and_then(Yaml::as_str) == Some(id))?
+            .get("config")
+    };
+    let default = row_config(DEFAULT_MODEL_KEY).and_then(Yaml::as_mapping);
+    let providers = row_config(PI_AI_KEY)
         .and_then(|v| v.get(Yaml::String("providers".into())))
         .and_then(Yaml::as_mapping)
         .map(|pm| {
@@ -428,16 +443,21 @@ fn yaml_from_json(v: &serde_json::Value) -> Yaml {
     }
 }
 
-/// 用 UI 状态重建模型相关两键并写回 settings.yaml；其余顶层键原样保留。
-/// 默认模型 provider/model 缺任一则移除 agent-default-model；提供商列表
-/// 为空则移除整个 llm-pi-ai 键（schema 里空 dict 与缺席等价，都不承载路由）
-pub(crate) fn save_model_config_at(path: &PathBuf, config: &ModelConfig) -> Result<(), Message> {
-    let mut root = match read_root(path)? {
-        Yaml::Mapping(map) => map,
-        _ => Mapping::new(),
+/// 用 UI 状态重建模型域两行的 config 并写回 profile 补丁：默认模型 provider/model
+/// 缺任一就撤掉该行的 config（缺省即未设置），提供商列表为空则撤掉 llm-pi-ai 行的
+/// config。行内其它键（name、disabled…）、其它行与注释逐字节保留。
+pub(crate) fn save_model_config_at(path: &Path, config: &ModelConfig) -> Result<(), Message> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            crate::logging::warn("读取 profile 补丁", &e.to_string());
+            return Err(Message::localized("Failed to read {{file}}: {{error}}",
+                &[("file", file_label(path)), ("error", e.to_string())],
+            ));
+        }
     };
-    let default_key = Yaml::String(DEFAULT_MODEL_KEY.into());
-    match (
+    let default_config = match (
         non_empty(&config.default_provider),
         non_empty(&config.default_model),
     ) {
@@ -454,15 +474,12 @@ pub(crate) fn save_model_config_at(path: &PathBuf, config: &ModelConfig) -> Resu
                     Yaml::String(effort.into()),
                 );
             }
-            root.insert(default_key, Yaml::Mapping(default));
+            Some(Yaml::Mapping(default))
         }
-        _ => {
-            root.remove(default_key);
-        }
-    }
-    let pi_ai_key = Yaml::String(PI_AI_KEY.into());
-    if config.providers.is_empty() {
-        root.remove(pi_ai_key);
+        _ => None,
+    };
+    let pi_ai_config = if config.providers.is_empty() {
+        None
     } else {
         let mut providers = Mapping::new();
         for p in &config.providers {
@@ -476,53 +493,166 @@ pub(crate) fn save_model_config_at(path: &PathBuf, config: &ModelConfig) -> Resu
         }
         let mut pi_ai = Mapping::new();
         pi_ai.insert(Yaml::String("providers".into()), Yaml::Mapping(providers));
-        root.insert(pi_ai_key, Yaml::Mapping(pi_ai));
+        Some(Yaml::Mapping(pi_ai))
+    };
+    let default_block = default_config
+        .as_ref()
+        .map(|value| config_block_lines(value, path))
+        .transpose()?;
+    let pi_ai_block = pi_ai_config
+        .as_ref()
+        .map(|value| config_block_lines(value, path))
+        .transpose()?;
+    let text = set_row_config(&raw, DEFAULT_MODEL_KEY, default_block.as_deref())?;
+    let text = set_row_config(&text, PI_AI_KEY, pi_ai_block.as_deref())?;
+    if text == raw {
+        return Ok(());
     }
-    let text = serde_yaml::to_string(&Yaml::Mapping(root)).map_err(|e| {
-        crate::logging::error("序列化 settings.yaml", &e.to_string());
-        Message::localized("Failed to serialize settings.yaml: {{error}}",
-            &[("error", e.to_string())],
-        )
-    })?;
     write_atomic(path, &text)
 }
 
-/// temp + rename 原子写：写入中断电/崩溃不会留下截断的 settings.yaml
-fn write_atomic(path: &Path, text: &str) -> Result<(), Message> {
-    let tmp = path.with_extension("yaml.tmp");
-    fs::write(&tmp, text).map_err(|e| {
-        crate::logging::error("写入 settings.yaml", &e.to_string());
-        Message::localized("Failed to write settings.yaml: {{error}}",
-            &[("error", e.to_string())],
+/// 补丁里写一行 id 的 config：只替换/插入/移除该行的 `config:` 块，行内其它键与
+/// 其它行逐字节保留。block 为 None 表示撤掉该块；撤块后只剩 id/name 的空壳行整行
+/// 删除，不留无意义覆盖行
+fn set_row_config(raw: &str, id: &str, block: Option<&[String]>) -> Result<String, Message> {
+    let mut lines: Vec<String> = raw.lines().map(str::to_string).collect();
+    if is_empty_patch(raw) {
+        // 空层：剥掉 `[]` 占位行、保留注释头，追加的行落在注释头之后
+        lines.retain(|line| line.trim() != "[]");
+    }
+    let ranges = top_level_item_ranges(&lines, raw)?;
+    let Some((start, end)) = ranges
+        .iter()
+        .find(|(_, _, row_id, _)| row_id == id)
+        .map(|(start, end, _, _)| (*start, *end))
+    else {
+        let Some(block) = block else {
+            return Ok(raw.to_string());
+        };
+        if lines.last().is_some_and(|line| !line.is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push(format!("- id: {}", yaml_scalar(id)));
+        lines.push("  config:".to_string());
+        lines.extend_from_slice(block);
+        return Ok(finish_patch(lines));
+    };
+    let mut row: Vec<String> = lines[start..end].to_vec();
+    match (config_field_range(&row), block) {
+        (Some((from, to)), Some(block)) => {
+            row.splice(
+                from..to,
+                std::iter::once("  config:".to_string()).chain(block.iter().cloned()),
+            );
+        }
+        (Some((from, to)), None) => {
+            row.drain(from..to);
+        }
+        (None, Some(block)) => {
+            row.splice(
+                1..1,
+                std::iter::once("  config:".to_string()).chain(block.iter().cloned()),
+            );
+        }
+        (None, None) => return Ok(raw.to_string()),
+    }
+    if block.is_none()
+        && row
+            .iter()
+            .skip(1)
+            .all(|line| line.trim().is_empty() || line.starts_with("  name:"))
+    {
+        // 撤 config 后只剩 id/name：整行删除，连同其上的空行
+        let mut out = lines;
+        out.drain(start..end);
+        if start > 0
+            && out[start - 1].is_empty()
+            && out.get(start).map_or(true, |line| !line.is_empty())
+        {
+            out.remove(start - 1);
+        }
+        return Ok(finish_patch(out));
+    }
+    lines.splice(start..end, row);
+    Ok(finish_patch(lines))
+}
+
+/// 行内 `  config:` 字段的范围（字段行到块结束）：块内行都是 4 空格缩进，遇到
+/// 非空且缩进不足 4 空格的即块外；单行内联形态（`  config: {...}`）只占一行。
+/// 块尾的空行是行与行之间的分隔，不并入范围——否则同一配置再存会产生字节漂移
+/// （幂等性由 `model_config_resave_is_byte_stable_and_skips_the_write` 守着）
+fn config_field_range(row: &[String]) -> Option<(usize, usize)> {
+    let from = row.iter().position(|line| line.starts_with("  config:"))?;
+    if row[from].trim() != "config:" {
+        return Some((from, from + 1));
+    }
+    let block_end = row[from + 1..]
+        .iter()
+        .position(|line| !line.is_empty() && !line.starts_with("    "))
+        .map_or(row.len(), |offset| from + 1 + offset);
+    let to = (from + 1..block_end)
+        .rev()
+        .find(|index| !row[*index].is_empty())
+        .map_or(from + 1, |index| index + 1);
+    Some((from, to))
+}
+
+/// config 值的 YAML 行，统一缩进 4 空格（`config:` 的子块层级）
+fn config_block_lines(config: &Yaml, path: &Path) -> Result<Vec<String>, Message> {
+    let body = serde_yaml::to_string(config).map_err(|e| {
+        crate::logging::error("序列化 profile 补丁", &e.to_string());
+        Message::localized("Failed to serialize {{file}}: {{error}}",
+            &[("file", file_label(path)), ("error", e.to_string())],
         )
     })?;
-    // fsync 后再 rename：断电时 rename 后的目标不会是空/截断文件
+    Ok(body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| format!("    {line}"))
+        .collect())
+}
+
+/// 落盘文本收口（与 market 的启停行写入同一形态）：补回结尾换行；空层归一回
+/// 官方脚手架形态（注释头 + `[]`），保证落盘文件永远能被 loader 解析
+fn finish_patch(lines: Vec<String>) -> String {
+    let mut out = lines.join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    if is_empty_patch(&out) {
+        while out.ends_with('\n') {
+            out.pop();
+        }
+        out.push_str("\n[]\n");
+    }
+    out
+}
+
+/// 面向用户的文件名：错误消息里给的是落盘位置的文件名，不是整条路径
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// temp + rename 原子写：写入中断电/崩溃不会留下截断的文件。temp 取同目录的
+/// `<文件名>.tmp`，fsync 后再 rename，断电时目标不会是空/截断文件
+fn write_atomic(path: &Path, text: &str) -> Result<(), Message> {
+    let tmp = path.with_file_name(format!("{}.tmp", file_label(path)));
+    fs::write(&tmp, text).map_err(|e| {
+        crate::logging::error("写入文件", &e.to_string());
+        Message::localized("Failed to write {{file}}: {{error}}",
+            &[("file", file_label(path)), ("error", e.to_string())],
+        )
+    })?;
     if let Ok(f) = fs::File::open(&tmp) {
         let _ = f.sync_all();
     }
     fs::rename(&tmp, path).map_err(|e| {
-        crate::logging::error("替换 settings.yaml", &e.to_string());
+        crate::logging::error("替换文件", &e.to_string());
         let _ = fs::remove_file(&tmp);
-        Message::localized("Failed to write settings.yaml: {{error}}",
-            &[("error", e.to_string())],
-        )
-    })
-}
-
-fn read_root(path: &PathBuf) -> Result<Yaml, Message> {
-    if !path.exists() {
-        return Ok(Yaml::Mapping(Mapping::new()));
-    }
-    let raw = fs::read_to_string(path).map_err(|e| {
-        crate::logging::warn("读取 settings.yaml", &e.to_string());
-        Message::localized("Failed to read settings.yaml: {{error}}",
-            &[("error", e.to_string())],
-        )
-    })?;
-    serde_yaml::from_str(&raw).map_err(|e| {
-        crate::logging::warn("解析 settings.yaml", &e.to_string());
-        Message::localized("Failed to parse settings.yaml: {{error}}",
-            &[("error", e.to_string())],
+        Message::localized("Failed to write {{file}}: {{error}}",
+            &[("file", file_label(path)), ("error", e.to_string())],
         )
     })
 }
@@ -531,17 +661,18 @@ fn read_root(path: &PathBuf) -> Result<Yaml, Message> {
 
 #[tauri::command]
 pub fn model_config_load() -> Result<ModelConfig, Message> {
-    load_model_config_at(&settings_path()?)
+    load_model_config_at(&model_patch_path()?)
 }
 
 #[tauri::command]
 pub fn model_config_save(config: ModelConfig) -> Result<(), Message> {
-    save_model_config_at(&settings_path()?, &config)
+    save_model_config_at(&model_patch_path()?, &config)
 }
 
 // ============ 模型目录（models.dev 全量快照）============
 
 /// models.dev 投影条目：模型身份 + 核心容量/能力元数据。
+/// provider 侧与 canonical 侧共用同一投影，各自保留 models.dev 发布的字段。
 /// 新增字段保持 optional，使旧快照仍可反序列化；新投影会完整填充这些字段。
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
@@ -549,8 +680,6 @@ pub fn model_config_save(config: ModelConfig) -> Result<(), Message> {
 pub struct CatalogEntry {
     pub id: String,
     pub name: String,
-    /// openai | anthropic（dsh pi-ai 无 gemini 原生协议，google 端点经 openai 兼容）
-    pub family: String,
     /// 目录标注的上下文窗口（token）；缺失为 null（UI 不显示缩写）
     #[serde(default)]
     #[ts(type = "number | null")]
@@ -577,7 +706,29 @@ pub struct CatalogEntry {
     pub capabilities: Option<Vec<String>>,
 }
 
-/// 目录快照：缓存不是事实来源，fetched_at 供过期判断
+/// models.dev 服务商侧：该服务自己发布的模型，以及它声明的 wire 协议家族。
+/// family 读 provider 自己的 SDK/端点声明，而不是模型 id 的归属者——否则 Claude
+/// 模型会因为它同时被 OpenAI 兼容网关发布而丢失 anthropic 归属。
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub struct CatalogProvider {
+    /// models.dev provider key（服务商页路由键）
+    pub id: String,
+    pub name: String,
+    /// anthropic | openai（dsh pi-ai 无 gemini 原生协议，google 端点经 openai 兼容）
+    pub family: String,
+    /// 该服务声明的端点；UI 用它把自定义 route 的服务匹配回目录服务商
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub api: Option<String>,
+    /// 该服务发布的模型；不做跨服务合并
+    pub models: Vec<CatalogEntry>,
+}
+
+/// 目录快照：缓存不是事实来源，fetched_at 供过期判断。
+/// 与 models.dev 站点同构——providers 即服务商页行数，models 即 provider-agnostic
+/// 模型页行数；两个计数都从数组长度得出，不额外存冗余字段。
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, export_to = "../../src/shared/bindings/")]
@@ -585,17 +736,30 @@ pub struct CatalogFile {
     /// unix 秒（IPC 走 JSON number）
     #[ts(type = "number")]
     pub fetched_at: i64,
-    /// models.dev 中至少发布一个模型的 provider 数；旧快照缺席时为 None。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "number")]
-    pub provider_count: Option<usize>,
-    pub entries: Vec<CatalogEntry>,
+    pub providers: Vec<CatalogProvider>,
+    pub models: Vec<CatalogEntry>,
+}
+
+#[derive(Deserialize)]
+struct ModelsDevCatalog {
+    #[serde(default)]
+    providers: BTreeMap<String, ModelsDevProvider>,
+    #[serde(default)]
+    models: BTreeMap<String, ModelsDevModel>,
 }
 
 #[derive(Deserialize)]
 struct ModelsDevProvider {
     #[serde(default)]
-    models: HashMap<String, ModelsDevModel>,
+    name: Option<String>,
+    /// provider 声明的 SDK 包名（如 @ai-sdk/anthropic），用于协议家族判定
+    #[serde(default)]
+    npm: Option<String>,
+    /// provider 声明的端点；少数 provider 没有
+    #[serde(default)]
+    api: Option<String>,
+    #[serde(default)]
+    models: BTreeMap<String, ModelsDevModel>,
 }
 
 #[derive(Deserialize)]
@@ -644,9 +808,12 @@ struct ModelsDevModalities {
     output: Vec<String>,
 }
 
-/// family 归类：anthropic 官方键 → anthropic，其余（含 google）→ openai
-fn catalog_family(provider_key: &str) -> &'static str {
-    if provider_key == "anthropic" {
+/// wire 协议家族：provider 自己声明的 SDK/端点是否走 Anthropic 协议。
+/// 与「按模型 id 归属者猜家族」不同，这里描述的是服务本身说的协议，因此
+/// anthropic 服务的 Claude 模型不会因为被 OpenAI 兼容网关先发布而改籍。
+fn catalog_family(npm: Option<&str>, api: Option<&str>) -> &'static str {
+    let is_anthropic = |value: &str| value.to_ascii_lowercase().contains("anthropic");
+    if npm.is_some_and(is_anthropic) || api.is_some_and(is_anthropic) {
         "anthropic"
     } else {
         "openai"
@@ -730,59 +897,68 @@ fn catalog_capabilities(model: &ModelsDevModel) -> Vec<String> {
     values
 }
 
-/// 解析 models.dev api.json 并投影核心模型元数据；按 id 去重（first-wins）、
-/// 按 id 排序保证快照稳定；无 id 的条目丢弃。
+/// 单条模型投影：id 缺失时回落 dict 键，空 id 丢弃。provider 侧与 canonical 侧共用，
+/// 不做跨 provider 合并——每个服务保留它自己发布的模型条目。
+fn project_entry(model: &ModelsDevModel, key: &str) -> Option<CatalogEntry> {
+    let id = model
+        .id
+        .clone()
+        .or(if key.is_empty() { None } else { Some(key.to_string()) })?;
+    if id.trim().is_empty() {
+        return None;
+    }
+    let context = model.limit.as_ref().and_then(|limit| limit.context);
+    let max_tokens = model.limit.as_ref().and_then(|limit| limit.output);
+    let input = model
+        .modalities
+        .as_ref()
+        .map(|modalities| modalities.input.clone());
+    let reasoning_levels = catalog_reasoning_levels(model);
+    let capabilities = catalog_capabilities(model);
+    Some(CatalogEntry {
+        name: model.name.clone().unwrap_or_else(|| id.clone()),
+        context,
+        max_tokens,
+        input,
+        reasoning: model.reasoning,
+        reasoning_levels,
+        capabilities: Some(capabilities),
+        id,
+    })
+}
+
+/// 解析 models.dev catalog.json 并投影站点显示的两侧数据：providers（服务商页行数）
+/// 与 models（provider-agnostic 模型页行数）。两侧都按 key 排序保证快照稳定；坏条目
+/// （无 id）丢弃，其余原样保留，不做跨 provider 去重。
 pub(crate) fn project_catalog(raw: &str, fetched_at: i64) -> Result<CatalogFile, Message> {
-    // BTreeMap：跨 provider 重复 id 的 first-wins 胜者按 provider 键序确定，刷新间不漂移
-    let root: BTreeMap<String, ModelsDevProvider> = serde_json::from_str(raw).map_err(|e| {
+    let root: ModelsDevCatalog = serde_json::from_str(raw).map_err(|e| {
         crate::logging::error("解析 models.dev 目录", &e.to_string());
         Message::key("Failed to parse the model catalog")
     })?;
-    // providerCount 表达目录覆盖面，不从跨 provider 去重后的 model 数反推。
-    // 空 provider 不计入可用覆盖面；旧快照没有该字段时由 UI 触发后台刷新。
-    let provider_count = root
-        .values()
-        .filter(|provider| !provider.models.is_empty())
-        .count();
-    let mut by_id: BTreeMap<String, CatalogEntry> = BTreeMap::new();
-    for (provider_key, provider) in root {
-        let family = catalog_family(&provider_key);
-        for (key, model) in provider.models {
-            let Some(id) = model
-                .id
-                .clone()
-                .or(if key.is_empty() { None } else { Some(key) })
-            else {
-                continue;
-            };
-            if id.trim().is_empty() {
-                continue;
-            }
-            let context = model.limit.as_ref().and_then(|limit| limit.context);
-            let max_tokens = model.limit.as_ref().and_then(|limit| limit.output);
-            let input = model
-                .modalities
-                .as_ref()
-                .map(|modalities| modalities.input.clone());
-            let reasoning_levels = catalog_reasoning_levels(&model);
-            let capabilities = catalog_capabilities(&model);
-            by_id.entry(id.clone()).or_insert_with(|| CatalogEntry {
-                name: model.name.clone().unwrap_or_else(|| id.clone()),
-                family: family.to_string(),
-                context,
-                max_tokens,
-                input,
-                reasoning: model.reasoning,
-                reasoning_levels,
-                capabilities: Some(capabilities),
-                id,
-            });
-        }
-    }
+    let providers = root
+        .providers
+        .into_iter()
+        .map(|(key, provider)| CatalogProvider {
+            name: provider.name.clone().unwrap_or_else(|| key.clone()),
+            family: catalog_family(provider.npm.as_deref(), provider.api.as_deref()).to_string(),
+            api: provider.api,
+            models: provider
+                .models
+                .into_iter()
+                .filter_map(|(model_key, model)| project_entry(&model, &model_key))
+                .collect(),
+            id: key,
+        })
+        .collect();
+    let models = root
+        .models
+        .into_iter()
+        .filter_map(|(id, model)| project_entry(&model, &id))
+        .collect();
     Ok(CatalogFile {
         fetched_at,
-        provider_count: Some(provider_count),
-        entries: by_id.into_values().collect(),
+        providers,
+        models,
     })
 }
 
@@ -954,26 +1130,91 @@ pub async fn model_remote_list(
 mod catalog_observability_tests {
     use super::{project_catalog, CatalogFile};
 
+    const CATALOG: &str = r#"{
+        "providers": {
+            "anthropic": {
+                "name": "Anthropic",
+                "npm": "@ai-sdk/anthropic",
+                "api": "https://api.anthropic.com",
+                "models": {
+                    "claude-opus-4": {"id": "claude-opus-4", "name": "Claude Opus 4", "limit": {"context": 200000}}
+                }
+            },
+            "gateway": {
+                "name": "Gateway",
+                "npm": "@ai-sdk/openai-compatible",
+                "models": {
+                    "claude-opus-4": {"id": "claude-opus-4", "name": "Claude Opus 4 (Gateway)"},
+                    "key-only": {"name": "Key Fallback"}
+                }
+            },
+            "empty": {"name": "Empty", "models": {}}
+        },
+        "models": {
+            "anthropic/claude-opus-4": {"id": "anthropic/claude-opus-4", "name": "Claude Opus 4"}
+        }
+    }"#;
+
     #[test]
-    fn catalog_reports_provider_coverage_independent_of_model_deduplication() {
-        let raw = r#"{
-            "alpha": {"models": {"a": {"id": "shared", "name": "Shared A"}}},
-            "beta": {"models": {"b": {"id": "shared", "name": "Shared B"}}},
-            "empty": {"models": {}}
-        }"#;
-        let catalog = project_catalog(raw, 123).expect("project catalog");
-        assert_eq!(catalog.provider_count, Some(2));
+    fn catalog_mirrors_the_two_models_dev_sections() {
+        let catalog = project_catalog(CATALOG, 123).expect("project catalog");
+        assert_eq!(catalog.fetched_at, 123);
+        // 服务商页行数：空 provider 也是目录事实，不参与任何去重
+        assert_eq!(catalog.providers.len(), 3);
+        // 模型页行数：provider-agnostic canonical 模型，与 provider 侧规模无关
+        assert_eq!(catalog.models.len(), 1);
+        assert_eq!(catalog.models[0].id, "anthropic/claude-opus-4");
+    }
+
+    #[test]
+    fn provider_models_keep_every_service_own_listing() {
+        let catalog = project_catalog(CATALOG, 123).expect("project catalog");
+        let by_id = |id: &str| catalog.providers.iter().find(|p| p.id == id).unwrap();
+        // 同一个 id 在两个服务下各留一条：不再跨 provider first-wins 合并
+        assert_eq!(by_id("anthropic").models.len(), 1);
+        assert_eq!(by_id("gateway").models.len(), 2);
+        assert_eq!(by_id("gateway").models[0].id, "claude-opus-4");
+        // 每条保留该服务自己的容量数字，而不是别家同 id 的
+        assert_eq!(by_id("anthropic").models[0].context, Some(200000));
+        assert_eq!(by_id("gateway").models[0].context, None);
+        // id 字段缺失回落 dict 键
+        assert_eq!(by_id("gateway").models[1].id, "key-only");
+        assert_eq!(by_id("empty").models.len(), 0);
+    }
+
+    #[test]
+    fn provider_family_follows_the_service_protocol() {
+        let catalog = project_catalog(CATALOG, 123).expect("project catalog");
+        let family = |id: &str| {
+            catalog
+                .providers
+                .iter()
+                .find(|p| p.id == id)
+                .unwrap()
+                .family
+                .clone()
+        };
+        // Claude id 同时被 OpenAI 兼容网关发布时，anthropic 服务仍属 anthropic 家族
+        assert_eq!(family("anthropic"), "anthropic");
+        assert_eq!(family("gateway"), "openai");
+        assert_eq!(family("empty"), "openai");
+        // npm 缺失时用端点声明兜底
+        let api_only =
+            r#"{"providers":{"p":{"api":"https://api.anthropic.com","models":{}}},"models":{}}"#;
         assert_eq!(
-            catalog.entries.len(),
-            1,
-            "model ids remain globally deduplicated"
+            project_catalog(api_only, 0).unwrap().providers[0].family,
+            "anthropic"
         );
     }
 
     #[test]
-    fn legacy_catalog_snapshot_without_provider_count_remains_readable() {
-        let legacy = r#"{"fetchedAt":123,"entries":[]}"#;
-        let catalog: CatalogFile = serde_json::from_str(legacy).expect("legacy snapshot");
-        assert_eq!(catalog.provider_count, None);
+    fn snapshot_shape_is_the_site_shape() {
+        let catalog = project_catalog(CATALOG, 123).expect("project catalog");
+        let json = serde_json::to_string(&catalog).unwrap();
+        let reparsed: CatalogFile = serde_json::from_str(&json).expect("roundtrip");
+        assert_eq!(reparsed.providers.len(), 3);
+        assert_eq!(reparsed.models.len(), 1);
+        // 旧 api.json 投影的快照不再是可读快照：缓存失效即触发刷新
+        assert!(serde_json::from_str::<CatalogFile>(r#"{"fetchedAt":123,"entries":[]}"#).is_err());
     }
 }

@@ -27,7 +27,8 @@ const openaiProvider: ProviderConfig = {
 
 const catalog: ModelCatalogFile = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  entries: [],
+  providers: [],
+  models: [],
 };
 
 function loadWith(value: ModelConfig) {

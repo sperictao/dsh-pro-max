@@ -1,7 +1,8 @@
-// 模型配置工作台：编辑 ~/.dsh/settings.yaml 的模型域（agent-default-model +
+// 模型配置工作台：编辑 web profile 补丁里的模型域两行（agent-default-model +
 // llm-pi-ai.providers）。交互参考 PI-Desktop Provider Studio，但保持 dsh 自身
-// 配置语义：默认模型/推理档与服务增删改均按动作即时落盘，settings.yaml 热加载
-// 后立即生效；密钥仍只保存环境变量名。主页面只展示摘要、状态和快捷操作，
+// 配置语义：默认模型/推理档与服务增删改均按动作即时落盘，补丁文件热重载后
+// 立即生效（0.1.7 起设置的真身是 profile 的 cordis.patch.yml）；密钥仍只保存
+// 环境变量名。主页面只展示摘要、状态和快捷操作，
 // 详细服务与模型配置进入 ProviderDialog 渐进披露。
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,7 +20,7 @@ import {
   ROW_ICON_BUTTON,
   SELECT,
 } from "@/shared/lib/ui";
-import type { ModelCatalogEntry, ModelConfig, ProviderConfig } from "@/shared/types";
+import type { ModelCatalogFile, ModelConfig, ProviderConfig } from "@/shared/types";
 import { renderMessage, tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
 import { deriveCredentialRef, type CredentialWrite } from "./credentials";
@@ -34,6 +35,7 @@ import {
   CATALOG_STALE_SECS,
   DELETE_CONFIRM_MS,
   EFFORT_OPTIONS,
+  catalogEntryFor,
   firstProviderModelId,
   fmtTokens,
   modelReasoningCapability,
@@ -84,14 +86,18 @@ async function removeOwnedProviderCredential(provider: ProviderConfig): Promise<
 /** 默认模型变化时同步清理已经不被新模型支持的全局 reasoning level。 */
 function withValidDefaultReasoning(
   config: ModelConfig,
-  catalog: ModelCatalogEntry[],
+  catalog: ModelCatalogFile | null,
 ): ModelConfig {
   const effort = config.defaultReasoningEffort?.trim();
   if (!effort) return config;
   const provider = config.providers.find((item) => item.route === config.defaultProvider);
   const model = config.defaultModel?.trim();
   if (!provider || !model) return { ...config, defaultReasoningEffort: null };
-  const capability = modelReasoningCapability(provider, model, catalog);
+  const capability = modelReasoningCapability(
+    provider,
+    model,
+    catalogEntryFor(catalog, provider, model),
+  );
   if (capability.kind === "unknown" || capability.levels.includes(effort)) return config;
   return { ...config, defaultReasoningEffort: null };
 }
@@ -119,7 +125,7 @@ function upsertProvider(
   }
 
   // 第一个 Ready 且拥有有效模型目录的服务自动成为默认。models=[] 的内置
-  // Provider 从 pi-ai 同版本目录取首个模型，但不会把继承目录写回 settings.yaml。
+  // Provider 从 pi-ai 同版本目录取首个模型，但不会把继承目录写回补丁。
   const firstModel = firstProviderModelId(provider);
   if (!defaultProvider?.trim() && firstModel && canAutoDefault) {
     defaultProvider = provider.route;
@@ -174,9 +180,8 @@ export function ModelsView() {
   const [defaultingRoute, setDefaultingRoute] = useState<string | null>(null);
   const [deletingRoute, setDeletingRoute] = useState<string | null>(null);
   const [busyGlobal, setBusyGlobal] = useState(false);
-  const [catalog, setCatalog] = useState<ModelCatalogEntry[]>([]);
+  const [catalog, setCatalog] = useState<ModelCatalogFile | null>(null);
   const [catalogFetchedAt, setCatalogFetchedAt] = useState<number | null>(null);
-  const [catalogProviderCount, setCatalogProviderCount] = useState<number | null>(null);
   const [catalogSource, setCatalogSource] = useState<"snapshot" | "remote" | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogState, setCatalogState] = useState<"loading" | "ready" | "unavailable">("loading");
@@ -222,31 +227,22 @@ export function ModelsView() {
         const file = await cmd.modelCatalogLoad();
         if (disposed) return;
         if (file) {
-          setCatalog(file.entries);
+          setCatalog(file);
           setCatalogFetchedAt(file.fetchedAt);
-          setCatalogProviderCount(file.providerCount ?? null);
           setCatalogSource("snapshot");
           setCatalogError(null);
           setCatalogState("ready");
         } else {
-          setCatalogProviderCount(null);
+          setCatalog(null);
           setCatalogSource(null);
           setCatalogState("unavailable");
         }
-        const missingCapabilityMetadata =
-          file?.entries.some((entry) => entry.capabilities == null) ?? false;
-        const missingObservabilityMetadata = file?.providerCount == null;
-        if (
-          !file ||
-          missingCapabilityMetadata ||
-          missingObservabilityMetadata ||
-          Date.now() / 1000 - file.fetchedAt >= CATALOG_STALE_SECS
-        ) {
+        if (!file || Date.now() / 1000 - file.fetchedAt >= CATALOG_STALE_SECS) {
           void refreshCatalog(true);
         }
       } catch (error) {
         if (!disposed) {
-          setCatalogProviderCount(null);
+          setCatalog(null);
           setCatalogSource(null);
           setCatalogError(renderMessage(error));
           setCatalogState("unavailable");
@@ -287,15 +283,14 @@ export function ModelsView() {
     setCatalogRefreshing(true);
     try {
       const fresh = await cmd.modelCatalogRefresh();
-      setCatalog(fresh.entries);
+      setCatalog(fresh);
       setCatalogFetchedAt(fresh.fetchedAt);
-      setCatalogProviderCount(fresh.providerCount ?? null);
       setCatalogSource("remote");
       setCatalogError(null);
       setCatalogState("ready");
       if (!background) {
         toast(
-          `${t("Refresh model catalog")} · models.dev · ${t("{{count}} models", { count: fresh.entries.length })}`,
+          `${t("Refresh model catalog")} · models.dev · ${t("{{count}} models", { count: fresh.models.length })}`,
           "success",
         );
       }
@@ -363,7 +358,11 @@ export function ModelsView() {
       const provider = current.providers.find((item) => item.route === current.defaultProvider);
       const model = current.defaultModel?.trim();
       if (!provider || !model) return;
-      const capability = modelReasoningCapability(provider, model, catalog);
+      const capability = modelReasoningCapability(
+        provider,
+        model,
+        catalogEntryFor(catalog, provider, model),
+      );
       if (
         capability.kind === "unsupported" ||
         (capability.kind === "supported" && !capability.levels.includes(value))
@@ -548,7 +547,11 @@ export function ModelsView() {
     : null;
   const defaultReasoningCapability =
     defaultProvider && cfg.defaultModel
-      ? modelReasoningCapability(defaultProvider, cfg.defaultModel, catalog)
+      ? modelReasoningCapability(
+          defaultProvider,
+          cfg.defaultModel,
+          catalogEntryFor(catalog, defaultProvider, cfg.defaultModel),
+        )
       : { kind: "unsupported" as const, levels: [] as string[] };
   const reasoningOptions =
     defaultReasoningCapability.kind === "supported"
@@ -879,7 +882,7 @@ export function ModelsView() {
               aria-live="polite"
               data-testid="catalog-status-line"
               data-catalog-source={catalogSource ?? "none"}
-              data-provider-count={catalogProviderCount ?? ""}
+              data-provider-count={catalog?.providers.length ?? ""}
             >
               {catalogRefreshing
                 ? t("Refreshing catalog…")
@@ -891,8 +894,8 @@ export function ModelsView() {
                           : catalogSource === "remote"
                             ? "models.dev"
                             : "—",
-                      providers: catalogProviderCount ?? "—",
-                      models: catalog.length,
+                      providers: catalog?.providers.length ?? "—",
+                      models: catalog?.models.length ?? "—",
                       time: catalogFetchedAt ? new Date(catalogFetchedAt * 1000).toLocaleString() : "—",
                     })
                   : catalogState === "loading"
@@ -928,7 +931,7 @@ export function ModelsView() {
           <p>{t("Changes take effect immediately after saving (hot reload).")}</p>
           <p>
             {t(
-              "Edit the model settings of ~/.dsh/settings.yaml. API keys are stored in the DSH credential store, never in settings.yaml.",
+              "Model settings are written into the web profile's Cordis patch (~/.dsh/profiles/web/cordis.patch.yml). API keys are stored in the DSH credential store, never in the patch.",
             )}
           </p>
         </div>

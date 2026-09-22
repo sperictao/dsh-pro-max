@@ -39,7 +39,11 @@ const config: ModelConfig = {
   defaultReasoningEffort: null,
   providers: [provider],
 };
-const catalog: ModelCatalogFile = { fetchedAt: Math.floor(Date.now() / 1000), entries: [] };
+const catalog: ModelCatalogFile = {
+  fetchedAt: Math.floor(Date.now() / 1000),
+  providers: [],
+  models: [],
+};
 
 beforeEach(() => {
   vi.restoreAllMocks();

@@ -23,6 +23,7 @@
 - 本应用不写 tailnet 侧任何配置：MagicDNS / HTTPS Certificates / Access Controls 都要求用户在 Tailscale 管理页自行配置，应用只检测并在失败步骤给出指引。
 - 任何异机远程访问都要求 tailnet policy 从访问身份到 dsh 节点放行 `tcp:443`；App Capability 只传递应用权限，不会自动放行网络连接。配置 capability 时，同一 grant 必须同时包含 `"ip": ["tcp:443"]` 与同名 `app` 项。
 - serve flag 与 tailnet grants 必须与所配 capability 同名——配置教程见 `docs/dsh-remote-access-setup.md`。
+- 远程暴露面按「谁是路由归属方」划：`/api` 前缀由替换连接插件按 capability 裁决；`/api` 之外的路由由归属方各自问 `connection.requestRejection` 把关——但那个 seam 只按 `trusted-host` 档裁决，与普通 API 同档，所以 dsh 0.1.7 `open-in-app` 的 `POST /open-in-app/open`（在宿主机启动应用）对任何被放行的远程身份都可达（实测 use 档拿到 `{"ok":true}`，同身份打 `settings/describe` 才是 403）。Launcher 的策略是「在本机启动应用只能是本机操作」，因此在 Serve 层按 mount 拦下整条 `/open-in-app` 前缀（挂 `text:` handler，先挂守卫再挂根路由），并在验证步探测它确实生效。新增 `/api` 之外的宿主路由时，这条机制必须同步评估。
 - authz replacement 的浏览器 `connection.isLoopback` 只表示“允许尝试 Host-authority RPC”，不是授权结论；本地旁路仍要求 loopback Host + loopback peer，远程每个特权请求仍由 Host authorizer 的 admin capability 独立裁决。客户端不得再用页面 hostname 建第二套权限事实。
 - 无授权插件时 dsh 对**所有** `/api` 请求（含 Launcher 自己发的凭据 RPC）要求会话 cookie，裸请求一律 401：Launcher 走 dsh 原生 launch token 换本机会话，不绕过鉴权。直写 `~/.dsh/.credentials.yaml` 仍只用于 dsh 未运行的形态。launch token 是 base64url，解析必须收 `-`/`_`——按字母数字截断会让浏览器与 Launcher 都拿到换不到 cookie 的短 token。
 
@@ -76,19 +77,20 @@
 
 ## 模型配置（Model Configuration）
 
-功能域：编辑 `~/.dsh/settings.yaml` 的模型相关配置。导航项「Models」。
+功能域：编辑 web profile 补丁层里模型域两行的配置。导航项「Models」。
 
 ### 术语
 
-- **模型域（Model Domain）** — settings.yaml 中 `agent-default-model`（默认模型选择）与 `llm-pi-ai.providers`（自定义提供商路由）两键；保存以 UI 状态整体重建这两键，其余顶层键（`llm-deepseek`、`agent-presets` 等）原样保留。
+- **模型域（Model Domain）** — profile 补丁（`~/.dsh/profiles/web/cordis.patch.yml`）中 `agent-default-model`（默认模型选择）与 `llm-pi-ai`（自定义提供商路由）两条目的 `config`。两者都是 dsh settings 的命名空间（`settings/describe` 的 `namespaces` 可见同名条目），保存以 UI 状态整体重建这两块 config，其余行（别人的覆盖行、注释、`!!js` 表达式）逐字节保留。dsh 0.1.7 起设置不再落 `~/.dsh/settings.yaml`：那份文件只被一次性导入，首次写入前改名 `settings.yaml.imported`。
 - **提供商路由（Provider Route）** — `llm-pi-ai.providers` 的一个键，承载 displayName / baseURL / api（wire 协议：openai-completions | openai-responses | anthropic-messages）/ apiKeyEnv / models 列表；UI 管理 5 个字段之外的高级字段经 `extra` 原样透传保存，`extra` 混入管理键时一律以 UI 为准丢弃。
 - **凭据引用（Credential Ref）** — `apiKeyEnv` 只保存环境变量名，密钥值永不进配置文件（dsh 运行时经 credentials 机制逐请求解析）。
-- **思考等级（Reasoning Effort）** — 默认模型的可选思考等级：off | minimal | low | medium | high | xhigh | max；不设置时从 settings.yaml 删除该字段。
+- **思考等级（Reasoning Effort）** — 默认模型的可选思考等级：off | minimal | low | medium | high | xhigh | max；不设置时从该行 config 删除该字段。
 
 ### 语义边界
 
-- 保存后需重启 dsh web 服务才生效（Launcher 直接改文件，不依赖 dsh 的 settings 热更新）。
-- 默认模型 provider/model 必填：缺任一保存时移除整个 `agent-default-model` 键而非写半份配置；提供商列表为空时移除整个 `llm-pi-ai` 键（dsh schema 中空 dict 与缺席等价）。
+- 保存即生效：profile 补丁被外部改写后 dsh 会热重载（0.1.7 实测 `settings/describe` 立即反映外部改写），界面承诺的「保存后即时生效」不变，不需要重启。
+- 写盘按补丁的行级纪律：只替换本域两行的 `config` 块，行内其它键（`disabled` 等）与其它行逐字节保留——loader 依赖 `!!js` 表达式，serde_yaml 会静默剥掉标签，所以禁止整文件往返重写。
+- 默认模型 provider/model 必填：缺任一保存时撤掉该行的 config（而非写半份配置）；提供商列表为空时撤掉 `llm-pi-ai` 行的 config（dsh schema 中空 dict 与缺席等价）。撤掉后只剩 id/name 的空壳行整行删除，不留无意义覆盖行。
 - 本域不管理 `llm-deepseek`（内置 deepseek 路由的覆写，由 dsh 自身 UI/引导负责）。
 
 ## 应用壳（Shell）

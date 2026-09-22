@@ -62,8 +62,11 @@ const config: ModelConfig = {
 
 const catalog: ModelCatalogFile = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  providerCount: 2,
-  entries: [],
+  providers: [
+    { id: "primary", name: "Primary", family: "openai", models: [] },
+    { id: "backup", name: "Backup", family: "openai", models: [] },
+  ],
+  models: [],
 };
 
 beforeEach(() => {

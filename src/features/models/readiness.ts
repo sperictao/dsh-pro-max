@@ -1,4 +1,4 @@
-// Provider 可用性只由现有配置 + DSH credential describe 事实推导，不写回 settings.yaml。
+// Provider 可用性只由现有配置 + DSH credential describe 事实推导，不写回 profile 补丁。
 // 内置目录 route 省略 apiKeyEnv 时遵循 dsh llm-pi-ai 原生语义：保持 configured-but-keyless，
 // 由 pi-ai / harness 的 ambient 或已存登录凭据完成认证；自定义 route 无 apiKeyEnv 时
 // 仍按显式匿名端点处理（Ollama / LM Studio / 本地兼容网关等）。

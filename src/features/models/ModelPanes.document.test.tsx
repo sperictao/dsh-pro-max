@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
 import { ModelPanes } from "./ModelPanes";
+import { catalogForProviders } from "./catalog-fixtures";
 import { inputView } from "./shared";
 
 const model = (input: string[] | null): ModelEntry => ({
@@ -28,11 +29,11 @@ const provider = (input: string[] | null): ProviderConfig => ({
   extra: null,
 });
 
+// acme 未收录为目录服务：条目按 provider-agnostic 模型页提供，元数据经 canonical 回落解析。
 const catalog: ModelCatalogEntry[] = [
   {
     id: "doc-model",
     name: "Document Model",
-    family: "openai",
     context: 128000,
     input: ["text", "image", "pdf"],
     capabilities: ["text", "vision", "pdf"],
@@ -57,7 +58,7 @@ describe("ModelPanes document capability projection", () => {
     render(
       <ModelPanes
         provider={provider(["text", "image", "pdf"])}
-        catalog={catalog}
+        catalog={catalogForProviders([], catalog)}
         remote={null}
         fetching={false}
         fetchError={null}
@@ -86,7 +87,7 @@ describe("ModelPanes document capability projection", () => {
     render(
       <ModelPanes
         provider={provider(null)}
-        catalog={catalog}
+        catalog={catalogForProviders([], catalog)}
         remote={null}
         fetching={false}
         fetchError={null}

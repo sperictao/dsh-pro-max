@@ -45,6 +45,19 @@ async function launchBrowser() {
   );
 }
 
+const catalogEntries = [
+  {
+    id: "glm-5.2",
+    name: "GLM 5.2",
+    context: 131072,
+    maxTokens: 32768,
+    input: ["text"],
+    reasoning: true,
+    reasoningLevels: ["low", "medium", "high", "max"],
+    capabilities: ["text", "reasoning", "tools"],
+  },
+];
+
 // 与 Rust 命令返回结构对齐的替身数据
 const MOCK = {
   config: {
@@ -135,20 +148,8 @@ const MOCK = {
   },
   modelCatalog: {
     fetchedAt: Math.floor(Date.now() / 1000),
-    providerCount: 1,
-    entries: [
-      {
-        id: "glm-5.2",
-        name: "GLM 5.2",
-        family: "openai",
-        context: 131072,
-        maxTokens: 32768,
-        input: ["text"],
-        reasoning: true,
-        reasoningLevels: ["low", "medium", "high", "max"],
-        capabilities: ["text", "reasoning", "tools"],
-      },
-    ],
+    providers: [{ id: "mock-catalog", name: "Mock Catalog", family: "openai", models: catalogEntries }],
+    models: catalogEntries,
   },
 };
 

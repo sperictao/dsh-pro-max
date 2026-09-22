@@ -32,14 +32,18 @@ const modelConfig = {
   providers: [initialProvider],
 };
 
+const catalogEntries = [
+  { id: "glm-5.2", name: "GLM 5.2", context: 131072, maxTokens: 32768, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high", "max"], capabilities: ["text", "reasoning", "tools"] },
+  { id: "acme-chat-pro", name: "Acme Chat Pro", context: 128000, maxTokens: 16384, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
+  { id: "acme-chat-fast", name: "Acme Chat Fast", context: 64000, maxTokens: 8192, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
+];
 const modelCatalog = {
   fetchedAt: Math.floor(Date.now() / 1000),
-  providerCount: 2,
-  entries: [
-    { id: "glm-5.2", name: "GLM 5.2", family: "openai", context: 131072, maxTokens: 32768, input: ["text"], reasoning: true, reasoningLevels: ["low", "medium", "high", "max"], capabilities: ["text", "reasoning", "tools"] },
-    { id: "acme-chat-pro", name: "Acme Chat Pro", family: "openai", context: 128000, maxTokens: 16384, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
-    { id: "acme-chat-fast", name: "Acme Chat Fast", family: "openai", context: 64000, maxTokens: 8192, input: ["text"], reasoning: false, reasoningLevels: [], capabilities: ["text"] },
+  providers: [
+    { id: "mock-catalog", name: "Mock Catalog", family: "openai", models: catalogEntries },
+    { id: "mock-provider-2", name: "Mock Provider 2", family: "openai", models: [] },
   ],
+  models: catalogEntries,
 };
 
 const mock = {
@@ -48,7 +52,7 @@ const mock = {
     nodeAvailable: false, dshInstalled: false, dshVersion: null, supportedVersion: "0.1.1-rc.2", dshCompatible: false, dshVersionAboveSupported: false,
     pluginsInstalled: false, dshRunning: false, tailscaleInstalled: false, tailscaleOnline: false, hostname: null, localUrl: null, url: null,
     remoteUrlAccess: null, magicDnsEnabled: false, serveConfigured: false, autostartEnabled: false, error: null,
-    readyTimeline: ["node", "install", "start", "ready"].map((id, index) => ({ index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
+    readyTimeline: ["node", "install", "start", "ready"].map((id, index) => ({ index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}` })),
   },
 };
 
@@ -89,7 +93,7 @@ async function main() {
         get_updater_config_health: () => ({ configured: true, message: "ready" }),
         check_update: () => ({ currentVersion: "0.4.0", availableVersion: null, hasUpdate: false, releaseNotes: null, message: null }),
         dsh_detect: () => dshStatus,
-        dsh_step_schema: ({ remote } = {}) => (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({ index, id, state: "pending", detail: null, problem: null, solution: null, titleKey: `step.${id}` })),
+        dsh_step_schema: ({ remote } = {}) => (remote ? ["node", "install", "plugins", "tailscale", "magicdns", "start", "serve", "verify"] : ["node", "install", "start", "ready"]).map((id, index) => ({ index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}` })),
         model_config_load: () => structuredClone(currentModelConfig),
         model_config_save: ({ config }) => {
           currentModelConfig = structuredClone(config);

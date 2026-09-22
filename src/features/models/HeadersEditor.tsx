@@ -55,7 +55,7 @@ export function HeadersEditor({
   const commitEntries = (next: [string, string][]) => {
     setEntriesState(next);
     // HTTP header name identity is case-insensitive. Keep draft rows intact while typing, but
-    // normalize the persisted map so case-only duplicates can never reach settings.yaml.
+    // normalize the persisted map so case-only duplicates can never reach the profile patch.
     // Later rows win, matching the editor's previous exact-key overwrite behavior.
     const normalized = new Map<string, { name: string; value: string }>();
     for (const [key, value] of next) {

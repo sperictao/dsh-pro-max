@@ -1,7 +1,13 @@
 // 模型模块共享常量与纯函数：协议/推理档枚举、目录家族过滤、token 缩写、
 // URL 规整与校验。组件只做呈现，可断言的逻辑都收在这里。
 
-import type { ModelCatalogEntry, ModelEntry, ProviderConfig } from "@/shared/types";
+import type {
+  ModelCatalogEntry,
+  ModelCatalogFile,
+  ModelCatalogProvider,
+  ModelEntry,
+  ProviderConfig,
+} from "@/shared/types";
 import { MODEL_PRESETS } from "@/shared/lib/model-presets.generated";
 
 // dsh pi-ai 适配器支持的 wire 协议（PROTOCOLS 表，most-reached first）
@@ -27,7 +33,7 @@ export type ProviderModelChoice = {
 /**
  * Provider 的有效模型目录：显式 models 一旦存在即覆盖内置目录；只有 models=[]
  * 且 route 命中同版本 pi-ai 预设时，才投影继承目录。这里只返回选择视图，绝不
- * 把继承模型物化回 settings.yaml。
+ * 把继承模型物化回 profile 补丁。
  */
 export function providerModelChoices(provider: ProviderConfig): ProviderModelChoice[] {
   if (provider.models.length > 0) {
@@ -58,7 +64,7 @@ export type ProviderConnectionTarget = {
 
 /**
  * 连接测试所需的有效路由：显式连接字段优先，内置 route 缺字段时继承同版本预设。
- * 只做运行时投影，不把继承值写回 settings.yaml。
+ * 只做运行时投影，不把继承值写回 profile 补丁。
  */
 export function providerConnectionTarget(provider: ProviderConfig): ProviderConnectionTarget | null {
   const preset = PRESET_BY_ROUTE.get(provider.route.trim());
@@ -181,13 +187,14 @@ const ALL_EFFORTS = new Set<string>(EFFORT_OPTIONS);
 
 /**
  * 当前 provider/model 的有效推理能力。显式 reasoningEfforts 是最高优先级；
- * 未声明时继承 models.dev。显式自定义模型又无目录记录时 fail-closed；继承
- * dsh 内置目录但 models.dev 暂无记录时保持 unknown，避免错误禁用上游能力。
+ * 未声明时继承 models.dev（由调用方经 catalogEntryFor 解析出该服务自己的记录，
+ * 没有时才回落 canonical 模型）。显式自定义模型又无目录记录时 fail-closed；
+ * 继承 dsh 内置目录但 models.dev 暂无记录时保持 unknown，避免错误禁用上游能力。
  */
 export function modelReasoningCapability(
   provider: ProviderConfig,
   modelId: string,
-  catalog: ModelCatalogEntry[],
+  published: ModelCatalogEntry | null,
 ): ModelReasoningCapability {
   const configured = provider.models.find((model) => model.id === modelId);
   if (configured?.reasoningEfforts != null) {
@@ -202,7 +209,6 @@ export function modelReasoningCapability(
       : { kind: "unsupported", levels: [] };
   }
 
-  const published = catalog.find((entry) => entry.id === modelId);
   if (published?.reasoning === false) return { kind: "unsupported", levels: [] };
   if (published?.reasoning === true) {
     const levels = (published.reasoningLevels ?? []).filter((level) => ALL_EFFORTS.has(level));
@@ -219,7 +225,106 @@ export function modelReasoningCapability(
     : { kind: "unknown", levels: [...EFFORT_OPTIONS] };
 }
 
-/** 目录按 id 索引（候选元数据查询） */
-export function catalogIndex(catalog: ModelCatalogEntry[]): Map<string, ModelCatalogEntry> {
-  return new Map(catalog.map((e) => [e.id, e]));
+// ============ models.dev 目录查询 ============
+// 目录与站点同构：providers 是服务商页（每个服务自己发布的模型），models 是
+// provider-agnostic 模型页。服务的模型列表优先取它自己的 provider 记录，
+// canonical 模型只在服务未命中时兜底，避免把别家的同名 id 当成这家的事实。
+
+const MODEL_KEY = (id: string) => id.trim().toLowerCase();
+
+/** 端点归一：URL 去掉尾斜杠，另给出主机用于同域名匹配 */
+function catalogEndpoint(raw: string | null | undefined): { url: string; host: string } | null {
+  const value = (raw ?? "").trim().replace(/\/+$/, "");
+  if (!value) return null;
+  try {
+    return { url: value.toLowerCase(), host: new URL(value).host.toLowerCase() };
+  } catch {
+    return { url: value.toLowerCase(), host: "" };
+  }
+}
+
+/**
+ * 服务 → models.dev provider：route 精确命中目录服务商键优先；否则按端点 URL
+ * 匹配，退一步按主机匹配（同一主机对应多个目录服务时不猜，回落到家族候选池）。
+ */
+export function catalogProviderFor(
+  catalog: ModelCatalogFile | null,
+  provider: ProviderConfig,
+): ModelCatalogProvider | null {
+  if (!catalog) return null;
+  const route = provider.route.trim().toLowerCase();
+  if (route) {
+    const exact = catalog.providers.find((entry) => entry.id.toLowerCase() === route);
+    if (exact) return exact;
+  }
+  const target = catalogEndpoint(provider.baseURL);
+  if (!target) return null;
+  const byUrl = catalog.providers.find((entry) => catalogEndpoint(entry.api)?.url === target.url);
+  if (byUrl) return byUrl;
+  if (!target.host) return null;
+  const byHost = catalog.providers.filter(
+    (entry) => catalogEndpoint(entry.api)?.host === target.host,
+  );
+  return byHost.length === 1 ? byHost[0] : null;
+}
+
+/**
+ * 目录条目：优先该服务自己发布的记录（含它自己的容量与能力数字），
+ * 没有才回落 canonical 模型；两侧都没有即 null（调用方 fail-closed 或保持 unknown）。
+ */
+export function catalogEntryFor(
+  catalog: ModelCatalogFile | null,
+  provider: ProviderConfig,
+  modelId: string,
+): ModelCatalogEntry | null {
+  if (!catalog) return null;
+  const key = MODEL_KEY(modelId);
+  if (!key) return null;
+  const own = catalogProviderFor(catalog, provider)?.models.find(
+    (entry) => MODEL_KEY(entry.id) === key,
+  );
+  if (own) return own;
+  return catalog.models.find((entry) => MODEL_KEY(entry.id) === key) ?? null;
+}
+
+/**
+ * 目录索引：canonical 模型打底，命中服务的记录覆盖同名 id，供候选元数据与
+ * 已选模型的高级设置查询（大小写不敏感）。
+ */
+export function catalogIndex(
+  catalog: ModelCatalogFile | null,
+  provider: ProviderConfig,
+): Map<string, ModelCatalogEntry> {
+  const index = new Map<string, ModelCatalogEntry>();
+  for (const entry of catalog?.models ?? []) index.set(MODEL_KEY(entry.id), entry);
+  for (const entry of catalogProviderFor(catalog, provider)?.models ?? []) {
+    index.set(MODEL_KEY(entry.id), entry);
+  }
+  return index;
+}
+
+/**
+ * 服务自己的目录模型列表；服务未命中目录时回落到同协议家族的 provider 模型
+ * （协议未设置则全目录按 id 去重），与旧版行为一致但家族按服务自己的声明归类。
+ */
+export function catalogCandidates(
+  catalog: ModelCatalogFile | null,
+  provider: ProviderConfig,
+): ModelCatalogEntry[] {
+  if (!catalog) return [];
+  const matched = catalogProviderFor(catalog, provider);
+  if (matched) return matched.models;
+  const family = familyOf(provider.api);
+  const seen = new Set<string>();
+  const pool: ModelCatalogEntry[] = [];
+  for (const entry of catalog.providers) {
+    if (family && entry.family !== family) continue;
+    for (const model of entry.models) {
+      const key = MODEL_KEY(model.id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pool.push(model);
+    }
+  }
+  return pool;
 }
