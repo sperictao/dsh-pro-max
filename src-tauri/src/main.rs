@@ -231,6 +231,7 @@ pub fn run() {
             update_settings,
             dsh::dsh_detect,
             dsh::desktop_detect,
+            dsh::desktop_bridge_status,
             dsh::desktop_check_latest,
             dsh::desktop_open,
             dsh::desktop_quit,

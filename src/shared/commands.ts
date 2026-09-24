@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { log } from "./logger";
 import type {
+  BridgeStatus,
   DesktopStatus,
   DshLatestInfo,
   DshStatus,
@@ -73,6 +74,8 @@ export const desktopOpen = () => invokeTyped<void>("desktop_open");
 // 仅 canQuit 为真的平台可用；应用仍会弹它自己的退出确认框
 export const desktopQuit = () => invokeTyped<void>("desktop_quit");
 export const desktopLogDir = () => invokeTyped<string>("desktop_log_dir");
+// 桌面应用里桥接插件的可用状态（未装 / 代次不符 / 已连接 / 应用没跑）
+export const desktopBridgeStatus = () => invokeTyped<BridgeStatus>("desktop_bridge_status");
 
 // ============ 插件市场 ============
 export const marketFetch = () => invokeTyped<MarketCatalog>("market_fetch");

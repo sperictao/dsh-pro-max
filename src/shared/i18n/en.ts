@@ -295,6 +295,16 @@ export const en = {
   "Cannot locate the DeepSeek Harness log directory": "Cannot locate the DeepSeek Harness log directory",
   "Cannot check for a new DeepSeek Harness version: {{error}}": "Cannot check for a new DeepSeek Harness version: {{error}}",
 
+  // —— 桌面应用：桥接通道 ——
+  "Bridge connected": "Bridge connected",
+  "Open DeepSeek Harness to manage its plugins and configuration.": "Open DeepSeek Harness to manage its plugins and configuration.",
+  "The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:": "The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:",
+  "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:": "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:",
+  "Copy address": "Copy address",
+  "The bridge token is missing; reinstall the bridge plugin in DeepSeek Harness": "The bridge token is missing; reinstall the bridge plugin in DeepSeek Harness",
+  "Bridge returned no data": "Bridge returned no data",
+  "Bridge rejected the request": "Bridge rejected the request",
+
   // —— 设置：外观 ——
   "Follow System": "Follow System",
   "Light": "Light",

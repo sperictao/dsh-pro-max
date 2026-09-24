@@ -33,6 +33,7 @@ use crate::i18n::Message;
 
 mod auth;
 mod autostart;
+mod bridge;
 mod compat;
 mod components;
 mod desktop;
@@ -72,6 +73,7 @@ macro_rules! reexport_commands {
 reexport_commands! {
     detect::dsh_detect,
     desktop::desktop_detect,
+    bridge::desktop_bridge_status,
     desktop::desktop_check_latest,
     desktop::desktop_open,
     desktop::desktop_quit,

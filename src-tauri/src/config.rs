@@ -100,10 +100,14 @@ pub fn home_dir() -> Result<PathBuf, Message> {
     }
 }
 
+/// 本应用的落盘目录：配置文件与桥接 token 都在这下面（`~/.dsh-pro-max`）
+pub fn state_dir() -> Result<PathBuf, Message> {
+    Ok(home_dir()?.join(".dsh-pro-max"))
+}
+
 /// 获取配置文件路径
 pub fn config_file_path() -> Result<PathBuf, Message> {
-    let home = home_dir()?;
-    Ok(home.join(".dsh-pro-max").join("config.json"))
+    Ok(state_dir()?.join("config.json"))
 }
 
 /// 剥掉 Windows `\\?\` 扩展路径前缀。

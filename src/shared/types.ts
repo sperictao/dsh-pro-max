@@ -7,6 +7,7 @@ export type { LauncherConfig } from "./bindings/LauncherConfig";
 export type { DshSurface } from "./bindings/DshSurface";
 export type { DshStatus } from "./bindings/DshStatus";
 export type { DesktopStatus } from "./bindings/DesktopStatus";
+export type { BridgeStatus } from "./bindings/BridgeStatus";
 export type { RemoteUrlAccess } from "./bindings/RemoteUrlAccess";
 export type { DshDistTag } from "./bindings/DshDistTag";
 export type { DshLatestInfo } from "./bindings/DshLatestInfo";

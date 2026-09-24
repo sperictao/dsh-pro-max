@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import { useAppStore } from "@/shared/store";
-import type { DesktopStatus } from "@/shared/types";
+import type { BridgeStatus, DesktopStatus } from "@/shared/types";
 import { DesktopCard } from "./DesktopCard";
 
 const MISSING = "DeepSeek Harness is not installed. Install it from the official channel; this app only detects and manages it.";
@@ -23,10 +23,24 @@ function mockDetect(status: DesktopStatus) {
   vi.spyOn(cmd, "desktopDetect").mockResolvedValue(status);
 }
 
+const bridge = (over: Partial<BridgeStatus> = {}): BridgeStatus => ({
+  state: "not_installed",
+  protocol: null,
+  expectedProtocol: 1,
+  installUrl: "https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro-max-bridge.tgz",
+  ...over,
+});
+
+/// 卡片的状态探测并行取两个命令；漏桩会让整条链路走 catch，两个状态都落空
+function mockBridge(status: BridgeStatus = bridge()) {
+  vi.spyOn(cmd, "desktopBridgeStatus").mockResolvedValue(status);
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   useAppStore.setState({ toasts: [] });
+  mockBridge();
 });
 
 describe("DesktopCard", () => {
@@ -97,5 +111,62 @@ describe("DesktopCard", () => {
 
     await user.click(await screen.findByRole("button", { name: "Check for Updates" }));
     expect(await screen.findByText("Already up to date")).toBeInTheDocument();
+  });
+});
+
+describe("DesktopCard bridge row", () => {
+  it("hands over the one address to paste when the bridge is missing", async () => {
+    mockDetect(detected());
+    render(createElement(DesktopCard));
+
+    expect(
+      await screen.findByText("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(bridge().installUrl)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy address" })).toBeInTheDocument();
+  });
+
+  it("names both protocol generations when the bridge is out of date", async () => {
+    mockDetect(detected());
+    mockBridge(bridge({ state: "incompatible", protocol: 2 }));
+    render(createElement(DesktopCard));
+
+    expect(
+      await screen.findByText(
+        "The bridge plugin is out of date: this app expects protocol 1, the installed bridge reports 2. Reinstall it in DeepSeek Harness with this address:",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says the app has to run first when it is not up", async () => {
+    mockDetect(detected());
+    mockBridge(bridge({ state: "app_unavailable" }));
+    render(createElement(DesktopCard));
+
+    expect(
+      await screen.findByText("Open DeepSeek Harness to manage its plugins and configuration."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy address" })).not.toBeInTheDocument();
+  });
+
+  it("stays quiet once connected", async () => {
+    mockDetect(detected());
+    mockBridge(bridge({ state: "connected", protocol: 1 }));
+    render(createElement(DesktopCard));
+
+    expect(await screen.findByText("Bridge connected")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy address" })).not.toBeInTheDocument();
+  });
+
+  it("shows no bridge row at all when the app is not installed", async () => {
+    mockDetect(detected({ installed: false, version: null }));
+    mockBridge(bridge({ state: "app_unavailable" }));
+    render(createElement(DesktopCard));
+
+    await screen.findByText(MISSING);
+    expect(screen.queryByText("Bridge connected")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Open DeepSeek Harness to manage its plugins and configuration."),
+    ).not.toBeInTheDocument();
   });
 });

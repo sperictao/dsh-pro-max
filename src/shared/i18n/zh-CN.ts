@@ -296,6 +296,16 @@ export const zhCN: Record<I18nKey, string> = {
   "Cannot locate the DeepSeek Harness log directory": "无法定位 DeepSeek Harness 的日志目录",
   "Cannot check for a new DeepSeek Harness version: {{error}}": "无法检测 DeepSeek Harness 新版本：{{error}}",
 
+  // —— 桌面应用：桥接通道 ——
+  "Bridge connected": "桥接已连接",
+  "Open DeepSeek Harness to manage its plugins and configuration.": "打开 DeepSeek Harness 后即可管理它的插件与配置。",
+  "The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:": "DeepSeek Harness 里还没装桥接插件。请在它的 Plugins 页粘贴下面这个地址装一次：",
+  "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:": "桥接插件代次不符：本应用期望 {{expected}}，已装桥接报 {{actual}}。请在 DeepSeek Harness 里用下面这个地址重装：",
+  "Copy address": "复制地址",
+  "The bridge token is missing; reinstall the bridge plugin in DeepSeek Harness": "缺少桥接 token；请在 DeepSeek Harness 里重装桥接插件",
+  "Bridge returned no data": "桥接未返回数据",
+  "Bridge rejected the request": "桥接拒绝了该请求",
+
   // —— 设置：外观 ——
   "Follow System": "跟随系统",
   "Light": "亮色",
