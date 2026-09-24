@@ -39,6 +39,7 @@ import type {
 import { i18n } from "@/shared/i18n";
 import { restartDshWeb } from "@/features/integration/dshActions";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { DesktopPluginsPane } from "./DesktopPluginsPane";
 import { MarketErrorBoundary } from "./MarketErrorBoundary";
 
 // 每批渲染条数（2700+ 条目录全量渲染会卡），滚动到底加载下一批
@@ -177,13 +178,16 @@ export function looksTerminal(name: string, description: string | null): boolean
   return /\b(?:tui|cli|terminal|shell|command[- ]?line)\b|终端|命令行/i.test(text);
 }
 
-type MarketTab = "discover" | "favorites" | "installed" | "diagnostics";
+type MarketTab = "discover" | "favorites" | "installed" | "diagnostics" | "desktop";
 
-const MARKET_TABS: { id: MarketTab; labelKey: string }[] = [
+const MARKET_TABS: { id: MarketTab; labelKey: string; desktopOnly?: boolean }[] = [
   { id: "discover", labelKey: "Discover" },
   { id: "favorites", labelKey: "Favorites" },
   { id: "installed", labelKey: "Installed" },
   { id: "diagnostics", labelKey: "Diagnostics" },
+  // 桌面应用档的插件与配置走桥接插件，不是市场那套 profile 落盘读取——所以它是一
+  // 个独立 tab，而不是市场内的一层切换（见 ADR 0011）
+  { id: "desktop", labelKey: "Desktop app", desktopOnly: true },
 ];
 
 export function MarketView() {
@@ -201,6 +205,8 @@ function MarketViewInner() {
   const refreshCatalog = useAppStore((s) => s.refreshMarketCatalog);
   const refreshInstalled = useAppStore((s) => s.refreshMarketInstalled);
   const refreshUpdates = useAppStore((s) => s.refreshMarketUpdates);
+  const desktopManaged = useAppStore((s) => s.config?.managed_surfaces.includes("desktop") ?? false);
+  const tabs = MARKET_TABS.filter((item) => item.desktopOnly !== true || desktopManaged);
 
   // 两个 tab 的数据进入市场页时一次拉齐（更新检测是自动检测的一部分，
   // 挂载即跑，已安装页可手动重跑）；tab 间切换不重拉（数据驻留 store）
@@ -215,7 +221,7 @@ function MarketViewInner() {
     <main className="flex min-h-0 flex-1 flex-col" id="market-view">
       <div className="shrink-0 border-b border-border px-4 py-1.5">
         <nav className={APP_NAV}>
-          {MARKET_TABS.map((item) => {
+          {tabs.map((item) => {
             // 末尾的 " active" 字面量类是 market-tabs-a11y 的激活判定契约，无样式定义
             const active = tab === item.id;
             return (
@@ -237,6 +243,8 @@ function MarketViewInner() {
         <FavoritesPane />
       ) : tab === "installed" ? (
         <InstalledPane />
+      ) : tab === "desktop" ? (
+        <DesktopPluginsPane />
       ) : (
         <DiagnosticsPane />
       )}

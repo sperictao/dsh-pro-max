@@ -5,6 +5,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { log } from "./logger";
 import type {
   BridgeStatus,
+  ChangeOutcome,
+  ConfigRow,
+  DesktopPlugins,
   DesktopStatus,
   DshLatestInfo,
   DshStatus,
@@ -76,6 +79,18 @@ export const desktopQuit = () => invokeTyped<void>("desktop_quit");
 export const desktopLogDir = () => invokeTyped<string>("desktop_log_dir");
 // 桌面应用里桥接插件的可用状态（未装 / 代次不符 / 已连接 / 应用没跑）
 export const desktopBridgeStatus = () => invokeTyped<BridgeStatus>("desktop_bridge_status");
+// 桌面档的插件与配置（经应用里的桥接插件）。写操作把管理失败折叠进返回值而不是抛出：
+// 判断成败看 outcome.application，不是有没有 reject
+export const desktopBridgePlugins = () => invokeTyped<DesktopPlugins>("desktop_bridge_plugins");
+export const desktopBridgeInstall = (spec: string, approvedBuilds?: string[]) =>
+  invokeTyped<ChangeOutcome>("desktop_bridge_install", { spec, approvedBuilds });
+export const desktopBridgeRemove = (name: string) => invokeTyped<ChangeOutcome>("desktop_bridge_remove", { name });
+// 插件行按 entryId、bundle 按包名；上游是两套开关，调用方只传其中一个
+export const desktopBridgeSetEnabled = (target: { pluginId?: string; bundleName?: string }, enabled: boolean) =>
+  invokeTyped<ChangeOutcome>("desktop_bridge_set_enabled", { ...target, enabled });
+export const desktopBridgeConfig = () => invokeTyped<ConfigRow[]>("desktop_bridge_config");
+export const desktopBridgeConfigEdit = (id: string, config: unknown) =>
+  invokeTyped<void>("desktop_bridge_config_edit", { id, config });
 
 // ============ 插件市场 ============
 export const marketFetch = () => invokeTyped<MarketCatalog>("market_fetch");

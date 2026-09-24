@@ -13,6 +13,7 @@
 - **桥接插件（Bridge Plugin）** — 本应用发给桌面应用的 dsh 插件：用户在桌面应用内 Plugins 页装一次（GitHub Release 的 tgz URL），此后由它把桌面应用**自己的** Plugin Manager / Config Editor 服务开放给本应用。
 - **桥接三态（Bridge States）** — 桌面形态的三种运行态：未装桥接插件 / 应用未运行 / 已连接。
 - **桌面应用外部能力** — 不依赖桥接插件的能力：检测安装与版本、检测运行、打开/聚焦、退出（仅 macOS，见下）、新版本提示、打开日志目录。**它们是桌面形态的基础层，在所有桥接态下都可用**，不是桥接缺席时的兜底。
+- **桥接通道（Bridge Channel）** — 本应用与桥接插件之间的 HTTP 通道：`127.0.0.1:19387` 的 `/dsh-pro-max-bridge/*`（在 `/api` 之外，不参与连接插件的 capability 裁决），Bearer token 取自 `~/.dsh-pro-max/bridge-token`。应答是 `{ok, data}` / `{ok: false, error}`，业务结果在 data 里。
 - **授权插件（Auth Plugins）** — 两个 vendored npm 包（`vendor/dsh-client-connection-authz`、`vendor/dsh-auth-tailscale`），以 pin commit 的 tgz 打进安装包，运行时经 `dsh plugin --profile web add` 装入 web profile；连接鉴权 + Tailscale 身份授权都由它们承担。构建脚本为每个 tgz 产出同目录 `.sha256` 摘要并随 bundle resources 打包，装入前逐台复核（缺失或不符都按损坏拒绝）。
 - **本机会话（Local Session）** — Launcher 以本机身份访问 dsh 特权 API（`credentials/*` 等）所持的 `dsh-auth-*` cookie：从 `~/.dsh/dsh-web.log` 取当前实例打印的 launch token，经 `GET /?token=<token>` 的 303 换取，进程内缓存、被拒（401）重取一次，实现见 `src-tauri/src/dsh/session.rs`。授权插件在场时 loopback 直放，不产生也不使用它。
 - **访问模式（Access Mode）** — **web 形态专属**：本地（仅 127.0.0.1）或远程（叠加 Tailscale Serve HTTPS）。持久化在 localStorage `dsh-access-mode`，默认本地。
@@ -39,6 +40,7 @@
 - 桥接插件跑在用户的桌面应用进程里，因此必须永不产生未处理异常——未捕获异常会触发桌面应用的崩溃恢复（那条路径重置 bundle 列表并禁用第三方插件）；而普通的激活失败是被隔离的（stderr 一行，应用照常运行）。
 - 桥接插件只增路由，不接管连接服务：桌面 shell 启动时要向宿主根路径要一次 `303 + set-cookie` 换取 host cookie，替换 connection 会让这条握手失败并直接进崩溃恢复。
 - 桥接的 token 认证是纵深防御，不是安全边界：同用户的本地进程本就能直写 `~/.dsh/profiles/desktop`（上游只拦 CLI，不拦文件系统）。
+- **桌面档的插件与配置只在「插件 → 桌面应用」一个界面里管**，不在市场里做第二份：市场目录、发行说明、更新检测、凭据、模型导入都建在 web profile 的落盘状态上，桌面档没有对应物。模型域对桌面档同样不开专门界面——桥接给的是通用配置行，改它就是改应用自己 Config Editor 里的那一行；照搬一套模型域 UI 会是第二份实现。
 
 ## 界面多语言（i18n）
 

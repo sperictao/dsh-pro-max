@@ -11,8 +11,9 @@ import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
 import { renderMessage } from "@/shared/i18n/error";
 import * as cmd from "@/shared/commands";
-import { BTN_OUTLINE, BTN_PRIMARY, BTN_SM, MUTED, PANEL } from "@/shared/lib/ui";
+import { BTN_OUTLINE, BTN_PRIMARY, MUTED, PANEL } from "@/shared/lib/ui";
 import type { BridgeStatus, DesktopStatus } from "@/shared/types";
+import { BridgeNotice } from "./BridgeNotice";
 
 /// 动作后应用还要若干秒才起停完毕，晚一点复检；端口探测是权威状态，
 /// 读早了下次动作也会自纠
@@ -146,46 +147,14 @@ export function DesktopCard() {
         </p>
       )}
 
-      {installed && bridge && <BridgeRow bridge={bridge} onCopy={copyAddress} />}
+      {/* 未就绪的四态说明由共用组件给（插件页的桌面 tab 用的是同一份） */}
+      {installed && bridge && (
+        <>
+          <BridgeNotice bridge={bridge} onCopy={copyAddress} />
+          {bridge.state === "connected" && <p className={MUTED}>{t("Bridge connected")}</p>}
+        </>
+      )}
     </div>
   );
 }
 
-/// 桥接态。四态各有明确去向：没装/代次不符都给可复制的安装地址（那是用户唯一要做
-/// 的一步），应用没跑就先说清楚这一步的必要条件——不显示「失败」了事
-function BridgeRow({ bridge, onCopy }: { bridge: BridgeStatus; onCopy: (url: string) => void }) {
-  const { t } = useTranslation();
-
-  if (bridge.state === "connected") {
-    return <p className={MUTED}>{t("Bridge connected")}</p>;
-  }
-
-  if (bridge.state === "app_unavailable") {
-    return (
-      <p className={MUTED}>
-        {t("Open DeepSeek Harness to manage its plugins and configuration.")}
-      </p>
-    );
-  }
-
-  // not_installed 与 incompatible 的去向是同一个：粘一次地址重装
-  const reason =
-    bridge.state === "not_installed"
-      ? t("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:")
-      : t(
-          "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:",
-          { expected: bridge.expectedProtocol, actual: bridge.protocol ?? "?" },
-        );
-
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
-      <p className={MUTED}>{reason}</p>
-      <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 truncate font-mono text-xs opacity-80">{bridge.installUrl}</code>
-        <button className={BTN_SM} onClick={() => void onCopy(bridge.installUrl)}>
-          {t("Copy address")}
-        </button>
-      </div>
-    </div>
-  );
-}

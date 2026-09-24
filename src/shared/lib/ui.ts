@@ -57,10 +57,16 @@ export const SETTINGS_NAV_ITEM_INACTIVE = "text-muted-foreground";
 export const ROW_ICON_BUTTON =
   "inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border bg-background text-foreground outline-none transition-[background-color,border-color,color,box-shadow,transform] duration-150 hover:bg-accent hover:text-accent-foreground active:not-disabled:translate-y-px focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50";
 
-export const INPUT =
-  "h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50";
+/// 单行/多行输入共用的视觉语言：边框、聚焦环、禁用态、占位符都在这里一处
+const FIELD_BASE =
+  "w-full rounded-md border border-input bg-background shadow-xs outline-none transition-[border-color,box-shadow] duration-150 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50";
+
+export const INPUT = `${FIELD_BASE} h-9 px-3 py-1 text-sm`;
 
 export const INPUT_MONO = `${INPUT} font-mono`;
+
+// 多行文本输入（桌面档配置原文编辑用）：与 INPUT 同一视觉语言，不限高、等宽
+export const TEXTAREA = `${FIELD_BASE} px-3 py-2 font-mono text-xs leading-relaxed`;
 
 // 区块卡表面（SettingsCard / DshCard 主卡 / 模式行卡 / 模型页区块 / 市场卡同一事实）；
 // 需要覆盖边框色时后置 border-* 任意值类（编译序在具名 border-border 之后，天然生效）

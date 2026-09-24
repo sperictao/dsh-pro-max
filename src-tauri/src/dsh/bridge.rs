@@ -60,6 +60,274 @@ pub async fn desktop_bridge_status() -> Result<BridgeStatus, Message> {
     super::ipc_blocking(bridge_status_once).await
 }
 
+// ============ 桌面档的插件与配置 ============
+//
+// 以下是上游 PluginInfo / BundleInfo / ChangeResult 的 UI 子集，不是全量复刻：不认识
+// 的字段 serde 直接忽略，上游加字段不会让这里崩；这里只取界面要显示与要寻址的部分。
+
+/// 桌面档的一个插件行
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub struct PluginRow {
+    /// 翻转启用状态要回传的标识（上游的品牌类型，必须原样带回）
+    pub entry_id: String,
+    pub module_name: String,
+    pub enabled: bool,
+    /// 有值才可经 profile 补丁翻转；否则 read_only_reason 说明为什么不行
+    pub patch_id: Option<String>,
+    pub read_only_reason: Option<String>,
+}
+
+/// 桌面档的一个 bundle（带 patch 层的插件包）
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub struct BundleRow {
+    pub name: String,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub enabled: bool,
+    /// profile 自己的依赖里有它；false 表示由 dsh 安装自带
+    pub installed: bool,
+    pub removable: bool,
+    pub read_only_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub struct DesktopPlugins {
+    pub plugins: Vec<PluginRow>,
+    pub bundles: Vec<BundleRow>,
+}
+
+/// 一次管理操作的结果。上游把管理失败**折叠进返回值**而不是抛出，所以判断成败看
+/// `application`，不是 HTTP 状态码也不是有没有 Err
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub struct ChangeOutcome {
+    /// applied / restart-required / overridden / failed / cancelled
+    pub application: String,
+    pub target: String,
+    pub enabled: Option<bool>,
+    /// 上游的错误码；failed 时才有
+    pub error_code: Option<String>,
+    pub error_diagnostic: Option<String>,
+    /// 需要用户显式放行的构建脚本；非空时这次安装没完成，要拿它原样再调一次
+    pub pending_builds: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// 活动 profile 里的一行配置
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub struct ConfigRow {
+    /// 寻址用：编辑时原样回传
+    pub id: String,
+    pub name: String,
+    /// 这一行现在生效的配置（该行没写 config 时为 None）。
+    /// ts(type) 会整个覆盖 Option，所以 `| null` 要自己写上，否则生成出来的类型会撒谎
+    #[ts(type = "import(\"./serde_json/JsonValue\").JsonValue | null")]
+    pub current: Option<serde_json::Value>,
+}
+
+#[tauri::command]
+pub async fn desktop_bridge_plugins() -> Result<DesktopPlugins, Message> {
+    super::ipc_blocking(plugins_once).await
+}
+
+#[tauri::command]
+pub async fn desktop_bridge_install(
+    spec: String,
+    approved_builds: Option<Vec<String>>,
+) -> Result<ChangeOutcome, Message> {
+    super::ipc_blocking(move || {
+        let mut body = serde_json::json!({ "spec": spec });
+        // 只在有值时才带：上游按「给了就得是当前仍待批的包」校验，空数组会被拒
+        if let Some(builds) = approved_builds {
+            body["approvedBuilds"] = serde_json::json!(builds);
+        }
+        change_once("/plugins/install", body)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn desktop_bridge_remove(name: String) -> Result<ChangeOutcome, Message> {
+    super::ipc_blocking(move || change_once("/plugins/remove", serde_json::json!({ "name": name }))).await
+}
+
+/// 翻转启用状态：插件行按 entryId、bundle 按包名，上游是两套开关所以这里也分两个参数
+#[tauri::command]
+pub async fn desktop_bridge_set_enabled(
+    plugin_id: Option<String>,
+    bundle_name: Option<String>,
+    enabled: bool,
+) -> Result<ChangeOutcome, Message> {
+    super::ipc_blocking(move || change_once("/plugins/enable", enable_body(plugin_id, bundle_name, enabled)?)).await
+}
+
+#[tauri::command]
+pub async fn desktop_bridge_config() -> Result<Vec<ConfigRow>, Message> {
+    super::ipc_blocking(config_once).await
+}
+
+/// 写入一行的绝对 config。整份替换（不是合并）：上游的 edit 收到的就是下一份原始 config
+#[tauri::command]
+pub async fn desktop_bridge_config_edit(id: String, config: serde_json::Value) -> Result<(), Message> {
+    super::ipc_blocking(move || {
+        request::<serde_json::Value>(
+            "POST",
+            "/config/edit",
+            Some(serde_json::json!({ "id": id, "config": config })),
+        )
+        .map(|_| ())
+    })
+    .await
+}
+
+/// 翻转启用状态的请求体。插件行按 entryId、bundle 按包名——上游是两套开关，
+/// 所以两者必须恰好给一个，两个都给或都不给都是调用方的错，不猜它想改哪个
+fn enable_body(
+    plugin_id: Option<String>,
+    bundle_name: Option<String>,
+    enabled: bool,
+) -> Result<serde_json::Value, Message> {
+    match (plugin_id, bundle_name) {
+        (Some(id), None) => Ok(serde_json::json!({ "pluginId": id, "enabled": enabled })),
+        (None, Some(name)) => Ok(serde_json::json!({ "bundleName": name, "enabled": enabled })),
+        _ => Err(Message::key("Exactly one of pluginId or bundleName must be given")),
+    }
+}
+
+fn plugins_once() -> Result<DesktopPlugins, Message> {
+    let raw: UpstreamPlugins = required("/plugins")?;
+    Ok(DesktopPlugins {
+        plugins: raw
+            .plugins
+            .into_iter()
+            .map(|row| PluginRow {
+                entry_id: row.entry_id,
+                module_name: row.module_name,
+                enabled: row.enabled,
+                patch_id: row.patch_id,
+                read_only_reason: row.read_only_reason,
+            })
+            .collect(),
+        bundles: raw
+            .bundles
+            .into_iter()
+            .map(|row| BundleRow {
+                name: row.name,
+                version: row.version,
+                description: row.description,
+                enabled: row.enabled,
+                installed: row.installed,
+                removable: row.removable,
+                read_only_reason: row.read_only_reason,
+            })
+            .collect(),
+    })
+}
+
+fn config_once() -> Result<Vec<ConfigRow>, Message> {
+    let rows: Vec<UpstreamConfigRow> = required("/config")?;
+    Ok(rows
+        .into_iter()
+        .map(|row| ConfigRow {
+            id: row.id,
+            name: row.name,
+            current: row.current,
+        })
+        .collect())
+}
+
+fn change_once(path: &str, body: serde_json::Value) -> Result<ChangeOutcome, Message> {
+    let raw: UpstreamChange = required_with(path, body)?;
+    let pending = raw.pending_builds.unwrap_or_default();
+    Ok(ChangeOutcome {
+        application: raw.application,
+        target: raw.target,
+        enabled: raw.enabled,
+        error_code: raw.error.as_ref().map(|e| e.code.clone()),
+        error_diagnostic: raw.error.and_then(|e| e.diagnostic),
+        pending_builds: pending,
+        warnings: raw.warnings.unwrap_or_default(),
+    })
+}
+
+/// 发请求并要求桥接确实给了 data：桥接不在或没装都是错误，管理操作没有「静默成功」这种结果
+fn required<T: for<'de> Deserialize<'de>>(path: &str) -> Result<T, Message> {
+    required_with(path, serde_json::Value::Null)
+}
+
+fn required_with<T: for<'de> Deserialize<'de>>(path: &str, body: serde_json::Value) -> Result<T, Message> {
+    let method = if body.is_null() { "GET" } else { "POST" };
+    let body = if body.is_null() { None } else { Some(body) };
+    request::<T>(method, path, body)?
+        .ok_or_else(|| Message::key("The bridge plugin is not running in DeepSeek Harness"))
+}
+
+/// 上游应答的字段名一律 camelCase；不认识的字段忽略，上游加字段不会让这里崩
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamPlugins {
+    plugins: Vec<UpstreamPlugin>,
+    bundles: Vec<UpstreamBundle>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamPlugin {
+    entry_id: String,
+    module_name: String,
+    enabled: bool,
+    patch_id: Option<String>,
+    read_only_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamBundle {
+    name: String,
+    version: Option<String>,
+    description: Option<String>,
+    enabled: bool,
+    installed: bool,
+    removable: bool,
+    read_only_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamChange {
+    application: String,
+    target: String,
+    enabled: Option<bool>,
+    error: Option<UpstreamError>,
+    pending_builds: Option<Vec<String>>,
+    warnings: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamError {
+    code: String,
+    diagnostic: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamConfigRow {
+    id: String,
+    name: String,
+    current: Option<serde_json::Value>,
+}
+
+
 /// 探测桥接状态。只看本机：端口探测 + 一次本机回环 ping，不出公网。
 fn bridge_status_once() -> Result<BridgeStatus, Message> {
     let (state, protocol) = if !super::process::port_listening(DESKTOP_PORT) {
@@ -206,5 +474,135 @@ mod tests {
         let status = bridge_status_once().unwrap();
         println!("state={:?} protocol={:?}", status.state, status.protocol);
         assert_eq!(status.expected_protocol, BRIDGE_PROTOCOL);
+    }
+
+    // —— 上游字段名核对 ——
+    // 下面的样本按桌面应用内嵌 API 目录（typert 契约）里 PluginInventoryEntry /
+    // BundleInfo / ChangeResult / PluginInfo 的声明逐字构造。这些测试的意义是：上游改
+    // 字段名时在这里就断，而不是等到真机上一个字段静默变 None。
+
+    #[test]
+    fn maps_a_plugin_row_that_can_be_toggled() {
+        let raw: UpstreamPlugins = serde_json::from_str(
+            r#"{
+                "plugins": [{
+                    "entryId": "e1", "moduleName": "pkg", "enabled": true,
+                    "fiberPhase": "active", "patchId": "row-1"
+                }],
+                "bundles": []
+            }"#,
+        )
+        .unwrap();
+        let row = &raw.plugins[0];
+        assert_eq!(row.entry_id, "e1");
+        assert_eq!(row.module_name, "pkg");
+        assert!(row.enabled);
+        assert_eq!(row.patch_id.as_deref(), Some("row-1"));
+        assert!(row.read_only_reason.is_none());
+    }
+
+    /// 不可改的行是 patchId 缺席 + readOnlyReason 在场（上游的联合类型，另一支没有这俩字段）
+    #[test]
+    fn maps_a_read_only_plugin_row() {
+        let raw: UpstreamPlugins = serde_json::from_str(
+            r#"{
+                "plugins": [{"entryId": "e2", "moduleName": "mgr", "enabled": true,
+                             "fiberPhase": null, "readOnlyReason": "management-required"}],
+                "bundles": []
+            }"#,
+        )
+        .unwrap();
+        assert!(raw.plugins[0].patch_id.is_none());
+        assert_eq!(
+            raw.plugins[0].read_only_reason.as_deref(),
+            Some("management-required")
+        );
+    }
+
+    #[test]
+    fn maps_a_bundle_row() {
+        let raw: UpstreamPlugins = serde_json::from_str(
+            r#"{
+                "plugins": [],
+                "bundles": [{
+                    "name": "@dsh-external/dsh-pro-max-bridge", "version": "0.1.0",
+                    "description": "bridge", "enabled": true, "installed": true,
+                    "optional": false, "removable": true, "rows": [], "overrides": []
+                }]
+            }"#,
+        )
+        .unwrap();
+        let row = &raw.bundles[0];
+        assert_eq!(row.name, "@dsh-external/dsh-pro-max-bridge");
+        assert!(row.installed && row.removable && row.enabled);
+        assert_eq!(row.description.as_deref(), Some("bridge"));
+    }
+
+    /// 上游会省略可选字段而不是给 null；只认 camelCase，snake_case 不该碰巧命中
+    #[test]
+    fn tolerates_omitted_optional_fields_and_rejects_snake_case() {
+        let raw: UpstreamPlugins =
+            serde_json::from_str(r#"{"plugins":[{"entryId":"e","moduleName":"m","enabled":false}],"bundles":[]}"#)
+                .unwrap();
+        assert_eq!(raw.plugins[0].entry_id, "e");
+
+        // 字段名写错必须报错，不能静默变 None——这正是这组测试要挡的
+        assert!(
+            serde_json::from_str::<UpstreamPlugins>(
+                r#"{"plugins":[{"entry_id":"e","module_name":"m","enabled":false}],"bundles":[]}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn maps_a_failed_change_with_the_upstream_error_code() {
+        let raw: UpstreamChange = serde_json::from_str(
+            r#"{
+                "changed": false, "application": "failed", "stage": "remove",
+                "target": "b", "error": {"code": "not-removable", "diagnostic": "supplied by dsh"}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(raw.application, "failed");
+        assert_eq!(raw.error.as_ref().unwrap().code, "not-removable");
+        assert_eq!(
+            raw.error.as_ref().unwrap().diagnostic.as_deref(),
+            Some("supplied by dsh")
+        );
+        assert!(raw.pending_builds.is_none());
+    }
+
+    /// 待批构建脚本：非空表示这次安装没完成，要拿它原样再调一次
+    #[test]
+    fn maps_pending_builds_of_an_incomplete_install() {
+        let raw: UpstreamChange = serde_json::from_str(
+            r#"{
+                "changed": false, "application": "failed", "stage": "install",
+                "target": "spec", "pendingBuilds": ["pkg-a", "pkg-b"],
+                "warnings": ["inactive entry left as is"]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            raw.pending_builds.as_deref(),
+            Some(&["pkg-a".to_string(), "pkg-b".to_string()][..])
+        );
+        assert_eq!(raw.warnings.as_deref(), Some(&["inactive entry left as is".to_string()][..]));
+    }
+
+    #[test]
+    fn enable_targets_exactly_one_of_the_two_switches() {
+        let plugin = enable_body(Some("e1".into()), None, false).unwrap();
+        assert_eq!(plugin["pluginId"], "e1");
+        assert_eq!(plugin["enabled"], false);
+
+        let bundle = enable_body(None, Some("b".into()), true).unwrap();
+        assert_eq!(bundle["bundleName"], "b");
+        assert_eq!(bundle["enabled"], true);
+
+        // 两个都给或都不给：调用方的错，不猜它想改哪个
+        assert!(enable_body(Some("e".into()), Some("b".into()), true).is_err());
+        assert!(enable_body(None, None, true).is_err());
     }
 }
