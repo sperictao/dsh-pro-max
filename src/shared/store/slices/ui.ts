@@ -6,6 +6,7 @@ export type View = "integration" | "market" | "models" | "settings";
 export type SettingsSection =
   | "general"
   | "appearance"
+  | "dsh-surface"
   | "dsh-version"
   | "dsh-autostart"
   | "dsh-auth"

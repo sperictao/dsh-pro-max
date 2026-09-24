@@ -2,15 +2,20 @@
 
 ## DeepSeek Harness 集成（DSH）
 
-本应用的核心功能域：一键安装/启动 DeepSeek Harness（dsh）Web 服务，并经 Tailscale 提供带身份授权的远程 HTTPS 访问。
+本应用的核心功能域：纳管 DeepSeek Harness（dsh）的两种官方形态——web 运行档（一键安装/启动 Web 服务，并经 Tailscale 提供带身份授权的远程 HTTPS 访问）与官方桌面应用（经桥接插件纳管其插件与配置）。
 
 ### 术语
 
 - **dsh** — DeepSeek Harness CLI（`@deepseek-ai/dsh`，npm 全局安装），本应用 pin 支持版本（见 `src-tauri/src/dsh.rs` 的 `SUPPORTED_DSH_VERSION`），不兼容版本走修复流程重装。
-- **Web Profile** — dsh 的 `--profile web` 运行档，本应用只管理这一档，本地绑定 `127.0.0.1:3899`。
+- **纳管形态（Managed Surface）** — 本应用纳管的 dsh 官方形态，可仅一档、可两档并存：web 与 desktop。「纳管」= 本应用负责它的检测/启停/状态；未纳管的形态不进 UI、不被触碰。设置页两项开关各自 gate 一档，不允许全关。
+- **Web 运行档（Web Profile）** — dsh 的 `--profile web` 运行档，本应用全权纳管：安装、启停、插件、模型配置、远程访问。本地绑定 `127.0.0.1:3899`。
+- **桌面应用（Desktop App）** — 官方 DeepSeek Harness Electron 应用（`com.deepseek.dsh`），监听 `127.0.0.1:19387`，其 `desktop` 运行档由它独占。
+- **桥接插件（Bridge Plugin）** — 本应用发给桌面应用的 dsh 插件：用户在桌面应用内 Plugins 页装一次（GitHub Release 的 tgz URL），此后由它把桌面应用**自己的** Plugin Manager / Config Editor 服务开放给本应用。
+- **桥接三态（Bridge States）** — 桌面形态的三种运行态：未装桥接插件 / 应用未运行 / 已连接。
+- **桌面应用外部能力** — 不依赖桥接插件的能力：检测安装与版本、检测运行、打开/聚焦、退出（仅 macOS，见下）、新版本提示、打开日志目录。**它们是桌面形态的基础层，在所有桥接态下都可用**，不是桥接缺席时的兜底。
 - **授权插件（Auth Plugins）** — 两个 vendored npm 包（`vendor/dsh-client-connection-authz`、`vendor/dsh-auth-tailscale`），以 pin commit 的 tgz 打进安装包，运行时经 `dsh plugin --profile web add` 装入 web profile；连接鉴权 + Tailscale 身份授权都由它们承担。构建脚本为每个 tgz 产出同目录 `.sha256` 摘要并随 bundle resources 打包，装入前逐台复核（缺失或不符都按损坏拒绝）。
 - **本机会话（Local Session）** — Launcher 以本机身份访问 dsh 特权 API（`credentials/*` 等）所持的 `dsh-auth-*` cookie：从 `~/.dsh/dsh-web.log` 取当前实例打印的 launch token，经 `GET /?token=<token>` 的 303 换取，进程内缓存、被拒（401）重取一次，实现见 `src-tauri/src/dsh/session.rs`。授权插件在场时 loopback 直放，不产生也不使用它。
-- **访问模式（Access Mode）** — 本地（仅 127.0.0.1）或远程（叠加 Tailscale Serve HTTPS）。持久化在 localStorage `dsh-access-mode`，默认本地。
+- **访问模式（Access Mode）** — **web 形态专属**：本地（仅 127.0.0.1）或远程（叠加 Tailscale Serve HTTPS）。持久化在 localStorage `dsh-access-mode`，默认本地。
 - **Capability 域名（Capability Domain）** — 远程授权的应用能力域名（用户自有域名），拼成 `{domain}/cap/dsh-admin`（管理）与 `{domain}/cap/dsh`（使用）经环境变量注入 dsh 进程，并作为 `tailscale serve --accept-app-caps` 的值；空则不注入，远程特权接口恒 403。
 - **允许登录名（Allowed Logins）** — 允许远程访问的 Tailscale 登录名集合；本机当前用户始终自动包含，额外登录名在配置中以逗号分隔。
 - **步骤时间线（Step Timeline）** — 安装/设置流程经 `dsh-step` 事件推送到前端的进度（每步含状态与失败时的原因/下一步）：远程 8 步（node → install → plugins → tailscale → magicdns → start → serve → verify，verify 同时验证服务直连与本机浏览器代理路径，避免远端可用但本机同一 URL 被代理截获时误报就绪）；本地 4 步（node → install → start → ready），ready 以「loopback HTTP 应答 → 应答后稳定观察 → 进程存活」收口——dsh 先绑端口、插件树加载与激活在其后（激活崩溃发生在服务已应答之后，端口绑定甚至首次应答都不等于可用），任一环节失败都会以失败节点带上 dsh-web.log 里的具体报错。
@@ -26,6 +31,14 @@
 - 远程暴露面按「谁是路由归属方」划：`/api` 前缀由替换连接插件按 capability 裁决；`/api` 之外的路由由归属方各自问 `connection.requestRejection` 把关——但那个 seam 只按 `trusted-host` 档裁决，与普通 API 同档，所以 dsh 0.1.7 `open-in-app` 的 `POST /open-in-app/open`（在宿主机启动应用）对任何被放行的远程身份都可达（实测 use 档拿到 `{"ok":true}`，同身份打 `settings/describe` 才是 403）。Launcher 的策略是「在本机启动应用只能是本机操作」，因此在 Serve 层按 mount 拦下整条 `/open-in-app` 前缀（挂 `text:` handler，先挂守卫再挂根路由），并在验证步探测它确实生效。新增 `/api` 之外的宿主路由时，这条机制必须同步评估。
 - authz replacement 的浏览器 `connection.isLoopback` 只表示“允许尝试 Host-authority RPC”，不是授权结论；本地旁路仍要求 loopback Host + loopback peer，远程每个特权请求仍由 Host authorizer 的 admin capability 独立裁决。客户端不得再用页面 hostname 建第二套权限事实。
 - 无授权插件时 dsh 对**所有** `/api` 请求（含 Launcher 自己发的凭据 RPC）要求会话 cookie，裸请求一律 401：Launcher 走 dsh 原生 launch token 换本机会话，不绕过鉴权。直写 `~/.dsh/.credentials.yaml` 仍只用于 dsh 未运行的形态。launch token 是 base64url，解析必须收 `-`/`_`——按字母数字截断会让浏览器与 Launcher 都拿到换不到 cookie 的短 token。
+- **`desktop` 运行档由官方桌面应用独占**：dsh CLI 对启动、`--dump-config`、`plugin` 一律按名字拒绝（`profile "desktop" is managed exclusively by the Electron application`）。本应用不写 `~/.dsh/profiles/desktop`、不代它装插件；对桌面档的插件与配置操作只能经桥接插件，走应用**自己的** Plugin Manager / Config Editor 服务——那是同一个机制，不是第二份实现。
+- **两形态共享同一个 harness home**：`~/.dsh` 的凭据、settings、skills、hooks 是同一份，只有 `profiles/` 分开（`profiles/web` 与 `profiles/desktop`）。所以两档的插件与模型配置互不相干，身份与凭据是同一个。
+- **官方桌面应用只有 macOS arm64 与 Windows x64 两个构建**（`download.deepseek.com/dsh-desk/feeds/` 下只有 `mac-arm64` 与 `win-x64`）。其余平台上桌面形态的 `supported` 为假：检测直接报「本平台无构建」，不给入口。
+- **官方桌面应用在 Windows 上无法被第三方正常退出**：窗口 close 被应用 `preventDefault` 成「隐藏到托盘」，窗口全关也不触发 `app.quit()`，第三方进程没有可触发的正常退出入口；强杀会跳过应用自己的 shutdown 流程。所以 Windows 上不提供退出，界面改述「只能从它自己的托盘菜单退出」（`canQuit` 为假）。macOS 走 AppleScript 的标准 quit 事件，应用仍会弹它自己的退出确认框——我们只发起请求，不代替用户决策。
+- 不以 home 层补丁（`~/.dsh/cordis.patch.yml`）挂载桥接插件：那份文件被所有运行档读取，用共享状态表达单档意图，会让每个 profile 都背上一个不属于它的行，卸载后还留下悬空引用。
+- 桥接插件跑在用户的桌面应用进程里，因此必须永不产生未处理异常——未捕获异常会触发桌面应用的崩溃恢复（那条路径重置 bundle 列表并禁用第三方插件）；而普通的激活失败是被隔离的（stderr 一行，应用照常运行）。
+- 桥接插件只增路由，不接管连接服务：桌面 shell 启动时要向宿主根路径要一次 `303 + set-cookie` 换取 host cookie，替换 connection 会让这条握手失败并直接进崩溃恢复。
+- 桥接的 token 认证是纵深防御，不是安全边界：同用户的本地进程本就能直写 `~/.dsh/profiles/desktop`（上游只拦 CLI，不拦文件系统）。
 
 ## 界面多语言（i18n）
 

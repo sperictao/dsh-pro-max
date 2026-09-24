@@ -269,6 +269,14 @@ export const en = {
   "English": "English",
   "中文": "中文",
 
+  // —— 设置：纳管形态 ——
+  "Managed Surfaces": "Managed Surfaces",
+  "Choose which official dsh surfaces this app manages. At least one stays enabled; both can run side by side.": "Choose which official dsh surfaces this app manages. At least one stays enabled; both can run side by side.",
+  "Manage dsh web": "Manage dsh web",
+  "The dsh --profile web runtime: install, start/stop, plugins, models and remote access, bound to 127.0.0.1:3899.": "The dsh --profile web runtime: install, start/stop, plugins, models and remote access, bound to 127.0.0.1:3899.",
+  "Manage the DeepSeek Harness desktop app": "Manage the DeepSeek Harness desktop app",
+  "The official desktop app: detect, open, quit and update checks, plus its plugins and configuration through the bridge plugin.": "The official desktop app: detect, open, quit and update checks, plus its plugins and configuration through the bridge plugin.",
+
   // —— 设置：外观 ——
   "Follow System": "Follow System",
   "Light": "Light",

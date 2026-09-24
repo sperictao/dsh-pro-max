@@ -4,6 +4,7 @@
 // 再生成）。名称差异经 re-export 别名一次适配，消费方 import 路径不变。
 
 export type { LauncherConfig } from "./bindings/LauncherConfig";
+export type { DshSurface } from "./bindings/DshSurface";
 export type { DshStatus } from "./bindings/DshStatus";
 export type { RemoteUrlAccess } from "./bindings/RemoteUrlAccess";
 export type { DshDistTag } from "./bindings/DshDistTag";

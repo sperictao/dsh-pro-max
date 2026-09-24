@@ -2,6 +2,17 @@ use crate::i18n::Message;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// 本应用纳管的 dsh 官方形态
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+#[serde(rename_all = "snake_case")]
+pub enum DshSurface {
+    /// dsh 的 --profile web 运行档：安装、启停、插件、模型配置、远程访问全权纳管
+    Web,
+    /// 官方 DeepSeek Harness 桌面应用：外部能力常驻，插件与配置经桥接插件
+    Desktop,
+}
+
 /// 启动器配置，持久化到 ~/.dsh-pro-max/config.json
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export, export_to = "../../src/shared/bindings/")]
@@ -13,6 +24,10 @@ pub struct LauncherConfig {
     /// 界面语言："system"（跟随系统）/ "en" / "zh-CN"
     #[serde(default = "default_language")]
     pub language: String,
+
+    /// 本应用纳管的 dsh 官方形态，可仅一档、可两档并存
+    #[serde(default = "default_managed_surfaces")]
+    pub managed_surfaces: Vec<DshSurface>,
 
     /// dsh 远程管理 capability 的域名部分（完整为 `{domain}/cap/dsh-admin`）。
     /// 空 = 不注入 DSH_TAILSCALE_ADMIN_CAPABILITY，远程管理接口恒 403。
@@ -39,11 +54,23 @@ fn default_language() -> String {
     "system".to_string()
 }
 
+fn default_managed_surfaces() -> Vec<DshSurface> {
+    vec![DshSurface::Web]
+}
+
+/// 纳管形态归一化：空 = 仅 web。"至少纳管一档"只在此收口，上层不再判空
+pub fn normalize_surfaces(surfaces: &mut Vec<DshSurface>) {
+    if surfaces.is_empty() {
+        surfaces.push(DshSurface::Web);
+    }
+}
+
 impl Default for LauncherConfig {
     fn default() -> Self {
         Self {
             minimize_to_tray_on_close: false,
             language: default_language(),
+            managed_surfaces: default_managed_surfaces(),
             dsh_admin_cap_domain: String::new(),
             dsh_use_cap_domain: String::new(),
             dsh_extra_allowed_logins: String::new(),
@@ -107,12 +134,13 @@ pub fn load_config() -> Result<LauncherConfig, Message> {
             &[("error", e.to_string())],
         )
     })?;
-    let config: LauncherConfig = serde_json::from_str(&content).map_err(|e| {
+    let mut config: LauncherConfig = serde_json::from_str(&content).map_err(|e| {
         crate::logging::warn("解析配置文件", &e.to_string());
         Message::localized("Failed to parse config file: {{error}}",
             &[("error", e.to_string())],
         )
     })?;
+    normalize_surfaces(&mut config.managed_surfaces);
     Ok(config)
 }
 
@@ -120,6 +148,8 @@ pub fn load_config() -> Result<LauncherConfig, Message> {
 pub fn merge_settings(current: &mut LauncherConfig, settings: &LauncherConfig) {
     current.minimize_to_tray_on_close = settings.minimize_to_tray_on_close;
     current.language = settings.language.clone();
+    current.managed_surfaces = settings.managed_surfaces.clone();
+    normalize_surfaces(&mut current.managed_surfaces);
     current.dsh_admin_cap_domain = settings.dsh_admin_cap_domain.clone();
     current.dsh_use_cap_domain = settings.dsh_use_cap_domain.clone();
     current.dsh_extra_allowed_logins = settings.dsh_extra_allowed_logins.clone();
@@ -162,6 +192,7 @@ mod tests {
         let settings = LauncherConfig {
             minimize_to_tray_on_close: true,
             language: "zh-CN".to_string(),
+            managed_surfaces: vec![DshSurface::Desktop],
             dsh_admin_cap_domain: "admin.example.com".to_string(),
             dsh_use_cap_domain: "use.example.com".to_string(),
             dsh_extra_allowed_logins: "alice@example.com,bob@example.com".to_string(),
@@ -172,6 +203,7 @@ mod tests {
 
         assert!(current.minimize_to_tray_on_close);
         assert_eq!(current.language, "zh-CN");
+        assert_eq!(current.managed_surfaces, vec![DshSurface::Desktop]);
         assert_eq!(current.dsh_admin_cap_domain, "admin.example.com");
         assert_eq!(current.dsh_use_cap_domain, "use.example.com");
         assert_eq!(
@@ -181,6 +213,44 @@ mod tests {
         assert_eq!(
             current.market_catalog_url,
             "https://mirror.example.com/catalog.json"
+        );
+    }
+
+    #[test]
+    fn absent_surfaces_field_defaults_to_web_only() {
+        let config: LauncherConfig = serde_json::from_str("{}").expect("old config must still load");
+        assert_eq!(config.managed_surfaces, vec![DshSurface::Web]);
+    }
+
+    #[test]
+    fn empty_surfaces_normalize_to_web_only() {
+        let mut current = LauncherConfig {
+            managed_surfaces: vec![DshSurface::Desktop],
+            ..LauncherConfig::default()
+        };
+        let settings = LauncherConfig {
+            managed_surfaces: vec![],
+            ..LauncherConfig::default()
+        };
+
+        merge_settings(&mut current, &settings);
+
+        assert_eq!(current.managed_surfaces, vec![DshSurface::Web]);
+    }
+
+    #[test]
+    fn both_surfaces_coexist() {
+        let mut current = LauncherConfig::default();
+        let settings = LauncherConfig {
+            managed_surfaces: vec![DshSurface::Web, DshSurface::Desktop],
+            ..LauncherConfig::default()
+        };
+
+        merge_settings(&mut current, &settings);
+
+        assert_eq!(
+            current.managed_surfaces,
+            vec![DshSurface::Web, DshSurface::Desktop]
         );
     }
 }

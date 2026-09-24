@@ -271,6 +271,14 @@ export const zhCN: Record<I18nKey, string> = {
   "English": "English",
   "中文": "中文",
 
+  // —— 设置：纳管形态 ——
+  "Managed Surfaces": "纳管形态",
+  "Choose which official dsh surfaces this app manages. At least one stays enabled; both can run side by side.": "选择本应用纳管哪些 dsh 官方形态。至少保留一档，可两档并存。",
+  "Manage dsh web": "纳管 dsh web",
+  "The dsh --profile web runtime: install, start/stop, plugins, models and remote access, bound to 127.0.0.1:3899.": "dsh 的 --profile web 运行档：安装、启停、插件、模型配置与远程访问，本地绑定 127.0.0.1:3899。",
+  "Manage the DeepSeek Harness desktop app": "纳管 DeepSeek Harness 桌面应用",
+  "The official desktop app: detect, open, quit and update checks, plus its plugins and configuration through the bridge plugin.": "官方桌面应用：检测、打开、退出、新版本提示，以及经桥接插件管理它的插件与配置。",
+
   // —— 设置：外观 ——
   "Follow System": "跟随系统",
   "Light": "亮色",

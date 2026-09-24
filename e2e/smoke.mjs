@@ -63,6 +63,7 @@ const MOCK = {
   config: {
     minimize_to_tray_on_close: false,
     language: "en",
+    managed_surfaces: ["web"],
     dsh_admin_cap_domain: "",
     dsh_use_cap_domain: "",
     dsh_extra_allowed_logins: "",

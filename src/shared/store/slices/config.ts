@@ -5,7 +5,7 @@
 import { currentLanguage, i18n } from "../../i18n";
 import { tErr } from "../../i18n/error";
 import * as cmd from "../../commands";
-import { currentConfigDraft } from "../../config";
+import { currentConfigDraft, sameSurfaces } from "../../config";
 import type { LauncherConfig } from "../../types";
 import type { Slice } from "./shared";
 
@@ -35,6 +35,7 @@ export function isConfigDirty(s: {
   if (!a || !b) return false;
   return (
     a.minimize_to_tray_on_close !== b.minimize_to_tray_on_close ||
+    !sameSurfaces(a.managed_surfaces, b.managed_surfaces) ||
     a.dsh_admin_cap_domain !== b.dsh_admin_cap_domain ||
     a.dsh_use_cap_domain !== b.dsh_use_cap_domain ||
     a.dsh_extra_allowed_logins !== b.dsh_extra_allowed_logins ||

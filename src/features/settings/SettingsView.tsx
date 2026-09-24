@@ -12,6 +12,7 @@ import {
 import { isValidCatalogUrl } from "./validation";
 import { GeneralSection } from "./GeneralSection";
 import { AppearanceSection } from "./AppearanceSection";
+import { DshSurfaceSection } from "./DshSurfaceSection";
 import { DshVersionSection } from "./DshVersionSection";
 import { DshAutostartSection } from "./DshAutostartSection";
 import { RemoteAuthSection } from "./RemoteAuthSection";
@@ -48,6 +49,13 @@ const SECTION_GROUPS: { labelKey: string; sections: { id: SettingsSection; label
   {
     labelKey: "DeepSeek Harness",
     sections: [
+      {
+        id: "dsh-surface",
+        labelKey: "Managed Surfaces",
+        icon: (
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="7" rx="2" /><rect x="3" y="14" width="18" height="7" rx="2" /></svg>
+        ),
+      },
       {
         id: "dsh-version",
         labelKey: "dsh Version",
@@ -116,6 +124,7 @@ export function SettingsView() {
             <div className="app-page-width mx-auto w-full">
               {section === "general" && <GeneralSection />}
               {section === "appearance" && <AppearanceSection />}
+              {section === "dsh-surface" && <DshSurfaceSection />}
               {section === "dsh-version" && <DshVersionSection />}
               {section === "dsh-autostart" && <DshAutostartSection />}
               {section === "dsh-auth" && <RemoteAuthSection />}
