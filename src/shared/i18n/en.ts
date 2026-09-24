@@ -277,6 +277,24 @@ export const en = {
   "Manage the DeepSeek Harness desktop app": "Manage the DeepSeek Harness desktop app",
   "The official desktop app: detect, open, quit and update checks, plus its plugins and configuration through the bridge plugin.": "The official desktop app: detect, open, quit and update checks, plus its plugins and configuration through the bridge plugin.",
 
+  // —— 桌面应用（官方 DeepSeek Harness）——
+  "DeepSeek Harness desktop app": "DeepSeek Harness desktop app",
+  "The official desktop app has no build for this platform (macOS on Apple silicon and Windows x64 only).": "The official desktop app has no build for this platform (macOS on Apple silicon and Windows x64 only).",
+  "DeepSeek Harness is running.": "DeepSeek Harness is running.",
+  "DeepSeek Harness is installed but not running.": "DeepSeek Harness is installed but not running.",
+  "Open DeepSeek Harness": "Open DeepSeek Harness",
+  "Focus DeepSeek Harness": "Focus DeepSeek Harness",
+  "Quit DeepSeek Harness": "Quit DeepSeek Harness",
+  // 以下两条 Rust Message::key 与前端 t() 共用同一份原文（key 即英文，词典是唯一事实来源）
+  "DeepSeek Harness is not installed. Install it from the official channel; this app only detects and manages it.": "DeepSeek Harness is not installed. Install it from the official channel; this app only detects and manages it.",
+  "On this platform the DeepSeek Harness desktop app can only be quit from its own tray menu": "On this platform the DeepSeek Harness desktop app can only be quit from its own tray menu",
+  "Cannot open DeepSeek Harness": "Cannot open DeepSeek Harness",
+  "Cannot open DeepSeek Harness: {{error}}": "Cannot open DeepSeek Harness: {{error}}",
+  "Cannot quit DeepSeek Harness": "Cannot quit DeepSeek Harness",
+  "Cannot quit DeepSeek Harness: {{error}}": "Cannot quit DeepSeek Harness: {{error}}",
+  "Cannot locate the DeepSeek Harness log directory": "Cannot locate the DeepSeek Harness log directory",
+  "Cannot check for a new DeepSeek Harness version: {{error}}": "Cannot check for a new DeepSeek Harness version: {{error}}",
+
   // —— 设置：外观 ——
   "Follow System": "Follow System",
   "Light": "Light",

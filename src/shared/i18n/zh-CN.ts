@@ -279,6 +279,23 @@ export const zhCN: Record<I18nKey, string> = {
   "Manage the DeepSeek Harness desktop app": "纳管 DeepSeek Harness 桌面应用",
   "The official desktop app: detect, open, quit and update checks, plus its plugins and configuration through the bridge plugin.": "官方桌面应用：检测、打开、退出、新版本提示，以及经桥接插件管理它的插件与配置。",
 
+  // —— 桌面应用（官方 DeepSeek Harness）——
+  "DeepSeek Harness desktop app": "DeepSeek Harness 桌面应用",
+  "The official desktop app has no build for this platform (macOS on Apple silicon and Windows x64 only).": "官方桌面应用没有对应本平台的构建（仅 macOS Apple 芯片与 Windows x64）。",
+  "DeepSeek Harness is running.": "DeepSeek Harness 正在运行。",
+  "DeepSeek Harness is installed but not running.": "DeepSeek Harness 已安装，当前未运行。",
+  "Open DeepSeek Harness": "打开 DeepSeek Harness",
+  "Focus DeepSeek Harness": "切到 DeepSeek Harness",
+  "Quit DeepSeek Harness": "退出 DeepSeek Harness",
+  "DeepSeek Harness is not installed. Install it from the official channel; this app only detects and manages it.": "未检测到 DeepSeek Harness。请先从官方渠道安装：本应用只做检测与管理，不代装。",
+  "On this platform the DeepSeek Harness desktop app can only be quit from its own tray menu": "本平台上 DeepSeek Harness 只能从它自己的托盘菜单退出",
+  "Cannot open DeepSeek Harness": "无法打开 DeepSeek Harness",
+  "Cannot open DeepSeek Harness: {{error}}": "无法打开 DeepSeek Harness：{{error}}",
+  "Cannot quit DeepSeek Harness": "无法退出 DeepSeek Harness",
+  "Cannot quit DeepSeek Harness: {{error}}": "无法退出 DeepSeek Harness：{{error}}",
+  "Cannot locate the DeepSeek Harness log directory": "无法定位 DeepSeek Harness 的日志目录",
+  "Cannot check for a new DeepSeek Harness version: {{error}}": "无法检测 DeepSeek Harness 新版本：{{error}}",
+
   // —— 设置：外观 ——
   "Follow System": "跟随系统",
   "Light": "亮色",

@@ -35,6 +35,7 @@ mod auth;
 mod autostart;
 mod compat;
 mod components;
+mod desktop;
 mod detect;
 mod market;
 mod model_import;
@@ -70,6 +71,11 @@ macro_rules! reexport_commands {
 
 reexport_commands! {
     detect::dsh_detect,
+    desktop::desktop_detect,
+    desktop::desktop_check_latest,
+    desktop::desktop_open,
+    desktop::desktop_quit,
+    desktop::desktop_log_dir,
     setup::dsh_setup,
     setup::dsh_web_log,
     start::dsh_start_web,
@@ -150,6 +156,8 @@ const REMOTE_BLOCKED_BODY: &str = "open-in-app is not available over remote acce
 
 /// dsh web 端口。
 const WEB_PORT: u16 = 3899;
+/// 官方桌面应用内置服务的端口（宿主应用里写死，非配置项），探它即知应用在不在跑。
+const DESKTOP_PORT: u16 = 19387;
 /// 自启标签前缀（仅 macOS launchd 使用；Windows/Linux 用固定文件名）
 #[cfg(target_os = "macos")]
 const AUTOSTART_PREFIX: &str = "com.codexpromax.dsh";

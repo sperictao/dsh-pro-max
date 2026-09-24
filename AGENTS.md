@@ -34,6 +34,8 @@
 - 业务 UI 必须优先复用 `src/shared/lib/ui.ts` 的共享配方和 `DESIGN.md` 定义的语义 token。禁止在业务 TSX 中引入原始调色板颜色、非布局 arbitrary value 或 JSX inline style。
 - `src/shared/components/**` 与 `src/shared/lib/ui.ts` 属于设计系统实现层；仅这里允许规则配置中声明的必要实现例外，业务层不得复制这些例外。
 - 交互层 UI 改动（导航、事件绑定、a11y 层）tsc/lint/vitest/e2e 全绿**不算完成**：e2e 跑在无 Tauri IPC 的浏览器进程，覆盖不了 WKWebView 真机行为（2026-09-16 导航改版在 Chrome/WebKit 双引擎复现全过、真机顶栏 onClick 失效，整体回退）。必须在 `pnpm tauri dev` 真机点过关键路径后才算验证完成。
+- 判定命令成败看 `PIPESTATUS[0]`（或别接管道），不要看管道末端的退出码：`cargo check … | tail` 的 `$?` 是 `tail` 的，会把失败读成通过。
+- **Windows 目标在本机无法编译检查**：`cargo check --target x86_64-pc-windows-msvc` 必然失败在 `ring` 的 C 代码（`fatal error: 'assert.h' file not found`）——交叉编译 MSVC 需要 Windows SDK 头文件，装了 rustup target 也不改变。Windows 分支的首次真实检查只能发生在 CI 的 `windows-latest` 上；因此要么让平台差异走 `cfg!` 运行时分支（两套实现随 mac 构建一起编译，可被单元测试覆盖），要么明确标注该分支未经编译验证。
 
 ## 发布
 

@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { log } from "./logger";
 import type {
+  DesktopStatus,
   DshLatestInfo,
   DshStatus,
   DshStepEvent,
@@ -63,6 +64,15 @@ export const dshSetAutostart = (enabled: boolean) => invokeTyped<void>("dsh_set_
 // 托盘 dsh 三键的可用性镜像首页按钮：推送 dshRunning / 任一流程 busy
 export const syncTrayDshActions = (running: boolean, busy: boolean) =>
   invokeTyped<void>("sync_tray_dsh_actions", { running, busy });
+
+// ============ 官方桌面应用（外部能力，不经桥接插件）============
+export const desktopDetect = () => invokeTyped<DesktopStatus>("desktop_detect");
+// 有新版本返回版本号，已是最新返回 null
+export const desktopCheckLatest = () => invokeTyped<string | null>("desktop_check_latest");
+export const desktopOpen = () => invokeTyped<void>("desktop_open");
+// 仅 canQuit 为真的平台可用；应用仍会弹它自己的退出确认框
+export const desktopQuit = () => invokeTyped<void>("desktop_quit");
+export const desktopLogDir = () => invokeTyped<string>("desktop_log_dir");
 
 // ============ 插件市场 ============
 export const marketFetch = () => invokeTyped<MarketCatalog>("market_fetch");
