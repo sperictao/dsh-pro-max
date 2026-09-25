@@ -61,13 +61,22 @@ export function DesktopPluginsPane() {
     void load();
   }, [load]);
 
-  /// 上游把管理失败折叠进返回值而不是抛出，所以这里按 application 给出去向，
-  /// 不是「没抛就算成功」
-  const runOutcome = useCallback(
-    async (action: () => Promise<ChangeOutcome>) => {
+  /// 管理动作的统一外壳：busy 守卫、失败去向、成功后重拉。
+  /// `null` 表示这个动作没有变更结果可看（配置写入走的是桥接的 /config/edit，返回的不是
+  /// ChangeResult）——那种情况下成功即成功，不给它现编一份假的 ChangeOutcome。
+  /// 有结果时按 application 各给一句去向：上游把管理失败折叠进返回值而不是抛出，
+  /// 所以判断成败看 application，不是「没抛就算成功」。
+  const run = useCallback(
+    async (action: () => Promise<ChangeOutcome | null>) => {
       setBusy(true);
       try {
         const outcome = await action();
+        if (outcome === null) {
+          setPendingBuilds([]);
+          toast(t("Applied"), "info");
+          await load();
+          return;
+        }
         setPendingBuilds(outcome.pendingBuilds);
         if (outcome.application === "applied") toast(t("Applied"), "info");
         else if (outcome.application === "restart-required") toast(t("Restart DeepSeek Harness to apply this change."), "info");
@@ -118,13 +127,18 @@ export function DesktopPluginsPane() {
                 value={spec}
                 disabled={busy}
                 placeholder="@scope/plugin  |  github:owner/repo  |  https://…​/pkg.tgz"
-                onChange={(e) => setSpec(e.target.value)}
+                onChange={(e) => {
+                  setSpec(e.target.value);
+                  // 待批构建脚本属于上一个规格：换了规格还留着它，会让「放行并安装」
+                  // 把新规格连旧批准一起发出去，上游按「必须仍待批」直接拒
+                  setPendingBuilds([]);
+                }}
               />
               <button
                 className={BTN_OUTLINE}
                 disabled={busy || spec.trim() === ""}
                 onClick={() =>
-                  void runOutcome(() => cmd.desktopBridgeInstall(spec.trim(), pendingBuilds.length > 0 ? pendingBuilds : undefined))
+                  void run(() => cmd.desktopBridgeInstall(spec.trim(), pendingBuilds.length > 0 ? pendingBuilds : undefined))
                 }
               >
                 {pendingBuilds.length > 0 ? t("Approve build scripts and install") : t("Install")}
@@ -160,7 +174,7 @@ export function DesktopPluginsPane() {
                       checked={row.enabled}
                       disabled={busy || locked}
                       aria-label={row.moduleName}
-                      onChange={(e) => void runOutcome(() => cmd.desktopBridgeSetEnabled({ pluginId: row.entryId }, e.target.checked))}
+                      onChange={(e) => void run(() => cmd.desktopBridgeSetEnabled({ pluginId: row.entryId }, e.target.checked))}
                     />
                   </div>
                 );
@@ -188,12 +202,12 @@ export function DesktopPluginsPane() {
                       checked={row.enabled}
                       disabled={busy || row.readOnlyReason !== null}
                       aria-label={row.name}
-                      onChange={(e) => void runOutcome(() => cmd.desktopBridgeSetEnabled({ bundleName: row.name }, e.target.checked))}
+                      onChange={(e) => void run(() => cmd.desktopBridgeSetEnabled({ bundleName: row.name }, e.target.checked))}
                     />
                     <button
                       className={BTN_SM}
                       disabled={busy || !row.removable}
-                      onClick={() => void runOutcome(() => cmd.desktopBridgeRemove(row.name))}
+                      onClick={() => void run(() => cmd.desktopBridgeRemove(row.name))}
                     >
                       {t("Remove")}
                     </button>
@@ -209,7 +223,7 @@ export function DesktopPluginsPane() {
               {t("Each row is one plugin's configuration in this profile, as the desktop app stores it. Edit the JSON and save to write the whole row back.")}
             </p>
             {config?.map((row) => (
-              <ConfigRowEditor key={row.id} row={row} busy={busy} onSave={runOutcome} />
+              <ConfigRowEditor key={row.id} row={row} busy={busy} onSave={run} />
             ))}
           </section>
         </>
@@ -229,7 +243,7 @@ function ConfigRowEditor({
 }: {
   row: ConfigRow;
   busy: boolean;
-  onSave: (action: () => Promise<ChangeOutcome>) => Promise<void>;
+  onSave: (action: () => Promise<ChangeOutcome | null>) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const toast = useAppStore((s) => s.toast);
@@ -246,10 +260,10 @@ function ConfigRowEditor({
       toast(t("Not valid JSON: {{error}}", { error: String(e) }), "error");
       return;
     }
+    // null：这条路由没有 ChangeResult 可看，调用方按「成功即成功」处理
     await onSave(async () => {
       await cmd.desktopBridgeConfigEdit(row.id, parsed);
-      // 编辑没有 ChangeResult 可看，成功即 applied
-      return { application: "applied", target: row.id, enabled: null, errorCode: null, errorDiagnostic: null, pendingBuilds: [], warnings: [] };
+      return null;
     });
   };
 

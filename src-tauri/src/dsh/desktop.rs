@@ -76,10 +76,22 @@ pub async fn desktop_log_dir() -> Result<String, Message> {
     super::ipc_blocking(log_dir_path).await.map(|p| p.to_string_lossy().to_string())
 }
 
-/// 有新版本则返回新版本号，已是最新返回 None。
-/// 未安装、或更新源不是通用静态服务同样返回 None；有更新源但读取失败返回 Err
+/// 更新检查的结论。**三态而不是 Option**：None 无法区分「已是最新」与「查不出来」，
+/// 而把后者说成前者是对用户撒谎——未安装、版本读不出、更新源不是通用静态服务都查不出来
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub enum DesktopUpdate {
+    /// 应用自带的更新源上确有更高版本
+    Available { version: String },
+    /// 查过了，没有更高版本
+    UpToDate,
+    /// 查不出来（未安装 / 版本读不出 / 更新源不是通用静态服务）；界面如实说不知道，不猜
+    Unknown,
+}
+
 #[tauri::command]
-pub async fn desktop_check_latest() -> Result<Option<String>, Message> {
+pub async fn desktop_check_latest() -> Result<DesktopUpdate, Message> {
     super::ipc_blocking(check_latest_once).await
 }
 
@@ -113,9 +125,14 @@ fn app_location() -> Option<PathBuf> {
     None
 }
 
-/// macOS：走 LaunchServices 索引按 bundle id 查，不假定装在 /Applications
-/// （拖到别处也找得到）
+/// macOS：先看标准安装位置，再退回 LaunchServices 索引。
+/// 索引会把**没装**的应用也算进来（例如下载目录里留着的那一份），而那种副本的版本与更新源
+/// 都可能不是用户实际在用的那个——所以标准位置有就优先用它，索引只作「装在别处」的兜底
 fn macos_app_bundle() -> Option<PathBuf> {
+    let standard = Path::new("/Applications").join(format!("{PRODUCT_NAME}.app"));
+    if standard.is_dir() {
+        return Some(standard);
+    }
     let out = Command::new("mdfind")
         .arg(format!("kMDItemCFBundleIdentifier == '{BUNDLE_ID}'"))
         .output()
@@ -251,17 +268,21 @@ fn log_dir_path() -> Result<PathBuf, Message> {
     Ok(PathBuf::from(appdata).join(PRODUCT_NAME).join("logs"))
 }
 
-fn check_latest_once() -> Result<Option<String>, Message> {
+fn check_latest_once() -> Result<DesktopUpdate, Message> {
     let Some(app) = app_location() else {
-        return Ok(None);
+        return Ok(DesktopUpdate::Unknown);
     };
     let Some(current) = installed_version(&app) else {
-        return Ok(None);
+        return Ok(DesktopUpdate::Unknown);
     };
     let Some(latest) = fetch_latest_version(&resources_dir(&app))? else {
-        return Ok(None);
+        return Ok(DesktopUpdate::Unknown);
     };
-    Ok(is_newer(&latest, &current).then_some(latest))
+    Ok(if is_newer(&latest, &current) {
+        DesktopUpdate::Available { version: latest }
+    } else {
+        DesktopUpdate::UpToDate
+    })
 }
 
 /// 应用自带的 electron-updater 配置：provider/url/channel

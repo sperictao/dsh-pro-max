@@ -4,6 +4,7 @@
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import { TOGGLE } from "@/shared/lib/ui";
+import { MUTED } from "@/shared/lib/ui";
 import { SettingsCard, SettingRow } from "./SettingRow";
 
 const SURFACES = [
@@ -30,7 +31,7 @@ export function DshSurfaceSection() {
   return (
     <section className="settings-section" id="section-dsh-surface">
       <h2 className="mb-1 text-base font-semibold">{t("Managed Surfaces")}</h2>
-      <p className="mb-4 max-w-2xl text-xs opacity-60">
+      <p className={`mb-4 max-w-2xl ${MUTED}`}>
         {t("Choose which official dsh surfaces this app manages. At least one stays enabled; both can run side by side.")}
       </p>
 

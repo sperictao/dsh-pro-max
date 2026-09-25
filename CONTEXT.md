@@ -11,7 +11,7 @@
 - **Web 运行档（Web Profile）** — dsh 的 `--profile web` 运行档，本应用全权纳管：安装、启停、插件、模型配置、远程访问。本地绑定 `127.0.0.1:3899`。
 - **桌面应用（Desktop App）** — 官方 DeepSeek Harness Electron 应用（`com.deepseek.dsh`），监听 `127.0.0.1:19387`，其 `desktop` 运行档由它独占。
 - **桥接插件（Bridge Plugin）** — 本应用发给桌面应用的 dsh 插件：用户在桌面应用内 Plugins 页装一次（GitHub Release 的 tgz URL），此后由它把桌面应用**自己的** Plugin Manager / Config Editor 服务开放给本应用。
-- **桥接三态（Bridge States）** — 桌面形态的三种运行态：未装桥接插件 / 应用未运行 / 已连接。
+- **桥接四态（Bridge States）** — 桌面形态的四种运行态：应用未运行 / 未装桥接插件 / 代次不符 / 已连接。代次不符是一态而不是错误：桥接自报的 protocol 与本应用期望的不符时，界面直接说出「期望几、拿到几」并给重装地址，不让人对着字段缺失猜。
 - **桌面应用外部能力** — 不依赖桥接插件的能力：检测安装与版本、检测运行、打开/聚焦、退出（仅 macOS，见下）、新版本提示、打开日志目录。**它们是桌面形态的基础层，在所有桥接态下都可用**，不是桥接缺席时的兜底。
 - **桥接通道（Bridge Channel）** — 本应用与桥接插件之间的 HTTP 通道：`127.0.0.1:19387` 的 `/dsh-pro-max-bridge/*`（在 `/api` 之外，不参与连接插件的 capability 裁决），Bearer token 取自 `~/.dsh-pro-max/bridge-token`。应答是 `{ok, data}` / `{ok: false, error}`，业务结果在 data 里。
 - **授权插件（Auth Plugins）** — 两个 vendored npm 包（`vendor/dsh-client-connection-authz`、`vendor/dsh-auth-tailscale`），以 pin commit 的 tgz 打进安装包，运行时经 `dsh plugin --profile web add` 装入 web profile；连接鉴权 + Tailscale 身份授权都由它们承担。构建脚本为每个 tgz 产出同目录 `.sha256` 摘要并随 bundle resources 打包，装入前逐台复核（缺失或不符都按损坏拒绝）。

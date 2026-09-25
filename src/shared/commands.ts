@@ -9,6 +9,7 @@ import type {
   ConfigRow,
   DesktopPlugins,
   DesktopStatus,
+  DesktopUpdate,
   DshLatestInfo,
   DshStatus,
   DshStepEvent,
@@ -71,8 +72,9 @@ export const syncTrayDshActions = (running: boolean, busy: boolean) =>
 
 // ============ 官方桌面应用（外部能力，不经桥接插件）============
 export const desktopDetect = () => invokeTyped<DesktopStatus>("desktop_detect");
-// 有新版本返回版本号，已是最新返回 null
-export const desktopCheckLatest = () => invokeTyped<string | null>("desktop_check_latest");
+// 三态：available / upToDate / unknown。unknown 表示查不出来（未安装、版本读不出、
+// 更新源不是通用静态服务）——界面如实说不确定，不把它说成「已是最新」
+export const desktopCheckLatest = () => invokeTyped<DesktopUpdate>("desktop_check_latest");
 export const desktopOpen = () => invokeTyped<void>("desktop_open");
 // 仅 canQuit 为真的平台可用；应用仍会弹它自己的退出确认框
 export const desktopQuit = () => invokeTyped<void>("desktop_quit");

@@ -12,7 +12,7 @@ import { useAppStore } from "@/shared/store";
 import { renderMessage } from "@/shared/i18n/error";
 import * as cmd from "@/shared/commands";
 import { BTN_OUTLINE, BTN_PRIMARY, MUTED, PANEL } from "@/shared/lib/ui";
-import type { BridgeStatus, DesktopStatus } from "@/shared/types";
+import type { BridgeStatus, DesktopStatus, DesktopUpdate } from "@/shared/types";
 import { BridgeNotice } from "./BridgeNotice";
 
 /// 动作后应用还要若干秒才起停完毕，晚一点复检；端口探测是权威状态，
@@ -25,8 +25,7 @@ export function DesktopCard() {
   const [status, setStatus] = useState<DesktopStatus | null>(null);
   const [bridge, setBridge] = useState<BridgeStatus | null>(null);
   const [busy, setBusy] = useState(false);
-  const [latest, setLatest] = useState<string | null>(null);
-  const [checked, setChecked] = useState(false);
+  const [update, setUpdate] = useState<DesktopUpdate | null>(null);
 
   const detect = useCallback(async () => {
     try {
@@ -62,9 +61,10 @@ export function DesktopCard() {
 
   const checkLatest = async () => {
     setBusy(true);
+    // 先清上一次的结论：检查失败时让错误 toast 旁边挂着过期的「有新版本」是误导
+    setUpdate(null);
     try {
-      setLatest(await cmd.desktopCheckLatest());
-      setChecked(true);
+      setUpdate(await cmd.desktopCheckLatest());
     } catch (e) {
       toast(renderMessage(e), "error");
     } finally {
@@ -114,12 +114,13 @@ export function DesktopCard() {
             </span>
           )}
         </div>
-        {/* 更新提示：应用自带的更新源上确有更高版本才出现，升级动作由应用自己的更新器完成 */}
-        {checked && (
-          <span className={MUTED}>
-            {latest ? t("New version available: v{{version}}", { version: latest }) : t("Already up to date")}
-          </span>
+        {/* 更新结论只在用户点过之后出现。unknown 如实说不确定——那是「查不出来」，
+            与「已是最新」不是一回事（升级动作由应用自己的更新器完成） */}
+        {update?.kind === "available" && (
+          <span className={MUTED}>{t("New version available: v{{version}}", { version: update.version })}</span>
         )}
+        {update?.kind === "upToDate" && <span className={MUTED}>{t("Already up to date")}</span>}
+        {update?.kind === "unknown" && <span className={MUTED}>{t("Cannot tell whether a newer version exists.")}</span>}
       </div>
 
       <p className={MUTED}>{statusText}</p>

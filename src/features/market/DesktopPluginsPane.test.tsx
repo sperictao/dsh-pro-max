@@ -32,19 +32,16 @@ const catalog: DesktopPlugins = {
     { entryId: "e2", moduleName: "managed-by-app", enabled: true, patchId: null, readOnlyReason: "management-required" },
   ],
   bundles: [
-    { name: "@dsh-external/dsh-pro-max-bridge", version: "0.1.0", description: "bridge", enabled: true, installed: true, removable: true, readOnlyReason: null },
-    { name: "builtin", version: null, description: null, enabled: true, installed: false, removable: false, readOnlyReason: null },
+    { name: "@dsh-external/dsh-pro-max-bridge", version: "0.1.0", description: "bridge", enabled: true, removable: true, readOnlyReason: null },
+    { name: "builtin", version: null, description: null, enabled: true, removable: false, readOnlyReason: null },
   ],
 };
 
 const applied: ChangeOutcome = {
   application: "applied",
-  target: "t",
-  enabled: null,
   errorCode: null,
   errorDiagnostic: null,
   pendingBuilds: [],
-  warnings: [],
 };
 
 /// 桥接态之后每个用例都要拉一次列表与配置；漏桩会让整条链路走 catch
@@ -243,5 +240,27 @@ describe("DesktopPluginsPane editing safety", () => {
     expect((screen.getByRole("textbox", { name: "agent-default-model" }) as HTMLTextAreaElement).value).toBe(
       '{"model":"half-typed"',
     );
+  });
+});
+
+describe("DesktopPluginsPane approval binding", () => {
+  it("forgets the pending approvals once the spec changes", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(cmd, "desktopBridgeInstall").mockResolvedValue({
+      ...applied,
+      application: "failed",
+      pendingBuilds: ["sharp"],
+    });
+    mount();
+
+    const box = await screen.findByPlaceholderText(/@scope\/plugin/);
+    await user.type(box, "sharp-plugin");
+    await user.click(screen.getByRole("button", { name: "Install" }));
+    expect(await screen.findByRole("button", { name: "Approve build scripts and install" })).toBeInTheDocument();
+
+    // 改了规格：那批批准属于上一个规格，留着会让「放行并安装」把新规格连旧批准发出去
+    await user.type(box, "-other");
+    expect(screen.getByRole("button", { name: "Install" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve build scripts and install" })).not.toBeInTheDocument();
   });
 });

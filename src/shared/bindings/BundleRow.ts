@@ -3,8 +3,4 @@
 /**
  * 桌面档的一个 bundle（带 patch 层的插件包）
  */
-export type BundleRow = { name: string, version: string | null, description: string | null, enabled: boolean, 
-/**
- * profile 自己的依赖里有它；false 表示由 dsh 安装自带
- */
-installed: boolean, removable: boolean, readOnlyReason: string | null, };
+export type BundleRow = { name: string, version: string | null, description: string | null, enabled: boolean, removable: boolean, readOnlyReason: string | null, };

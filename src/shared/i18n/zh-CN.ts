@@ -297,6 +297,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Cannot check for a new DeepSeek Harness version: {{error}}": "无法检测 DeepSeek Harness 新版本：{{error}}",
 
   // —— 桌面应用：桥接通道 ——
+  "Cannot tell whether a newer version exists.": "无法判断是否有更新版本。",
   "Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.": "安装会调用应用自己的包管理器，可能要几分钟；这里没有进度显示，也不能取消。",
   "Applied": "已应用",
   "Restart DeepSeek Harness to apply this change.": "重启 DeepSeek Harness 后该改动才会生效。",

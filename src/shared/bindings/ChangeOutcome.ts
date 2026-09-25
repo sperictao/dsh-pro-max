@@ -8,7 +8,7 @@ export type ChangeOutcome = {
 /**
  * applied / restart-required / overridden / failed / cancelled
  */
-application: string, target: string, enabled: boolean | null, 
+application: string, 
 /**
  * 上游的错误码；failed 时才有
  */
@@ -16,4 +16,4 @@ errorCode: string | null, errorDiagnostic: string | null,
 /**
  * 需要用户显式放行的构建脚本；非空时这次安装没完成，要拿它原样再调一次
  */
-pendingBuilds: Array<string>, warnings: Array<string>, };
+pendingBuilds: Array<string>, };

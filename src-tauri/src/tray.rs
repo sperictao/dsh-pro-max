@@ -22,6 +22,16 @@ fn build_tray_menu(
 ) -> Result<tauri::menu::Menu<tauri::Wry>, Box<dyn std::error::Error>> {
     let (running, busy) = TRAY_DSH_STATE.lock().map(|s| *s).unwrap_or((false, false));
     let show = MenuItemBuilder::with_id("show", i18n::tr("Show Main Window")).build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", i18n::tr("Quit")).build(app)?;
+    let builder = MenuBuilder::new(app).item(&show).separator();
+
+    // 未纳管 web 时这三键没有作用对象，整组不显示（与首页按钮同一语义：未纳管的形态
+    // 不进 UI）。纳管形态读自配置文件——那是 Rust 域的事实来源，不靠前端再推一份镜像
+    if !web_managed() {
+        // builder 已含 show + 分隔符；这里直接接 quit，别再补一个分隔符（否则连着两条）
+        return Ok(builder.item(&quit).build()?);
+    }
+
     let start = MenuItemBuilder::with_id("dsh-start", i18n::tr("One-click start dsh web"))
         .enabled(!busy && !running)
         .build(app)?;
@@ -31,16 +41,21 @@ fn build_tray_menu(
     let restart = MenuItemBuilder::with_id("dsh-restart", i18n::tr("One-click restart dsh web"))
         .enabled(!busy && running)
         .build(app)?;
-    let quit = MenuItemBuilder::with_id("quit", i18n::tr("Quit")).build(app)?;
-    Ok(MenuBuilder::new(app)
-        .item(&show)
-        .separator()
+    Ok(builder
         .item(&start)
         .item(&stop)
         .item(&restart)
         .separator()
         .item(&quit)
         .build()?)
+}
+
+/// web 档是否被纳管。读不出来时按「纳管」处理：宁可多显示三条可用的菜单项，
+/// 也不要因为一次读取失败把 web 用户的三键藏掉
+fn web_managed() -> bool {
+    crate::config::load_config()
+        .map(|config| config.managed_surfaces.contains(&crate::config::DshSurface::Web))
+        .unwrap_or(true)
 }
 
 /// 托盘重建菜单的共用路径：按当前语言与 TRAY_DSH_STATE 重建并替换

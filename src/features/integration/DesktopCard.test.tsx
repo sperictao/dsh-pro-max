@@ -31,7 +31,9 @@ const bridge = (over: Partial<BridgeStatus> = {}): BridgeStatus => ({
   ...over,
 });
 
-/// 卡片的状态探测并行取两个命令；漏桩会让整条链路走 catch，两个状态都落空
+/// 卡片的两个状态探测各自取数（串行、各自兜底）；漏桩会让那一条落空。
+/// 注：桥接探测那条的失败源是 IPC 层（命令未注册、序列化失败），不是 bridge_status_once
+/// 本身——它自己不会返回 Err
 function mockBridge(status: BridgeStatus = bridge()) {
   vi.spyOn(cmd, "desktopBridgeStatus").mockResolvedValue(status);
 }
@@ -93,7 +95,7 @@ describe("DesktopCard", () => {
   it("reports update state only after the user asks for it", async () => {
     const user = userEvent.setup();
     mockDetect(detected());
-    vi.spyOn(cmd, "desktopCheckLatest").mockResolvedValue("0.1.7-rc.2");
+    vi.spyOn(cmd, "desktopCheckLatest").mockResolvedValue({ kind: "available", version: "0.1.7-rc.2" });
     render(createElement(DesktopCard));
 
     await screen.findByRole("button", { name: "Check for Updates" });
@@ -106,7 +108,7 @@ describe("DesktopCard", () => {
   it("says so when there is nothing newer", async () => {
     const user = userEvent.setup();
     mockDetect(detected());
-    vi.spyOn(cmd, "desktopCheckLatest").mockResolvedValue(null);
+    vi.spyOn(cmd, "desktopCheckLatest").mockResolvedValue({ kind: "upToDate" });
     render(createElement(DesktopCard));
 
     await user.click(await screen.findByRole("button", { name: "Check for Updates" }));
@@ -182,5 +184,34 @@ describe("DesktopCard partial probe failure", () => {
     expect(screen.getByRole("button", { name: "Focus DeepSeek Harness" })).toBeInTheDocument();
     expect(screen.queryByText("Bridge connected")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy address" })).not.toBeInTheDocument();
+  });
+});
+
+describe("DesktopCard update check", () => {
+  it("says it cannot tell, instead of claiming the app is up to date", async () => {
+    const user = userEvent.setup();
+    mockDetect(detected());
+    vi.spyOn(cmd, "desktopCheckLatest").mockResolvedValue({ kind: "unknown" });
+    render(createElement(DesktopCard));
+
+    await user.click(await screen.findByRole("button", { name: "Check for Updates" }));
+    // 「查不出来」不是「已是最新」——后者是对用户撒谎
+    expect(await screen.findByText("Cannot tell whether a newer version exists.")).toBeInTheDocument();
+    expect(screen.queryByText("Already up to date")).not.toBeInTheDocument();
+  });
+
+  it("drops the previous conclusion when a re-check fails", async () => {
+    const user = userEvent.setup();
+    mockDetect(detected());
+    const check = vi.spyOn(cmd, "desktopCheckLatest").mockResolvedValue({ kind: "available", version: "9.9.9" });
+    render(createElement(DesktopCard));
+
+    await user.click(await screen.findByRole("button", { name: "Check for Updates" }));
+    expect(await screen.findByText("New version available: v9.9.9")).toBeInTheDocument();
+
+    // 再查一次失败：过期的「有新版本」不该和错误 toast 并排挂着
+    check.mockRejectedValueOnce(new Error("offline"));
+    await user.click(screen.getByRole("button", { name: "Check for Updates" }));
+    await waitFor(() => expect(screen.queryByText("New version available: v9.9.9")).not.toBeInTheDocument());
   });
 });

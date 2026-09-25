@@ -9,6 +9,7 @@ export type { DshStatus } from "./bindings/DshStatus";
 export type { DesktopStatus } from "./bindings/DesktopStatus";
 export type { BridgeStatus } from "./bindings/BridgeStatus";
 export type { ChangeOutcome } from "./bindings/ChangeOutcome";
+export type { DesktopUpdate } from "./bindings/DesktopUpdate";
 export type { ConfigRow } from "./bindings/ConfigRow";
 export type { DesktopPlugins } from "./bindings/DesktopPlugins";
 export type { RemoteUrlAccess } from "./bindings/RemoteUrlAccess";

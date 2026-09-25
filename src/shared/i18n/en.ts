@@ -296,6 +296,7 @@ export const en = {
   "Cannot check for a new DeepSeek Harness version: {{error}}": "Cannot check for a new DeepSeek Harness version: {{error}}",
 
   // —— 桌面应用：桥接通道 ——
+  "Cannot tell whether a newer version exists.": "Cannot tell whether a newer version exists.",
   "Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.": "Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.",
   "Applied": "Applied",
   "Restart DeepSeek Harness to apply this change.": "Restart DeepSeek Harness to apply this change.",

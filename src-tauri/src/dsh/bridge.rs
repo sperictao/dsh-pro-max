@@ -92,8 +92,6 @@ pub struct BundleRow {
     pub version: Option<String>,
     pub description: Option<String>,
     pub enabled: bool,
-    /// profile 自己的依赖里有它；false 表示由 dsh 安装自带
-    pub installed: bool,
     pub removable: bool,
     pub read_only_reason: Option<String>,
 }
@@ -114,14 +112,11 @@ pub struct DesktopPlugins {
 pub struct ChangeOutcome {
     /// applied / restart-required / overridden / failed / cancelled
     pub application: String,
-    pub target: String,
-    pub enabled: Option<bool>,
     /// 上游的错误码；failed 时才有
     pub error_code: Option<String>,
     pub error_diagnostic: Option<String>,
     /// 需要用户显式放行的构建脚本；非空时这次安装没完成，要拿它原样再调一次
     pub pending_builds: Vec<String>,
-    pub warnings: Vec<String>,
 }
 
 /// 活动 profile 里的一行配置
@@ -183,10 +178,11 @@ pub async fn desktop_bridge_config() -> Result<Vec<ConfigRow>, Message> {
 #[tauri::command]
 pub async fn desktop_bridge_config_edit(id: String, config: serde_json::Value) -> Result<(), Message> {
     super::ipc_blocking(move || {
-        request::<serde_json::Value>(
-            "POST",
+        // 经 required_with 而不是裸 request：后者把「桥接不在」（连不上 / 404）返回成
+        // Ok(None)，那是「这一步还没做」而不是成功——折叠掉它会让写失败静默报成功
+        required_with::<serde_json::Value>(
             "/config/edit",
-            Some(serde_json::json!({ "id": id, "config": config })),
+            serde_json::json!({ "id": id, "config": config }),
         )
         .map(|_| ())
     })
@@ -229,7 +225,6 @@ fn plugins_once() -> Result<DesktopPlugins, Message> {
                 version: row.version,
                 description: row.description,
                 enabled: row.enabled,
-                installed: row.installed,
                 removable: row.removable,
                 read_only_reason: row.read_only_reason,
             })
@@ -254,12 +249,9 @@ fn change_once(path: &str, body: serde_json::Value) -> Result<ChangeOutcome, Mes
     let pending = raw.pending_builds.unwrap_or_default();
     Ok(ChangeOutcome {
         application: raw.application,
-        target: raw.target,
-        enabled: raw.enabled,
         error_code: raw.error.as_ref().map(|e| e.code.clone()),
         error_diagnostic: raw.error.and_then(|e| e.diagnostic),
         pending_builds: pending,
-        warnings: raw.warnings.unwrap_or_default(),
     })
 }
 
@@ -300,7 +292,6 @@ struct UpstreamBundle {
     version: Option<String>,
     description: Option<String>,
     enabled: bool,
-    installed: bool,
     removable: bool,
     read_only_reason: Option<String>,
 }
@@ -309,11 +300,8 @@ struct UpstreamBundle {
 #[serde(rename_all = "camelCase")]
 struct UpstreamChange {
     application: String,
-    target: String,
-    enabled: Option<bool>,
     error: Option<UpstreamError>,
     pending_builds: Option<Vec<String>>,
-    warnings: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -600,7 +588,7 @@ mod tests {
         .unwrap();
         let row = &raw.bundles[0];
         assert_eq!(row.name, "@dsh-external/dsh-pro-max-bridge");
-        assert!(row.installed && row.removable && row.enabled);
+        assert!(row.removable && row.enabled);
         assert_eq!(row.description.as_deref(), Some("bridge"));
     }
 
@@ -625,8 +613,8 @@ mod tests {
     fn maps_a_failed_change_with_the_upstream_error_code() {
         let raw: UpstreamChange = serde_json::from_str(
             r#"{
-                "changed": false, "application": "failed", "stage": "remove",
-                "target": "b", "error": {"code": "not-removable", "diagnostic": "supplied by dsh"}
+                "changed": false, "application": "failed", "stage": "remove", "target": "b",
+                "error": {"code": "not-removable", "diagnostic": "supplied by dsh"}
             }"#,
         )
         .unwrap();
@@ -654,7 +642,6 @@ mod tests {
             raw.pending_builds.as_deref(),
             Some(&["pkg-a".to_string(), "pkg-b".to_string()][..])
         );
-        assert_eq!(raw.warnings.as_deref(), Some(&["inactive entry left as is".to_string()][..]));
     }
 
     #[test]
