@@ -125,13 +125,19 @@ fn app_location() -> Option<PathBuf> {
     None
 }
 
-/// macOS：先看标准安装位置，再退回 LaunchServices 索引。
+/// macOS：先看两个标准安装位置，再退回 LaunchServices 索引。
 /// 索引会把**没装**的应用也算进来（例如下载目录里留着的那一份），而那种副本的版本与更新源
-/// 都可能不是用户实际在用的那个——所以标准位置有就优先用它，索引只作「装在别处」的兜底
+/// 都可能不是用户实际在用的那个；索引也可能没跟上（刚装完）或整个关掉。所以标准位置有就用
+/// 它，索引只作「装在别处」的兜底。/Applications 是全局位置，~/Applications 是 Apple 认可
+/// 的每用户位置（装不上全局位置的非管理员用户会用它）
 fn macos_app_bundle() -> Option<PathBuf> {
-    let standard = Path::new("/Applications").join(format!("{PRODUCT_NAME}.app"));
-    if standard.is_dir() {
-        return Some(standard);
+    let name = format!("{PRODUCT_NAME}.app");
+    let mut standard = vec![PathBuf::from("/Applications").join(&name)];
+    if let Ok(home) = crate::config::home_dir() {
+        standard.push(home.join("Applications").join(&name));
+    }
+    if let Some(found) = standard.into_iter().find(|dir| dir.is_dir()) {
+        return Some(found);
     }
     let out = Command::new("mdfind")
         .arg(format!("kMDItemCFBundleIdentifier == '{BUNDLE_ID}'"))
