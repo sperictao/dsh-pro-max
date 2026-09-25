@@ -22,17 +22,22 @@ export function BridgeNotice({
     return <p className={MUTED}>{t("Open DeepSeek Harness to manage its plugins and configuration.")}</p>;
   }
 
-  // 三种未就绪态的去向都是「粘一次地址重装」——not_ready 也一样，因为凭据建立失败通常
-  // 是环境问题，重装会重试
-  const reason =
-    bridge.state === "not_installed"
-      ? t("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:")
-      : bridge.state === "not_ready"
-        ? t("The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:")
-        : t(
-            "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:",
-            { expected: bridge.expectedProtocol, actual: bridge.protocol ?? "?" },
-          );
+  // 三种未就绪态的去向都是「粘一次地址重装」，但原因必须分开说。用**带返回类型的 switch**
+  // 而不是条件链：给 BridgeState 加一种状态时，这里会因为「不是所有路径都返回值」编译不过
+  // ——而不是静默落进「代次不符」那一支、给出一句不真的话
+  const reason = ((): string => {
+    switch (bridge.state) {
+      case "not_installed":
+        return t("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:");
+      case "not_ready":
+        return t("The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:");
+      case "incompatible":
+        return t(
+          "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:",
+          { expected: bridge.expectedProtocol, actual: bridge.protocol ?? "?" },
+        );
+    }
+  })();
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border p-3">

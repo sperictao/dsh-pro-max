@@ -93,6 +93,19 @@ export function DesktopCard() {
   const installed = status?.installed ?? false;
   const running = status?.running ?? false;
 
+  /// 同样用带返回类型的 switch：给 DesktopUpdate 加一种结论时这里编译不过，
+  /// 而不是静默少显示一句
+  const updateText = (result: DesktopUpdate): string => {
+    switch (result.kind) {
+      case "available":
+        return t("New version available: v{{version}}", { version: result.version });
+      case "upToDate":
+        return t("Already up to date");
+      case "unknown":
+        return t("Cannot tell whether a newer version exists.");
+    }
+  };
+
   const statusText = !status
     ? t("Checking...")
     : !status.supported
@@ -116,11 +129,7 @@ export function DesktopCard() {
         </div>
         {/* 更新结论只在用户点过之后出现。unknown 如实说不确定——那是「查不出来」，
             与「已是最新」不是一回事（升级动作由应用自己的更新器完成） */}
-        {update?.kind === "available" && (
-          <span className={MUTED}>{t("New version available: v{{version}}", { version: update.version })}</span>
-        )}
-        {update?.kind === "upToDate" && <span className={MUTED}>{t("Already up to date")}</span>}
-        {update?.kind === "unknown" && <span className={MUTED}>{t("Cannot tell whether a newer version exists.")}</span>}
+        {update && <span className={MUTED}>{updateText(update)}</span>}
       </div>
 
       <p className={MUTED}>{statusText}</p>
