@@ -232,12 +232,10 @@ function ConfigRowEditor({
 }) {
   const { t } = useTranslation();
   const toast = useAppStore((s) => s.toast);
+  // 初值取自这一行的当前值，之后不再从 props 同步：重拉拿回的是新对象（桥接是真 HTTP），
+  // 跟着它重置会把用户打了一半的内容冲掉——编辑中的内容是用户的状态，后台数据不该覆盖它。
+  // 行换了身份由 key={row.id} 处理。
   const [text, setText] = useState(() => (row.current === null ? "{}" : JSON.stringify(row.current, null, 2)));
-
-  // 列表重拉后（保存成功、别处改了状态）把原文同步回当前值
-  useEffect(() => {
-    setText(row.current === null ? "{}" : JSON.stringify(row.current, null, 2));
-  }, [row]);
 
   const save = async () => {
     let parsed: unknown;

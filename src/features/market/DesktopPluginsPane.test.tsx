@@ -52,7 +52,9 @@ function mount(options: { bridge?: BridgeStatus; plugins?: DesktopPlugins } = {}
   vi.spyOn(cmd, "desktopDetect").mockResolvedValue(desktop());
   vi.spyOn(cmd, "desktopBridgeStatus").mockResolvedValue(options.bridge ?? bridge());
   vi.spyOn(cmd, "desktopBridgePlugins").mockResolvedValue(options.plugins ?? catalog);
-  vi.spyOn(cmd, "desktopBridgeConfig").mockResolvedValue([
+  // 每次返回新对象：桥接是真的 HTTP，重拉拿回的是新 JSON。给同一个引用会让 React 跳过
+  // 重渲染，从而掩盖「重拉把编辑中的内容冲掉」这类问题
+  vi.spyOn(cmd, "desktopBridgeConfig").mockImplementation(async () => [
     { id: "agent-default-model", name: "@deepseek-ai/dsh-agent-default-model", current: { model: "x" } },
   ]);
   return render(createElement(DesktopPluginsPane));
@@ -218,5 +220,28 @@ describe("DesktopPluginsPane partial probe failure", () => {
     // 「检测中」——那不是真实状态
     await waitFor(() => expect(screen.queryByText("Checking...")).not.toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
+  });
+});
+
+describe("DesktopPluginsPane editing safety", () => {
+  it("keeps an in-progress config edit when an unrelated action refetches the lists", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockResolvedValue(applied);
+    mount();
+
+    // 展开一行并在里面打字
+    const box = await screen.findByRole("textbox", { name: "agent-default-model" });
+    await user.clear(box);
+    await user.type(box, '{{"model":"half-typed"');
+    expect((box as HTMLTextAreaElement).value).toBe('{"model":"half-typed"');
+
+    // 另一个动作会重拉列表与配置：重拉回来的 row 是新对象，若编辑器跟着它重置，
+    // 用户打了一半的内容就被冲掉了
+    await user.click(await screen.findByRole("checkbox", { name: "@deepseek-ai/dsh-host-open-in-app" }));
+    await waitFor(() => expect(cmd.desktopBridgeConfig).toHaveBeenCalledTimes(2));
+
+    expect((screen.getByRole("textbox", { name: "agent-default-model" }) as HTMLTextAreaElement).value).toBe(
+      '{"model":"half-typed"',
+    );
   });
 });
