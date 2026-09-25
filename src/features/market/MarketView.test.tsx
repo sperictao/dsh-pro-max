@@ -2069,3 +2069,51 @@ describe("market error boundary (G3)", () => {
     errSpy.mockRestore();
   });
 });
+
+describe("market tabs follow the managed surfaces", () => {
+  const configWith = (surfaces: ("web" | "desktop")[]) => ({
+    minimize_to_tray_on_close: false,
+    language: "en",
+    managed_surfaces: surfaces,
+    dsh_admin_cap_domain: "",
+    dsh_use_cap_domain: "",
+    dsh_extra_allowed_logins: "",
+    market_catalog_url: "",
+  });
+
+  it("leaves the desktop tab when desktop stops being managed while it is open", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(cmd, "desktopDetect").mockResolvedValue({
+      supported: true,
+      installed: true,
+      version: null,
+      running: true,
+      canQuit: true,
+    });
+    vi.spyOn(cmd, "desktopBridgeStatus").mockResolvedValue({
+      state: "connected",
+      protocol: 1,
+      expectedProtocol: 1,
+      installUrl: "https://example.test/bridge.tgz",
+    });
+    vi.spyOn(cmd, "desktopBridgePlugins").mockResolvedValue({ plugins: [], bundles: [] });
+    vi.spyOn(cmd, "desktopBridgeConfig").mockResolvedValue([]);
+    useAppStore.setState({ config: configWith(["web", "desktop"]) });
+
+    render(createElement(MarketView));
+    await user.click(screen.getByRole("button", { name: "Desktop app" }));
+    expect(screen.getByRole("button", { name: "Desktop app" })).toHaveClass("active");
+
+    // 设置页保存后立刻生效：收成仅 web 时，停在桌面 tab 上的那一格必须退回 Discover，
+    // 否则会出现「内容在渲染、tab 却不存在」的错位
+    useAppStore.setState({ config: configWith(["web"]) });
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Desktop app" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Discover" })).toHaveClass("active");
+    // 关键断言：内容也得跟着离开。只收 nav 不够——那会留下「内容在渲染、tab 却不存在」
+    // 的错位，而这正是这条测试要挡的东西
+    expect(document.getElementById("desktop-plugins-pane")).toBeNull();
+    expect(document.getElementById("market-search")).not.toBeNull();
+  });
+});

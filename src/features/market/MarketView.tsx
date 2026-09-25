@@ -207,6 +207,10 @@ function MarketViewInner() {
   const refreshUpdates = useAppStore((s) => s.refreshMarketUpdates);
   const desktopManaged = useAppStore((s) => s.config?.managed_surfaces.includes("desktop") ?? false);
   const tabs = MARKET_TABS.filter((item) => item.desktopOnly !== true || desktopManaged);
+  // 纳管形态在设置页保存后立刻生效：用户正停在桌面 tab 上时把它关掉，那一格会从列表里
+  // 消失而内容还在渲染——「内容在渲染、tab 却不存在」的错位。用派生值收口，让那个状态
+  // 根本无法表示（不改 state，所以也不需要 effect）
+  const activeTab = tabs.some((item) => item.id === tab) ? tab : "discover";
 
   // 两个 tab 的数据进入市场页时一次拉齐（更新检测是自动检测的一部分，
   // 挂载即跑，已安装页可手动重跑）；tab 间切换不重拉（数据驻留 store）
@@ -223,7 +227,7 @@ function MarketViewInner() {
         <nav className={APP_NAV}>
           {tabs.map((item) => {
             // 末尾的 " active" 字面量类是 market-tabs-a11y 的激活判定契约，无样式定义
-            const active = tab === item.id;
+            const active = activeTab === item.id;
             return (
               <button
                 key={item.id}
@@ -237,13 +241,13 @@ function MarketViewInner() {
           })}
         </nav>
       </div>
-      {tab === "discover" ? (
+      {activeTab === "discover" ? (
         <DiscoverPane />
-      ) : tab === "favorites" ? (
+      ) : activeTab === "favorites" ? (
         <FavoritesPane />
-      ) : tab === "installed" ? (
+      ) : activeTab === "installed" ? (
         <InstalledPane />
-      ) : tab === "desktop" ? (
+      ) : activeTab === "desktop" ? (
         <DesktopPluginsPane />
       ) : (
         <DiagnosticsPane />
