@@ -2117,3 +2117,54 @@ describe("market tabs follow the managed surfaces", () => {
     expect(document.getElementById("market-search")).not.toBeNull();
   });
 });
+
+describe("market fetches follow the managed surfaces", () => {
+  const configWith = (surfaces: ("web" | "desktop")[]) => ({
+    minimize_to_tray_on_close: false,
+    language: "en",
+    managed_surfaces: surfaces,
+    dsh_admin_cap_domain: "",
+    dsh_use_cap_domain: "",
+    dsh_extra_allowed_logins: "",
+    market_catalog_url: "",
+  });
+
+  const spyRefreshes = () => {
+    const spies = {
+      refreshMarketCatalog: vi.fn(),
+      refreshMarketInstalled: vi.fn(),
+      refreshMarketUpdates: vi.fn(),
+    };
+    useAppStore.setState(spies);
+    return spies;
+  };
+
+  it("does not touch the web profile when web is not managed", async () => {
+    const spies = spyRefreshes();
+    vi.spyOn(cmd, "desktopDetect").mockResolvedValue({
+      supported: true, installed: true, version: null, running: true, canQuit: true,
+    });
+    vi.spyOn(cmd, "desktopBridgeStatus").mockResolvedValue({
+      state: "not_installed", protocol: null, expectedProtocol: 1, installUrl: "https://example.test/b.tgz",
+    });
+    useAppStore.setState({ config: configWith(["desktop"]) });
+
+    render(createElement(MarketView));
+    await waitFor(() => expect(document.getElementById("market-tab-desktop")).not.toBeNull());
+
+    // 这三条都读 web profile 的落盘状态、并按包发 HTTP 查询——未纳管 web 时一次都不该跑
+    expect(spies.refreshMarketCatalog).not.toHaveBeenCalled();
+    expect(spies.refreshMarketInstalled).not.toHaveBeenCalled();
+    expect(spies.refreshMarketUpdates).not.toHaveBeenCalled();
+  });
+
+  it("fetches them once web is managed", () => {
+    const spies = spyRefreshes();
+    useAppStore.setState({ config: configWith(["web"]) });
+    render(createElement(MarketView));
+
+    expect(spies.refreshMarketCatalog).toHaveBeenCalled();
+    expect(spies.refreshMarketInstalled).toHaveBeenCalled();
+    expect(spies.refreshMarketUpdates).toHaveBeenCalled();
+  });
+});

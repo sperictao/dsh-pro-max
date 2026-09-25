@@ -222,14 +222,18 @@ function MarketViewInner() {
   // 对所有状态成立，不是补界面流程的漏
   const activeTab = tabs.find((item) => item.id === tab)?.id ?? tabs[0].id;
 
-  // 两个 tab 的数据进入市场页时一次拉齐（更新检测是自动检测的一部分，
-  // 挂载即跑，已安装页可手动重跑）；tab 间切换不重拉（数据驻留 store）
+  // 四页的数据进入市场页时一次拉齐（更新检测是自动检测的一部分，挂载即跑，已安装页可
+  // 手动重跑）；tab 间切换不重拉（数据驻留 store）。
+  // webManaged 进依赖而不是在 effect 里早退：这三条都读 web profile 的落盘状态、并按包发
+  // HTTP 查询，未纳管 web 时一次都不该跑（「不被触碰」），重新纳管时要能重新拉齐——
+  // store 里各有 `if (get().marketCatalog) return` 式的缓存守卫，重跑很便宜
   useEffect(() => {
+    if (!webManaged) return;
     void refreshCatalog();
     void refreshInstalled();
     void refreshUpdates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [webManaged]);
 
   return (
     <main className="flex min-h-0 flex-1 flex-col" id="market-view">

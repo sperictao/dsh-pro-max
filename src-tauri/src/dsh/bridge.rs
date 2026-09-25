@@ -31,7 +31,8 @@ const BRIDGE_READ_TIMEOUT_SECS: u64 = 30;
 /// 安装时报一个假失败，用户重试还可能撞上并发安装。
 const BRIDGE_WRITE_TIMEOUT_SECS: u64 = 900;
 
-/// 桥接的可用状态。界面按这四态给不同去向，不显示「失败」了事。
+/// 桥接的可用状态。界面按每种状态给不同去向，不显示「失败」了事。
+/// 不写数目：这个集合会长，写进来的数字会在增删后说谎（这条已经栽过两次）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export, export_to = "../../src/shared/bindings/")]
 #[serde(rename_all = "snake_case")]
@@ -42,8 +43,9 @@ pub enum BridgeState {
     NotInstalled,
     /// 装了，但协议代次与本次期望不符：提示升级桥接
     Incompatible,
-    /// 装了、代次也对，但插件自己没能就绪（没能建立 token）：能力路由一条都不注册，
-    /// 报「未装」会把人引向重装，而重装解决不了
+    /// 装了、代次也对，但插件自己没能就绪（没能建立 token）：能力路由一条都不注册。
+    /// 报「未装」会让人一直重装下去——重装本身不改环境，但说清原因（凭据没建立）并让人
+    /// 先检查可写性之后，重装才是重试那一步的正确动作
     NotReady,
     /// 可用
     Connected,
@@ -346,23 +348,26 @@ fn bridge_status_once() -> Result<BridgeStatus, Message> {
     })
 }
 
-/// 桥接的 `GET /ping`：免 token（它不改任何东西），自报身份、协议代次与是否就绪
-#[derive(Deserialize)]
-struct Ping {
-    bridge: String,
-    protocol: u32,
-    /// 插件自报就绪。缺省按就绪处理：不报这个字段的桥接版本一定有可用的能力路由
-    #[serde(default = "ping_ready_default")]
-    ready: bool,
-}
-
-fn ping_ready_default() -> bool {
-    true
-}
-
+/// 桥接的 `GET /ping`：免 token（它不改任何东西），自报身份、协议代次与是否就绪。
+///
+/// 这里**按字段宽松取值**而不是反序列化进一个 struct：结构体解析一旦失败，`.ok()` 会把它
+/// 吞成 None，于是「桥接在、只是自报的形状我不认识」被说成「未安装」——而那正是该提示
+/// 升级桥接的情形。宽松取值下，只要身份与代次还在，升级提示就照常给出。
 fn ping() -> Option<(u32, bool)> {
-    let ping: Ping = request::<Ping>("GET", "/ping", None).ok()??;
-    (ping.bridge == BRIDGE_IDENTITY).then_some((ping.protocol, ping.ready))
+    let raw: serde_json::Value = request::<serde_json::Value>("GET", "/ping", None).ok()??;
+    parse_ping(&raw)
+}
+
+/// 从 ping 的 data 里取身份、代次与就绪。宽松取值的规则集中在这里，便于按形状单测
+fn parse_ping(raw: &serde_json::Value) -> Option<(u32, bool)> {
+    if raw.get("bridge")?.as_str()? != BRIDGE_IDENTITY {
+        return None;
+    }
+    let protocol = u32::try_from(raw.get("protocol")?.as_u64()?).ok()?;
+    // ready 认不出（缺失 / null / 类型不对）就按就绪处理：不报它的桥接版本一定有可用路由，
+    // 而把「认不出」说成「没就绪」只会多造一句不真的话
+    let ready = raw.get("ready").and_then(serde_json::Value::as_bool).unwrap_or(true);
+    Some((protocol, ready))
 }
 
 /// 桥接的统一应答外壳：`{ok, data}` / `{ok: false, error}`。
@@ -461,6 +466,37 @@ mod tests {
         assert!(BRIDGE_READ_TIMEOUT_SECS < BRIDGE_WRITE_TIMEOUT_SECS);
     }
 
+    /// ping 的宽松取值：只要身份与代次还在，就不该因为 ready 的形状认不出而报「未安装」
+    #[test]
+    fn ping_reads_every_shape_that_still_names_the_bridge() {
+        let parse = |json: &str| parse_ping(&serde_json::from_str(json).unwrap());
+
+        // 缺失 / null / 类型不对：一律按就绪——认不出不等于没就绪
+        assert_eq!(parse(r#"{"bridge":"dsh-pro-max-bridge","protocol":1}"#), Some((1, true)));
+        assert_eq!(
+            parse(r#"{"bridge":"dsh-pro-max-bridge","protocol":1,"ready":null}"#),
+            Some((1, true))
+        );
+        assert_eq!(
+            parse(r#"{"bridge":"dsh-pro-max-bridge","protocol":1,"ready":"yes"}"#),
+            Some((1, true))
+        );
+        // 明确报未就绪
+        assert_eq!(
+            parse(r#"{"bridge":"dsh-pro-max-bridge","protocol":1,"ready":false}"#),
+            Some((1, false))
+        );
+        // 未来代次：仍要认出来，好让界面提示升级而不是说没装
+        assert_eq!(
+            parse(r#"{"bridge":"dsh-pro-max-bridge","protocol":9,"ready":true}"#),
+            Some((9, true))
+        );
+        // 不是我们的桥接、或代次本身读不出来：这才算「没装」
+        assert_eq!(parse(r#"{"bridge":"something-else","protocol":1}"#), None);
+        assert_eq!(parse(r#"{"bridge":"dsh-pro-max-bridge","protocol":"1"}"#), None);
+        assert_eq!(parse(r#"{}"#), None);
+    }
+
     #[test]
     fn bridge_prefix_stays_outside_the_api_prefix() {
         // /api 由替换连接插件按 capability 裁决；桥接自走 token，不能混进去
@@ -470,14 +506,15 @@ mod tests {
     #[test]
     fn envelope_requires_the_ok_flag() {
         // 业务结果在 data 里，失败原因是 error 文本——这条外壳是两侧唯一的约定
-        let ok: Envelope<Ping> = serde_json::from_str(
+        let ok: Envelope<serde_json::Value> = serde_json::from_str(
             r#"{"ok":true,"data":{"bridge":"dsh-pro-max-bridge","protocol":1}}"#,
         )
         .unwrap();
         assert!(ok.ok);
-        assert_eq!(ok.data.unwrap().protocol, 1);
+        assert_eq!(ok.data.unwrap()["protocol"], 1);
 
-        let bad: Envelope<Ping> = serde_json::from_str(r#"{"ok":false,"error":"unauthorized"}"#).unwrap();
+        let bad: Envelope<serde_json::Value> =
+            serde_json::from_str(r#"{"ok":false,"error":"unauthorized"}"#).unwrap();
         assert!(!bad.ok);
         assert_eq!(bad.error.as_deref(), Some("unauthorized"));
         assert!(bad.data.is_none());

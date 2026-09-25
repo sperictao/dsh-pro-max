@@ -36,6 +36,7 @@
 - 交互层 UI 改动（导航、事件绑定、a11y 层）tsc/lint/vitest/e2e 全绿**不算完成**：e2e 跑在无 Tauri IPC 的浏览器进程，覆盖不了 WKWebView 真机行为（2026-09-16 导航改版在 Chrome/WebKit 双引擎复现全过、真机顶栏 onClick 失效，整体回退）。必须在 `pnpm tauri dev` 真机点过关键路径后才算验证完成。
 - 交互层改动**两个引擎都要跑**：`pnpm run test:e2e`（Chromium）加 `pnpm run test:e2e:webkit`。WebKit 是 Tauri 在 macOS 上真正用的引擎家族，能挡掉一部分引擎差异问题——但它仍是无 IPC 的浏览器进程，**不能替代**上面那条真机要求。
 - **修 bug 的测试要先证明它抓得住那个 bug**：写完把修复临时退回去跑一次，必须失败。只断言「顺手能观察到的部分」会写出装饰性测试（实测：桌面 tab 的收起测试只断言了导航栏、没断言内容，退回修复照样通过，而真缺陷正是「内容还在渲染、tab 却不存在」）。**桩也要忠实**：`mockResolvedValue` 每次返回同一个对象引用，React 会跳过重渲染，从而掩盖「重拉把用户编辑冲掉」这类问题——真要模拟一次 HTTP 返回就用 `mockImplementation` 每次给新对象（实测：同一处 bug 的第一版复现测试因桩不忠实而假过）。
+- **批量脚本改代码要回读验证落地**：脚本里的锚点不匹配、或忘了写盘，都会静默 no-op 而脚本本身「成功」退出（这两类在本仓库各栽过一次：一处 replace 锚点与实际措辞不符、一处 assert 通过后漏调 write_text）。改完用关键词回读一次，别信脚本的退出码。
 - **可枚举的集合别把数目写进名字或标题**：计数会随增删失真，而失真后没人知道该改哪里。实测栽过两次：CONTEXT.md 的「桥接三态」在代码变成四态后仍在说谎，「三条硬约束」在一节变成四条后仍在说谎。写成「桥接状态」「硬约束」，让枚举自己说话。
 - 判定命令成败看 `PIPESTATUS[0]`（或别接管道），不要看管道末端的退出码：`cargo check … | tail` 的 `$?` 是 `tail` 的，会把失败读成通过。
 - **Windows 目标在本机无法编译检查**：`cargo check --target x86_64-pc-windows-msvc` 必然失败在 `ring` 的 C 代码（`fatal error: 'assert.h' file not found`）——交叉编译 MSVC 需要 Windows SDK 头文件，装了 rustup target 也不改变。Windows 分支的首次真实检查只能发生在 CI 的 `windows-latest` 上；因此要么让平台差异走 `cfg!` 运行时分支（两套实现随 mac 构建一起编译，可被单元测试覆盖），要么明确标注该分支未经编译验证。

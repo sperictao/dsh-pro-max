@@ -3,8 +3,7 @@
 
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
-import { TOGGLE } from "@/shared/lib/ui";
-import { MUTED } from "@/shared/lib/ui";
+import { MUTED, TOGGLE } from "@/shared/lib/ui";
 import { SettingsCard, SettingRow } from "./SettingRow";
 
 const SURFACES = [

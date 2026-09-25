@@ -152,7 +152,7 @@ export function DesktopCard() {
         </p>
       )}
 
-      {/* 未就绪的四态说明由共用组件给（插件页的桌面 tab 用的是同一份） */}
+      {/* 未就绪各态的说明由共用组件给（插件页的桌面 tab 用的是同一份） */}
       {installed && bridge && (
         <>
           <BridgeNotice bridge={bridge} onCopy={copyAddress} />
