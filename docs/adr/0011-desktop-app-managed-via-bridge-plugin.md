@@ -13,5 +13,6 @@ dsh 的 `desktop` 运行档由官方 Electron 应用独占：CLI 对启动、`--
 - **一次性手工步骤**：用户必须在桌面应用内粘一次 tarball URL。这是换取「不造第二份实现」的代价。
 - **我们的代码跑在用户进程里**：桥接插件必须永不产生未处理异常——未捕获异常会触发桌面应用的崩溃恢复，那条路径会重置 bundle 列表并禁用第三方插件（普通激活失败则被隔离，应用照常运行）。
 - **不得接管 connection 服务**：桌面 shell 启动时要向宿主根路径要一次 `303 + set-cookie` 换取 host cookie，替换 connection 会让这条握手失败并直接进崩溃恢复。桥接只增路由。
-- **本决策的实现尚未在真机上跑过**（截至写下这行）：桥接插件从未被装进官方应用，因此「应用自己的 PluginManager / ConfigEditor 确实按那些声明应答」只有类型声明、单测与真实 WebServer 上的路由测试为据；`desktop_quit` 的实际退出从未被触发过（会弹应用自己的确认框，无人值守时调用会留下一个没人应答的模态框），`desktop_quit` 被用户取消时是否会被误报为失败也待确认。安装一次桥接并跑 `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture bridges_the_live_channel` 即可得到通道那一项的确切结论。
+- **本决策的实现已在真机上验证**（2026-09-25 实测）：用户在官方应用 Plugins 页**直接粘 tgz URL** 即装成（该界面接受 tarball 规格，已实测）。随后 `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture bridges_the_live_channel` 读到 **195 个插件行 + 12 个 bundle 行 + 192 行运行档配置，全部被按应用类型声明逐字写的结构解析，无字段名偏差**；桌面 tab 的连接态在真实 WKWebView 里渲染正确（含 `management-required` 与 `unaddressable` 两条 readOnlyReason 支路），复选框/配置框的计数与 Rust 侧数据精确吻合。
+- **仍未验证两处**：① 装/卸/启停等**变更**操作——验它需要在用户的真机上真装真卸一个插件，未做；② `desktop_quit` 被用户取消时的报错行为——`desktop_quit` 的实际退出从未被触发过（会弹应用自己的确认框，无人值守时调用会留下一个没人应答的模态框）。
 - **token 认证是纵深防御而非安全边界**——同用户的本地进程本就能直写 `~/.dsh/profiles/desktop`（上游只拦 CLI，不拦文件系统）。
