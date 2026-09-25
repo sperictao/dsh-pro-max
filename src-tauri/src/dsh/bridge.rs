@@ -492,6 +492,56 @@ mod tests {
         assert_eq!(status.expected_protocol, BRIDGE_PROTOCOL);
     }
 
+    /// 真机全通道探针：桥接装上后跑这一条，就能把整条通道验完而不必点界面。
+    ///
+    /// 桥接连着时拉一次插件列表与运行档配置——那正是我按上游 API 目录的声明写的
+    /// `Upstream*` 结构要吃的真实 JSON。字段名若与声明不符，这里当场断，而不是等用户
+    /// 点开界面才发现列表是空的。
+    ///
+    /// 用法：先在官方桌面应用的 Plugins 页装一次桥接
+    /// （地址见 BRIDGE_INSTALL_URL），再跑
+    /// `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture bridges_the_live_channel`
+    #[test]
+    #[ignore]
+    fn bridges_the_live_channel() {
+        let status = bridge_status_once().unwrap();
+        println!("state={:?} protocol={:?}", status.state, status.protocol);
+        if status.state != BridgeState::Connected {
+            // 桥接没装时不假失败：这条探针的前提未满足，说清楚就够
+            println!("跳过：桥接当前不可用（{}）", status.install_url);
+            return;
+        }
+
+        let plugins = plugins_once().unwrap();
+        println!(
+            "插件 {} 行、bundle {} 行",
+            plugins.plugins.len(),
+            plugins.bundles.len()
+        );
+        for row in plugins.plugins.iter().take(5) {
+            println!(
+                "  插件 {} enabled={} 可改={}",
+                row.module_name,
+                row.enabled,
+                row.patch_id.is_some()
+            );
+        }
+        for row in plugins.bundles.iter().take(5) {
+            println!("  包 {} v{:?} 可移除={}", row.name, row.version, row.removable);
+        }
+        // 桥接自己必须在这个列表里，否则「装上了」这件事本身就是假的
+        assert!(
+            plugins.bundles.iter().any(|row| row.name.contains("dsh-pro-max-bridge")),
+            "桥接不在运行档的 bundle 列表里"
+        );
+
+        let config = config_once().unwrap();
+        println!("运行档配置 {} 行", config.len());
+        for row in config.iter().take(8) {
+            println!("  {} <{}>", row.id, row.name);
+        }
+    }
+
     // —— 上游字段名核对 ——
     // 下面的样本按桌面应用内嵌 API 目录（typert 契约）里 PluginInventoryEntry /
     // BundleInfo / ChangeResult / PluginInfo 的声明逐字构造。这些测试的意义是：上游改
