@@ -35,7 +35,7 @@
 - **`desktop` 运行档由官方桌面应用独占**：dsh CLI 对启动、`--dump-config`、`plugin` 一律按名字拒绝（`profile "desktop" is managed exclusively by the Electron application`）。本应用不写 `~/.dsh/profiles/desktop`、不代它装插件；对桌面档的插件与配置操作只能经桥接插件，走应用**自己的** Plugin Manager / Config Editor 服务——那是同一个机制，不是第二份实现。
 - **两形态共享同一个 harness home**：`~/.dsh` 的凭据、settings、skills、hooks 是同一份，只有 `profiles/` 分开（`profiles/web` 与 `profiles/desktop`）。所以两档的插件与模型配置互不相干，身份与凭据是同一个。
 - **官方桌面应用只有 macOS arm64 与 Windows x64 两个构建**（`download.deepseek.com/dsh-desk/feeds/` 下只有 `mac-arm64` 与 `win-x64`）。其余平台上桌面形态的 `supported` 为假：检测直接报「本平台无构建」，不给入口。
-- **官方桌面应用在 Windows 上无法被第三方正常退出**：窗口 close 被应用 `preventDefault` 成「隐藏到托盘」，窗口全关也不触发 `app.quit()`，第三方进程没有可触发的正常退出入口；强杀会跳过应用自己的 shutdown 流程。所以 Windows 上不提供退出，界面改述「只能从它自己的托盘菜单退出」（`canQuit` 为假）。macOS 走 AppleScript 的标准 quit 事件，应用仍会弹它自己的退出确认框——我们只发起请求，不代替用户决策。
+- **官方桌面应用在 Windows 上无法被第三方正常退出**：窗口 close 被应用 `preventDefault` 成「隐藏到托盘」，窗口全关也不触发 `app.quit()`，第三方进程没有可触发的正常退出入口；强杀会跳过应用自己的 shutdown 流程。所以 Windows 上不提供退出，界面改述「只能从它自己的托盘菜单退出」（`canQuit` 为假）。macOS 走 AppleScript 的标准 quit 事件，应用仍会弹它自己的退出确认框（实测：`skipQuitConfirmation` 默认为 false，只有崩溃恢复/重启那几条路径置真）——我们只发起请求，不代替用户决策；因此命令返回成功不等于应用已退出，界面按端口复检显示「仍在运行」是如实的。**不要在无人值守时调用退出**：确认框弹出后没有人能应答，会在用户屏幕上留下卡住的模态框。
 - 不以 home 层补丁（`~/.dsh/cordis.patch.yml`）挂载桥接插件：那份文件被所有运行档读取，用共享状态表达单档意图，会让每个 profile 都背上一个不属于它的行，卸载后还留下悬空引用。
 - 桥接插件跑在用户的桌面应用进程里，因此必须永不产生未处理异常——未捕获异常会触发桌面应用的崩溃恢复（那条路径重置 bundle 列表并禁用第三方插件）；而普通的激活失败是被隔离的（stderr 一行，应用照常运行）。
 - 桥接插件只增路由，不接管连接服务：桌面 shell 启动时要向宿主根路径要一次 `303 + set-cookie` 换取 host cookie，替换 connection 会让这条握手失败并直接进崩溃恢复。
