@@ -85,9 +85,12 @@ export const desktopBridgePlugins = () => invokeTyped<DesktopPlugins>("desktop_b
 export const desktopBridgeInstall = (spec: string, approvedBuilds?: string[]) =>
   invokeTyped<ChangeOutcome>("desktop_bridge_install", { spec, approvedBuilds });
 export const desktopBridgeRemove = (name: string) => invokeTyped<ChangeOutcome>("desktop_bridge_remove", { name });
-// 插件行按 entryId、bundle 按包名；上游是两套开关，调用方只传其中一个
-export const desktopBridgeSetEnabled = (target: { pluginId?: string; bundleName?: string }, enabled: boolean) =>
-  invokeTyped<ChangeOutcome>("desktop_bridge_set_enabled", { ...target, enabled });
+// 插件行按 entryId、bundle 按包名；上游是两套开关，所以「恰好给一个」——用联合类型把它变成
+// 编译期约束（Rust 侧仍按边界再拒一次，那是跨进程的护栏）
+export const desktopBridgeSetEnabled = (
+  target: { pluginId: string; bundleName?: never } | { pluginId?: never; bundleName: string },
+  enabled: boolean,
+) => invokeTyped<ChangeOutcome>("desktop_bridge_set_enabled", { ...target, enabled });
 export const desktopBridgeConfig = () => invokeTyped<ConfigRow[]>("desktop_bridge_config");
 export const desktopBridgeConfigEdit = (id: string, config: unknown) =>
   invokeTyped<void>("desktop_bridge_config_edit", { id, config });
