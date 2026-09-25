@@ -108,10 +108,13 @@ async fn save_config(config: LauncherConfig) -> Result<(), Message> {
 
 /// 仅更新设置类字段，保留其余字段不变
 #[tauri::command]
-async fn update_settings(config: LauncherConfig) -> Result<(), Message> {
+async fn update_settings(app: tauri::AppHandle, config: LauncherConfig) -> Result<(), Message> {
     let mut current = config::load_config()?;
     config::merge_settings(&mut current, &config);
-    config::save_config(&current)
+    config::save_config(&current)?;
+    // 纳管形态决定托盘里有没有 dsh 三键，而菜单只在启动、语言切换与 dsh 状态同步时重建。
+    // 配置刚落盘，这里主动重建一次，否则用户关掉 web 后托盘要等下一次别的事件才跟上
+    tray::rebuild_tray_menu(&app)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
