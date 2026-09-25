@@ -16,7 +16,8 @@
     "build:dsh-plugins": "node scripts/build-dsh-plugins.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:release": "node scripts/check-release.mjs",
-    "gen:model-presets": "node scripts/generate-model-presets.mjs"
+    "gen:model-presets": "node scripts/generate-model-presets.mjs",
+    "test:e2e:webkit": "E2E_ENGINE=webkit node e2e/smoke.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

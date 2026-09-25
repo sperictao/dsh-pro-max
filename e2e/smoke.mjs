@@ -4,7 +4,7 @@
 // src/shared/commands.ts 对齐；出现未 mock 命令即失败（防止启动链路静默漂移）。
 // 浏览器优先系统 Chrome → Edge → playwright 自带 Chromium（需自行 install）。
 import { createServer } from "vite";
-import { chromium } from "playwright-core";
+import { chromium, webkit } from "playwright-core";
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
@@ -26,7 +26,17 @@ async function startVite() {
   return server;
 }
 
+// 引擎可切换：WKWebView 与 Chromium 的交互层行为差异是本项目踩过的坑（AGENTS.md 记着
+// 导航改版那次——双引擎都过、真机 onClick 失效），所以 e2e 要能两边都跑。默认 chromium
+// 保持既有行为。
+//   E2E_ENGINE=webkit pnpm run test:e2e
+const ENGINE = process.env.E2E_ENGINE ?? "chromium";
+
 async function launchBrowser() {
+  if (ENGINE === "webkit") {
+    // WebKit 是 Tauri 在 macOS 上真正使用的引擎家族，也是最接近真机的可自动化那一层
+    return await webkit.launch({ headless: true });
+  }
   const attempts = [{ channel: "chrome" }, { channel: "msedge" }, {}];
   const failures = [];
   for (const opts of attempts) {
@@ -68,7 +78,22 @@ const MOCK = {
     dsh_use_cap_domain: "",
     dsh_extra_allowed_logins: "",
     market_catalog_url: "",
-  },  dshStatus: {
+  },  // 桌面形态：应用已装并在跑，桥接未装——那正是用户第一次点进来的样子
+  desktopStatus: {
+    supported: true,
+    installed: true,
+    version: "0.1.7-rc.1.20260924.1",
+    running: true,
+    canQuit: true,
+  },
+  bridgeStatus: {
+    state: "not_installed",
+    protocol: null,
+    expectedProtocol: 1,
+    installUrl:
+      "https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro-max-bridge.tgz",
+  },
+  dshStatus: {
     nodeAvailable: false,
     dshInstalled: false,
     dshVersion: null,
@@ -162,16 +187,23 @@ async function main() {
     const page = await browser.newPage();
     page.on("pageerror", (e) => failures.push(`pageerror: ${e.message}`));
 
-    await page.addInitScript(({ config, dshStatus, marketCatalog, marketInstalled, modelConfig, modelCatalog }) => {
+    await page.addInitScript(({ config, dshStatus, desktopStatus, bridgeStatus, marketCatalog, marketInstalled, modelConfig, modelCatalog }) => {
       // 结构对齐 @tauri-apps/api/mocks.js 的 mockInternals：
       // 事件解绑路径依赖 __TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener 与回调注册表
       let nextId = 1;
       const callbacks = new Map();
       window.__e2eSavedConfigs = [];
+      window.__e2eSavedSettings = [];
       const handlers = {
         get_resolved_language: () => "en",
         load_config: () => config,
         autostart_is_enabled: () => false,
+        // 设置保存有自己的记录器：__e2eSavedConfigs 是模型配置专用的，
+        // 共用会让「test/fetch/catalog 不得偷偷存模型配置」那条断言数错
+        update_settings: ({ config: next }) => {
+          window.__e2eSavedSettings.push(structuredClone(next));
+          return null;
+        },
         get_updater_config_health: () => ({ configured: true, message: "ready" }),
         check_update: () => ({
           currentVersion: "0.4.0",
@@ -181,6 +213,10 @@ async function main() {
           message: null,
         }),
         dsh_detect: () => dshStatus,
+        desktop_detect: () => desktopStatus,
+        desktop_bridge_status: () => bridgeStatus,
+        desktop_bridge_plugins: () => ({ plugins: [], bundles: [] }),
+        desktop_bridge_config: () => [],
         dsh_step_schema: ({ remote } = {}) =>
           (remote
             ? ["node","install","plugins","tailscale","magicdns","start","serve","verify"]
@@ -505,6 +541,86 @@ async function main() {
       assert.equal(saved.defaultReasoningEffort, null);
       assert.equal((await page.getByTestId("default-model-summary").innerText()).trim(), "Spero AI · glm-5.2");
       await expectVisible(page.locator("#badge-default-0"));
+    });
+
+    await step("surfaces: the toggles gate the home cards and the desktop tab", async () => {
+      // 起步是仅 web：桌面卡与桌面 tab 都不该存在
+      await page.getByRole("button", { name: "Settings" }).click();
+      await page.getByRole("button", { name: "Managed Surfaces" }).click();
+      await expectVisible(page.locator("#section-dsh-surface"));
+      const webToggle = page.locator("#toggle-surface-web");
+      const desktopToggle = page.locator("#toggle-surface-desktop");
+      assert.equal(await webToggle.isChecked(), true, "web should start managed");
+      assert.equal(await desktopToggle.isChecked(), false, "desktop should start unmanaged");
+      // 只剩一档时该档不可关：「全关」在界面上不可表示
+      assert.equal(await webToggle.isDisabled(), true, "the last managed surface must not be switchable off");
+
+      await page.getByRole("button", { name: "Home" }).click();
+      await expectVisible(page.locator("#integration-view #dsh-remote-access-row"));
+      assert.equal(await page.locator("#desktop-card").count(), 0, "desktop card must stay out while unmanaged");
+
+      await page.getByRole("button", { name: "Plugins" }).click();
+      assert.equal(await page.locator("#market-tab-desktop").count(), 0, "desktop tab must stay out while unmanaged");
+
+      // 纳管桌面：草稿立刻生效，两处门禁同时打开
+      await page.getByRole("button", { name: "Settings" }).click();
+      await desktopToggle.click();
+      assert.equal(await webToggle.isEnabled(), true, "web may be switched off once desktop is managed");
+
+      await page.getByRole("button", { name: "Home" }).click();
+      await expectVisible(page.locator("#desktop-card"));
+      // 桥接未装时给的是那一条可粘贴的地址，不是「失败」
+      await expectVisible(page.getByText("The bridge plugin is not installed in DeepSeek Harness."));
+      await expectVisible(page.getByText(/releases\/latest\/download\/dsh-pro-max-bridge\.tgz/));
+
+      await page.getByRole("button", { name: "Plugins" }).click();
+      const desktopTab = page.locator("#market-tab-desktop");
+      await expectVisible(desktopTab);
+      // id 来自 JSX 的 tab 数据而不是位置映射——这条断言就是那个契约的守卫
+      await desktopTab.click();
+      await expectVisible(page.locator("#desktop-plugins-pane"));
+      await waitForCommandCount("desktop_bridge_status", 2);
+
+      // 收成仅桌面：web 卡与 web 的 tab 都该消失，而停在桌面 tab 上的一格不能留下错位
+      await page.getByRole("button", { name: "Settings" }).click();
+      await webToggle.click();
+      // 不变量换了个方向成立：现在轮到桌面这一档不可关
+      assert.equal(await webToggle.isEnabled(), true, "web may be switched back on");
+      assert.equal(await desktopToggle.isChecked(), true, "desktop is the remaining surface");
+      assert.equal(await desktopToggle.isDisabled(), true, "the last managed surface must not be switchable off");
+
+      await page.getByRole("button", { name: "Home" }).click();
+      assert.equal(await page.locator("#dsh-remote-access-row").count(), 0, "web card must leave once web is unmanaged");
+      await expectVisible(page.locator("#desktop-card"));
+
+      await page.getByRole("button", { name: "Plugins" }).click();
+      await expectVisible(page.locator("#market-tab-desktop"));
+      await page.locator("#market-tab-desktop").click();
+      await expectVisible(page.locator("#desktop-plugins-pane"));
+
+      // 回到两档、再收成仅 web，验证桌面 tab 与其面板一起离开
+      await page.getByRole("button", { name: "Settings" }).click();
+      await webToggle.click();
+      await desktopToggle.click();
+      await page.getByRole("button", { name: "Plugins" }).click();
+      assert.equal(await page.locator("#market-tab-desktop").count(), 0, "desktop tab must leave");
+      assert.equal(await page.locator("#desktop-plugins-pane").count(), 0, "its pane must leave with it");
+      await expectVisible(page.locator("#market-search"));
+
+      // 停在两档并存上保存——那是需求里「可以同时启用」的那一条。此刻草稿与落盘不同，
+      // 所以保存条在；而上面那步收成仅 web 时它与落盘相同、保存条消失（同样是正确行为）
+      await page.getByRole("button", { name: "Settings" }).click();
+      await desktopToggle.click();
+      await page.getByRole("button", { name: "Save Settings" }).click();
+      await page.waitForFunction(() => window.__e2eSavedSettings.length >= 1, null, { timeout: 15_000 });
+      const saved = await page.evaluate(() => window.__e2eSavedSettings.at(-1));
+      assert.deepEqual(
+        saved.managed_surfaces?.slice().sort(),
+        ["desktop", "web"],
+        `saved surfaces: ${JSON.stringify(saved.managed_surfaces)}`,
+      );
+      // 落盘后草稿与存档一致，保存条收起
+      await page.waitForFunction(() => document.querySelector("#settings-footer") === null);
     });
 
     await step("navigation returns home", async () => {

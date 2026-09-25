@@ -232,6 +232,9 @@ function MarketViewInner() {
               <button
                 key={item.id}
                 type="button"
+                // id 跟着 tab 数据走：a11y 层据此加 ARIA 语义，而它自己不再持有一份
+                // 「第几个 tab 叫什么」的位置映射（那份映射会在 tab 条件出现时错位）
+                id={`market-tab-${item.id}`}
                 className={`${APP_NAV_ITEM} ${active ? APP_NAV_ITEM_ACTIVE : APP_NAV_ITEM_INACTIVE}${active ? " active" : ""}`}
                 onClick={() => setTab(item.id)}
               >

@@ -1,6 +1,5 @@
 // segmented 盒子（nav 本体）嵌在整行分隔条 div 内，非 #market-view 直接子元素
 const MARKET_NAV_SELECTOR = "#market-view nav";
-const MARKET_TAB_IDS = ["discover", "favorites", "installed", "diagnostics"] as const;
 
 function marketTabs(nav: HTMLElement): HTMLButtonElement[] {
   return Array.from(nav.querySelectorAll<HTMLButtonElement>(":scope > button"));
@@ -32,7 +31,6 @@ function syncMarketTabSemantics(): void {
   if (tabs.length === 0) return;
 
   const activeIndex = activeTabIndex(tabs);
-  const activeId = MARKET_TAB_IDS[activeIndex] ?? `tab-${activeIndex}`;
   // pane 是整行分隔条（nav 的父级）的下一个兄弟，而非 nav 的
   const host = nav.parentElement instanceof HTMLElement ? nav.parentElement : nav;
   const panel = host.nextElementSibling instanceof HTMLElement ? host.nextElementSibling : null;
@@ -44,17 +42,17 @@ function syncMarketTabSemantics(): void {
   if (panel) {
     // Feature panes already own stable IDs such as `market-installed`. Preserve them:
     // existing selectors and audit contracts must not be replaced by the ARIA layer.
-    if (!panel.id) panel.id = `market-tabpanel-${activeId}`;
+    // 面板 id 由当前 tab 的 id 派生。tab 的 id 是 JSX 给的（跟着 tab 数据走），
+    // 本层只读不写——位置映射会在 tab 条件出现时错位
+    if (!panel.id) panel.id = `${tabs[activeIndex].id}-panel`;
     panelId = panel.id;
     panel.setAttribute("role", "tabpanel");
     panel.tabIndex = 0;
   }
 
   tabs.forEach((tab, index) => {
-    const id = MARKET_TAB_IDS[index] ?? `tab-${index}`;
     const selected = index === activeIndex;
     tab.setAttribute("role", "tab");
-    tab.id = `market-tab-${id}`;
     tab.setAttribute("aria-selected", String(selected));
     tab.tabIndex = selected ? 0 : -1;
 
