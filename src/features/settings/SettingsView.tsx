@@ -19,7 +19,10 @@ import { RemoteAuthSection } from "./RemoteAuthSection";
 import { AboutSection } from "@/features/updater/AboutSection";
 
 // 设置视图：侧栏分区（应用组 + DeepSeek Harness 组）+ 内容区 + 保存 footer（外观/dsh 子页/关于隐藏）
-const SECTION_GROUPS: { labelKey: string; sections: { id: SettingsSection; labelKey: string; icon: ReactNode }[] }[] = [
+// webOnly：dsh 版本 / 开机自启 / 远程授权三节管的都是 web 那档——开机自启那节会注册一个
+// 开机拉起 dsh web 的服务，正是「触碰未纳管的形态」。「纳管形态」那节不标：它是把 web 关掉
+// 之后再把开关找回来的唯一入口
+const SECTION_GROUPS: { labelKey: string; sections: { id: SettingsSection; labelKey: string; icon: ReactNode; webOnly?: boolean }[] }[] = [
   {
     labelKey: "App",
     sections: [
@@ -58,6 +61,7 @@ const SECTION_GROUPS: { labelKey: string; sections: { id: SettingsSection; label
       },
       {
         id: "dsh-version",
+        webOnly: true,
         labelKey: "dsh Version",
         icon: (
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" /></svg>
@@ -65,6 +69,7 @@ const SECTION_GROUPS: { labelKey: string; sections: { id: SettingsSection; label
       },
       {
         id: "dsh-autostart",
+        webOnly: true,
         labelKey: "Boot Auto-start",
         icon: (
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.77.04" /></svg>
@@ -72,6 +77,7 @@ const SECTION_GROUPS: { labelKey: string; sections: { id: SettingsSection; label
       },
       {
         id: "dsh-auth",
+        webOnly: true,
         labelKey: "Remote authorization",
         icon: (
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
@@ -83,7 +89,17 @@ const SECTION_GROUPS: { labelKey: string; sections: { id: SettingsSection; label
 
 export function SettingsView() {
   const { t } = useTranslation();
-  const section = useAppStore((s) => s.settingsSection);
+  const settingsSection = useAppStore((s) => s.settingsSection);
+  const webManaged = useAppStore((s) => s.config?.managed_surfaces.includes("web") ?? true);
+  // 与市场 tab / 顶层导航同一手法：按纳管形态过滤导航，并派生出实际分区，让「停在已消失的
+  // 分区上」无法表示。界面到不了那个状态（开关本身在恒可用的「纳管形态」节里），这条是让
+  // 渲染对所有状态成立，不是补流程的漏——别当死代码删
+  const groups = SECTION_GROUPS.map((g) => ({
+    ...g,
+    sections: g.sections.filter((item) => item.webOnly !== true || webManaged),
+  })).filter((g) => g.sections.length > 0);
+  const sections = groups.flatMap((g) => g.sections);
+  const section = sections.find((item) => item.id === settingsSection)?.id ?? "general";
   const setSettingsSection = useAppStore((s) => s.setSettingsSection);
   const dirty = useAppStore(isConfigDirty);
   const saveBlocked = useAppStore((s) => !isValidCatalogUrl(s.config?.market_catalog_url ?? ""));
@@ -94,7 +110,7 @@ export function SettingsView() {
     <main className="min-h-0 min-w-0 flex-1" id="settings-view">
       <div className="flex h-full min-w-0">
         <nav className="flex w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r border-border p-3" aria-label={t("Settings")}>
-          {SECTION_GROUPS.map((g) => (
+          {groups.map((g) => (
             <div className="flex flex-col gap-0.5" key={g.labelKey}>
               <div className={`px-2.5 pb-1 font-medium tracking-wide ${MUTED}`}>
                 {t(g.labelKey)}

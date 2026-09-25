@@ -589,6 +589,12 @@ async function main() {
       assert.equal(await page.locator("#models-view").count(), 0, "models view must leave with web");
       // 改纳管形态必须回设置页，所以此刻人在设置页上；这里断言的是模型页那一格没了
       assert.equal(await page.getByRole("button", { name: "Models" }).count(), 0, "models nav must leave with web");
+      // dsh 的那三节管的都是 web：版本、开机自启（会注册开机拉起 dsh web 的服务）、远程授权
+      for (const name of ["dsh Version", "Boot Auto-start", "Remote authorization"]) {
+        assert.equal(await page.getByRole("button", { name, exact: true }).count(), 0, `${name} must leave with web`);
+      }
+      // 「纳管形态」节必须留下——它是把 web 关掉之后再把开关找回来的唯一入口
+      await expectVisible(page.locator("#section-dsh-surface"));
       // 不变量换了个方向成立：现在轮到桌面这一档不可关
       assert.equal(await webToggle.isEnabled(), true, "web may be switched back on");
       assert.equal(await desktopToggle.isChecked(), true, "desktop is the remaining surface");
