@@ -297,6 +297,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Cannot check for a new DeepSeek Harness version: {{error}}": "无法检测 DeepSeek Harness 新版本：{{error}}",
 
   // —— 桌面应用：桥接通道 ——
+  "Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.": "安装会调用应用自己的包管理器，可能要几分钟；这里没有进度显示，也不能取消。",
   "Applied": "已应用",
   "Restart DeepSeek Harness to apply this change.": "重启 DeepSeek Harness 后该改动才会生效。",
   "A higher-priority layer overrides this change; it is not in effect.": "有更高优先级的层覆盖了该改动，它没有生效。",

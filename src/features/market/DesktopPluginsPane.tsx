@@ -109,7 +109,8 @@ export function DesktopPluginsPane() {
           <section className="flex flex-col gap-2">
             <h3 className="text-sm font-medium">{t("Install a plugin")}</h3>
             <p className={MUTED}>
-              {t("Paste a package spec: an npm name, a github: shorthand, a tarball URL, or an absolute path. The desktop app installs it into its own profile.")}
+              {t("Paste a package spec: an npm name, a github: shorthand, a tarball URL, or an absolute path. The desktop app installs it into its own profile.")}{" "}
+              {t("Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.")}
             </p>
             <div className="flex items-center gap-2">
               <input
