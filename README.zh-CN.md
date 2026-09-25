@@ -21,6 +21,7 @@
 
 - 🌐 **DeepSeek Harness 远程访问**——通过内置身份授权插件一键开通 dsh Web UI 的 Tailscale HTTPS 访问，8 步进度时间线展示全过程，支持兼容性修复与开机自启
 - 🛍 **插件市场**——浏览 awesome-dsh-plugin.com 精选目录（2700+ 插件），一键安装/移除 web profile 插件
+- 🖥 **桌面应用形态**——把官方 DeepSeek Harness 桌面应用作为第二档纳管形态：检测/打开/退出/新版本提示，并经一次性安装的[桥接插件](https://github.com/sperictao/dsh-pro-max-bridge)管理它自己的插件与运行档配置。设置里选择纳管哪些形态——至少一档，可两档并存
 - 🧠 **模型配置**——在应用内编辑 dsh 的默认模型与自定义 LLM 提供商路由（OpenAI 兼容 / Anthropic 协议），密钥只存环境变量名
 - 🔌 **内置授权插件**——两个固定版本的插件（[dsh-client-connection-authz](https://github.com/sperictao/dsh-client-connection-authz) + [dsh-auth-tailscale](https://github.com/sperictao/dsh-auth-tailscale)）随安装包分发，自动装入 dsh web profile
 - 🔐 **基于 Capability 的授权**——配置你自己的管理/使用 capability 域名与额外允许的 Tailscale 登录名；不配置 capability 时远程特权接口恒 403

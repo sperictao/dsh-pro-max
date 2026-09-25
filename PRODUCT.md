@@ -10,7 +10,7 @@ product
 
 ## Product Purpose
 
-dsh-pro-max 是 DeepSeek Harness 的桌面启动器（launcher）：把 dsh CLI + 授权插件 + Tailscale serve 的多步安装与启动链路收进一个可信赖的一键流程。成功的标准是：用户不看文档就能把服务跑起来；出任何故障时，页面上的步骤时间线能给出「问题 + 下一步」；状态一眼可读（本地/远程、运行/停止、哪个环节卡住）。
+dsh-pro-max 是 DeepSeek Harness 的桌面启动器（launcher）：把 dsh CLI + 授权插件 + Tailscale serve 的多步安装与启动链路收进一个可信赖的一键流程，并在同一处纳管官方桌面应用。成功的标准是：用户不看文档就能把服务跑起来；出任何故障时，页面上的步骤时间线能给出「问题 + 下一步」；状态一眼可读（本地/远程、运行/停止、哪个环节卡住）。
 
 ## Brand Personality
 

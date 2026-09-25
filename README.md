@@ -21,6 +21,7 @@
 
 - 🌐 **DeepSeek Harness Remote Access** — one-click Tailscale HTTPS access to the dsh Web UI through bundled identity-authorization plugins, shown as an 8-step progress timeline with compatibility repair and boot auto-start
 - 🛍 **Plugin Marketplace** — browse the awesome-dsh-plugin.com curated catalog (2700+ plugins) and one-click install/remove web profile plugins
+- 🖥 **Desktop App Surface** — the official DeepSeek Harness desktop app as a second managed surface: detect / open / quit / update hints, plus its own plugins and profile configuration through a one-time [bridge plugin](https://github.com/sperictao/dsh-pro-max-bridge). A settings switch picks which surfaces this app manages — at least one, both allowed
 - 🧠 **Model Configuration** — edit dsh's default model and custom LLM provider routes (OpenAI-compatible / Anthropic protocol) in-app; keys are stored as environment variable names only
 - 🔌 **Bundled Auth Plugins** — two pinned plugins ([dsh-client-connection-authz](https://github.com/sperictao/dsh-client-connection-authz) + [dsh-auth-tailscale](https://github.com/sperictao/dsh-auth-tailscale)) ship inside the installer and are installed into the dsh web profile automatically
 - 🔐 **Capability-Based Authorization** — configure your own admin/use capability domains and extra allowed Tailscale logins; without capabilities, remote privileged APIs stay 403
