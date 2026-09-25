@@ -22,14 +22,17 @@ export function BridgeNotice({
     return <p className={MUTED}>{t("Open DeepSeek Harness to manage its plugins and configuration.")}</p>;
   }
 
-  // not_installed 与 incompatible 的去向是同一个：粘一次地址重装
+  // 三种未就绪态的去向都是「粘一次地址重装」——not_ready 也一样，因为凭据建立失败通常
+  // 是环境问题，重装会重试
   const reason =
     bridge.state === "not_installed"
       ? t("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:")
-      : t(
-          "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:",
-          { expected: bridge.expectedProtocol, actual: bridge.protocol ?? "?" },
-        );
+      : bridge.state === "not_ready"
+        ? t("The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:")
+        : t(
+            "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:",
+            { expected: bridge.expectedProtocol, actual: bridge.protocol ?? "?" },
+          );
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border p-3">

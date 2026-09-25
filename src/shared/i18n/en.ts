@@ -296,6 +296,7 @@ export const en = {
   "Cannot check for a new DeepSeek Harness version: {{error}}": "Cannot check for a new DeepSeek Harness version: {{error}}",
 
   // —— 桌面应用：桥接通道 ——
+  "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:": "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:",
   "Cannot tell whether a newer version exists.": "Cannot tell whether a newer version exists.",
   "Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.": "Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.",
   "Applied": "Applied",

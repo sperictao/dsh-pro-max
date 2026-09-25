@@ -297,6 +297,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Cannot check for a new DeepSeek Harness version: {{error}}": "无法检测 DeepSeek Harness 新版本：{{error}}",
 
   // —— 桌面应用：桥接通道 ——
+  "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:": "桥接插件已装，但它没能在 ~/.dsh-pro-max 里建立通信凭据。请确认该目录可写，然后用下面的地址重装桥接：",
   "Cannot tell whether a newer version exists.": "无法判断是否有更新版本。",
   "Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.": "安装会调用应用自己的包管理器，可能要几分钟；这里没有进度显示，也不能取消。",
   "Applied": "已应用",

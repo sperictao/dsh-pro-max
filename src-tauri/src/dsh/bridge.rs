@@ -42,6 +42,9 @@ pub enum BridgeState {
     NotInstalled,
     /// 装了，但协议代次与本次期望不符：提示升级桥接
     Incompatible,
+    /// 装了、代次也对，但插件自己没能就绪（没能建立 token）：能力路由一条都不注册，
+    /// 报「未装」会把人引向重装，而重装解决不了
+    NotReady,
     /// 可用
     Connected,
 }
@@ -326,11 +329,13 @@ fn bridge_status_once() -> Result<BridgeStatus, Message> {
         // 应用没跑就无从判断桥接在不在，不猜
         (BridgeState::AppUnavailable, None)
     } else {
-        match ping_protocol() {
+        match ping() {
             // 端口活着但这个端点不存在：应用在跑、桥接没装
             None => (BridgeState::NotInstalled, None),
-            Some(protocol) if protocol != BRIDGE_PROTOCOL => (BridgeState::Incompatible, Some(protocol)),
-            Some(protocol) => (BridgeState::Connected, Some(protocol)),
+            // 代次先判：重装地址对代次不符和没就绪两种都是对的下一步
+            Some((protocol, _)) if protocol != BRIDGE_PROTOCOL => (BridgeState::Incompatible, Some(protocol)),
+            Some((protocol, false)) => (BridgeState::NotReady, Some(protocol)),
+            Some((protocol, true)) => (BridgeState::Connected, Some(protocol)),
         }
     };
     Ok(BridgeStatus {
@@ -341,16 +346,23 @@ fn bridge_status_once() -> Result<BridgeStatus, Message> {
     })
 }
 
-/// 桥接的 `GET /ping`：免 token（它不改任何东西），只自报身份与协议代次
+/// 桥接的 `GET /ping`：免 token（它不改任何东西），自报身份、协议代次与是否就绪
 #[derive(Deserialize)]
 struct Ping {
     bridge: String,
     protocol: u32,
+    /// 插件自报就绪。缺省按就绪处理：不报这个字段的桥接版本一定有可用的能力路由
+    #[serde(default = "ping_ready_default")]
+    ready: bool,
 }
 
-fn ping_protocol() -> Option<u32> {
+fn ping_ready_default() -> bool {
+    true
+}
+
+fn ping() -> Option<(u32, bool)> {
     let ping: Ping = request::<Ping>("GET", "/ping", None).ok()??;
-    (ping.bridge == BRIDGE_IDENTITY).then_some(ping.protocol)
+    (ping.bridge == BRIDGE_IDENTITY).then_some((ping.protocol, ping.ready))
 }
 
 /// 桥接的统一应答外壳：`{ok, data}` / `{ok: false, error}`。

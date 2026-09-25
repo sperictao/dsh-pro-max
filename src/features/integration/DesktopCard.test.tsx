@@ -215,3 +215,21 @@ describe("DesktopCard update check", () => {
     await waitFor(() => expect(screen.queryByText("New version available: v9.9.9")).not.toBeInTheDocument());
   });
 });
+
+describe("DesktopCard bridge readiness", () => {
+  it("distinguishes 'installed but not ready' from 'not installed'", async () => {
+    mockDetect(detected());
+    mockBridge(bridge({ state: "not_ready", protocol: 1 }));
+    render(createElement(DesktopCard));
+
+    // 报「没装」会把人引向重装，而重装解决不了凭据建立失败——那是环境问题
+    expect(
+      await screen.findByText(
+        "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:"),
+    ).not.toBeInTheDocument();
+  });
+});

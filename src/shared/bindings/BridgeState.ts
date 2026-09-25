@@ -3,4 +3,4 @@
 /**
  * 桥接的可用状态。界面按这四态给不同去向，不显示「失败」了事。
  */
-export type BridgeState = "app_unavailable" | "not_installed" | "incompatible" | "connected";
+export type BridgeState = "app_unavailable" | "not_installed" | "incompatible" | "not_ready" | "connected";
