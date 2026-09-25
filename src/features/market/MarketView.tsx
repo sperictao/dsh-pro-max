@@ -180,11 +180,13 @@ export function looksTerminal(name: string, description: string | null): boolean
 
 type MarketTab = "discover" | "favorites" | "installed" | "diagnostics" | "desktop";
 
-const MARKET_TABS: { id: MarketTab; labelKey: string; desktopOnly?: boolean }[] = [
-  { id: "discover", labelKey: "Discover" },
-  { id: "favorites", labelKey: "Favorites" },
-  { id: "installed", labelKey: "Installed" },
-  { id: "diagnostics", labelKey: "Diagnostics" },
+// webOnly：这四页都在往 web profile 装插件、读它的落盘状态。纳管 web 关了它们就得走——
+// 「未纳管的形态不进 UI、不被触碰」（CONTEXT.md）。视图本身仍可达，因为它同时承载桌面 tab
+const MARKET_TABS: { id: MarketTab; labelKey: string; desktopOnly?: boolean; webOnly?: boolean }[] = [
+  { id: "discover", labelKey: "Discover", webOnly: true },
+  { id: "favorites", labelKey: "Favorites", webOnly: true },
+  { id: "installed", labelKey: "Installed", webOnly: true },
+  { id: "diagnostics", labelKey: "Diagnostics", webOnly: true },
   // 桌面应用档的插件与配置走桥接插件，不是市场那套 profile 落盘读取——所以它是一
   // 个独立 tab，而不是市场内的一层切换（见 ADR 0011）
   { id: "desktop", labelKey: "Desktop app", desktopOnly: true },
@@ -205,12 +207,20 @@ function MarketViewInner() {
   const refreshCatalog = useAppStore((s) => s.refreshMarketCatalog);
   const refreshInstalled = useAppStore((s) => s.refreshMarketInstalled);
   const refreshUpdates = useAppStore((s) => s.refreshMarketUpdates);
-  const desktopManaged = useAppStore((s) => s.config?.managed_surfaces.includes("desktop") ?? false);
-  const tabs = MARKET_TABS.filter((item) => item.desktopOnly !== true || desktopManaged);
-  // 纳管形态在设置页保存后立刻生效：用户正停在桌面 tab 上时把它关掉，那一格会从列表里
-  // 消失而内容还在渲染——「内容在渲染、tab 却不存在」的错位。用派生值收口，让那个状态
-  // 根本无法表示（不改 state，所以也不需要 effect）
-  const activeTab = tabs.some((item) => item.id === tab) ? tab : "discover";
+  const surfaces = useAppStore((s) => s.config?.managed_surfaces);
+  const desktopManaged = surfaces?.includes("desktop") ?? false;
+  // 配置未加载时按仅 web 走（与 IntegrationView 同一约定）
+  const webManaged = surfaces?.includes("web") ?? true;
+  const tabs = MARKET_TABS.filter(
+    (item) => (item.desktopOnly !== true || desktopManaged) && (item.webOnly !== true || webManaged),
+  );
+  // 纳管形态在设置页保存后立刻生效：用户正停在某一格上时把它关掉，那一格会从列表里
+  // 消失而内容还在渲染——「内容在渲染、tab 却不存在」的错位。用派生值收口（落到第一个
+  // 可用 tab），让那个状态根本无法表示；不改 state，所以也不需要 effect。
+  // 至少一档恒被纳管，所以 tabs 永不为空。
+  // 同前：改纳管形态要先回设置页，界面到不了「停在已消失的那一格上」，这条是让渲染
+  // 对所有状态成立，不是补界面流程的漏
+  const activeTab = tabs.find((item) => item.id === tab)?.id ?? tabs[0].id;
 
   // 两个 tab 的数据进入市场页时一次拉齐（更新检测是自动检测的一部分，
   // 挂载即跑，已安装页可手动重跑）；tab 间切换不重拉（数据驻留 store）

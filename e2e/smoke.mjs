@@ -581,9 +581,14 @@ async function main() {
       await expectVisible(page.locator("#desktop-plugins-pane"));
       await waitForCommandCount("desktop_bridge_status", 2);
 
-      // 收成仅桌面：web 卡与 web 的 tab 都该消失，而停在桌面 tab 上的一格不能留下错位
+      // 收成仅桌面：web 卡、web 的市场四页、模型页都该走——它们碰的都是 web profile
+      // 「未纳管的形态不进 UI、不被触碰」
       await page.getByRole("button", { name: "Settings" }).click();
       await webToggle.click();
+      // 关掉 web：模型页那一格随之消失（它编辑的是 web profile 的补丁层）
+      assert.equal(await page.locator("#models-view").count(), 0, "models view must leave with web");
+      // 改纳管形态必须回设置页，所以此刻人在设置页上；这里断言的是模型页那一格没了
+      assert.equal(await page.getByRole("button", { name: "Models" }).count(), 0, "models nav must leave with web");
       // 不变量换了个方向成立：现在轮到桌面这一档不可关
       assert.equal(await webToggle.isEnabled(), true, "web may be switched back on");
       assert.equal(await desktopToggle.isChecked(), true, "desktop is the remaining surface");
@@ -595,6 +600,10 @@ async function main() {
 
       await page.getByRole("button", { name: "Plugins" }).click();
       await expectVisible(page.locator("#market-tab-desktop"));
+      // 市场四页在 web 不纳管时不在；插件视图本身仍可达，因为它承载着桌面 tab
+      for (const id of ["discover", "favorites", "installed", "diagnostics"]) {
+        assert.equal(await page.locator(`#market-tab-${id}`).count(), 0, `market tab ${id} must leave with web`);
+      }
       await page.locator("#market-tab-desktop").click();
       await expectVisible(page.locator("#desktop-plugins-pane"));
 
