@@ -29,14 +29,26 @@ export function DesktopPluginsPane() {
 
   const load = useCallback(async () => {
     try {
-      const [nextDesktop, nextBridge] = await Promise.all([cmd.desktopDetect(), cmd.desktopBridgeStatus()]);
-      setDesktop(nextDesktop);
-      setBridge(nextBridge);
-      if (nextBridge.state !== "connected") {
-        setPlugins(null);
-        setConfig(null);
-        return;
-      }
+      setDesktop(await cmd.desktopDetect());
+    } catch (e) {
+      // 应用本身探测不了就没有可判断的前提，说明原因后到此为止
+      toast(renderMessage(e), "error");
+      return;
+    }
+    // 桥接探测失败不该牵连上面那一项：它是这个 tab 的下半段，不是全部
+    let nextBridge: BridgeStatus | null = null;
+    try {
+      nextBridge = await cmd.desktopBridgeStatus();
+    } catch {
+      // 静默：下面的内容本就因桥接不可用而不显示
+    }
+    setBridge(nextBridge);
+    if (nextBridge?.state !== "connected") {
+      setPlugins(null);
+      setConfig(null);
+      return;
+    }
+    try {
       const [nextPlugins, nextConfig] = await Promise.all([cmd.desktopBridgePlugins(), cmd.desktopBridgeConfig()]);
       setPlugins(nextPlugins);
       setConfig(nextConfig);

@@ -207,3 +207,16 @@ describe("DesktopPluginsPane configuration", () => {
     await waitFor(() => expect(useAppStore.getState().toasts[0]?.message).toMatch(/Not valid JSON/));
   });
 });
+
+describe("DesktopPluginsPane partial probe failure", () => {
+  it("stays out of the loading state when only the bridge probe fails", async () => {
+    vi.spyOn(cmd, "desktopDetect").mockResolvedValue(desktop());
+    vi.spyOn(cmd, "desktopBridgeStatus").mockRejectedValue(new Error("not json"));
+    render(createElement(DesktopPluginsPane));
+
+    // 曾经两个探测绑在同一个 Promise.all 上，桥接一挂连「应用装没装」都不知道，界面停在
+    // 「检测中」——那不是真实状态
+    await waitFor(() => expect(screen.queryByText("Checking...")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
+  });
+});

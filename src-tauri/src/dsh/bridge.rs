@@ -24,8 +24,12 @@ pub(crate) const BRIDGE_INSTALL_URL: &str =
     "https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro-max-bridge.tgz";
 /// 桥接应答里自报的身份，用来确认这个端点确实是我们的桥接而不是别的服务
 const BRIDGE_IDENTITY: &str = "dsh-pro-max-bridge";
-/// 桥接在应用进程内应答，本机来回；给足它跑一个服务调用，又不至于挂住界面
-const BRIDGE_TIMEOUT_SECS: u64 = 30;
+/// 读（GET）走本机回环，秒级就够。
+const BRIDGE_READ_TIMEOUT_SECS: u64 = 30;
+/// 写（POST）可能真的跑 pnpm：应用自己的默认是锁等待 2 分钟（lockWaitMs）、pnpm 静默
+/// 10 分钟才终止（idleTimeoutMs），所以客户端超时必须比这两个都宽——否则会在应用仍在
+/// 安装时报一个假失败，用户重试还可能撞上并发安装。
+const BRIDGE_WRITE_TIMEOUT_SECS: u64 = 900;
 
 /// 桥接的可用状态。界面按这四态给不同去向，不显示「失败」了事。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
@@ -380,8 +384,9 @@ fn request<T: for<'de> Deserialize<'de>>(
     body: Option<serde_json::Value>,
 ) -> Result<Option<T>, Message> {
     let url = format!("http://127.0.0.1:{DESKTOP_PORT}{BRIDGE_PREFIX}{path}");
+    let timeout = if method == "GET" { BRIDGE_READ_TIMEOUT_SECS } else { BRIDGE_WRITE_TIMEOUT_SECS };
     let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(BRIDGE_TIMEOUT_SECS))
+        .timeout(std::time::Duration::from_secs(timeout))
         .user_agent(concat!("dsh-pro-max/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| Message::key(e.to_string()))?;
@@ -443,6 +448,17 @@ mod tests {
         // 地址是让人手动粘进应用的一次性步骤，带版本号就意味着每次发版都要重粘
         assert!(BRIDGE_INSTALL_URL.contains("/releases/latest/download/"));
         assert!(BRIDGE_INSTALL_URL.ends_with("dsh-pro-max-bridge.tgz"));
+    }
+
+    /// 写操作的客户端超时必须比应用自己的预算更宽：锁等待 2 分钟 + pnpm 静默 10 分钟才
+    /// 终止（应用内嵌 PluginManager 的 lockWaitMs / idleTimeoutMs 默认值）。窄了就会在应用
+    /// 仍在安装时报假失败，用户重试还可能撞上并发安装。
+    #[test]
+    fn write_timeout_covers_the_apps_own_pnpm_budgets() {
+        const LOCK_WAIT_SECS: u64 = 120;
+        const PNPM_IDLE_SECS: u64 = 600;
+        assert!(BRIDGE_WRITE_TIMEOUT_SECS > LOCK_WAIT_SECS + PNPM_IDLE_SECS);
+        assert!(BRIDGE_READ_TIMEOUT_SECS < BRIDGE_WRITE_TIMEOUT_SECS);
     }
 
     #[test]

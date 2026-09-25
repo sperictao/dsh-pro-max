@@ -170,3 +170,17 @@ describe("DesktopCard bridge row", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("DesktopCard partial probe failure", () => {
+  it("still shows the app state when only the bridge probe fails", async () => {
+    mockDetect(detected({ running: true }));
+    vi.spyOn(cmd, "desktopBridgeStatus").mockRejectedValue(new Error("port 19387 answered with something else"));
+    render(createElement(DesktopCard));
+
+    // 两项曾绑在同一个 Promise.all 上：桥接一挂，桌面应用的状态也一起落空
+    expect(await screen.findByText("DeepSeek Harness is running.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Focus DeepSeek Harness" })).toBeInTheDocument();
+    expect(screen.queryByText("Bridge connected")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy address" })).not.toBeInTheDocument();
+  });
+});

@@ -30,12 +30,16 @@ export function DesktopCard() {
 
   const detect = useCallback(async () => {
     try {
-      // 两者都是本机查询（端口探测 + 回环 ping），无公网请求
-      const [next, nextBridge] = await Promise.all([cmd.desktopDetect(), cmd.desktopBridgeStatus()]);
-      setStatus(next);
-      setBridge(nextBridge);
+      setStatus(await cmd.desktopDetect());
     } catch (e) {
       toast(renderMessage(e), "error");
+    }
+    // 桥接探测失败只让那一行缺席：它是这张卡片的一部分，不是卡片的前提
+    // （两者都是本机查询，无公网请求，串行多花的这点开销无关紧要）
+    try {
+      setBridge(await cmd.desktopBridgeStatus());
+    } catch {
+      setBridge(null);
     }
   }, [toast]);
 
