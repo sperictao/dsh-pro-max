@@ -215,6 +215,7 @@ async function main() {
         dsh_detect: () => dshStatus,
         desktop_detect: () => desktopStatus,
         desktop_bridge_status: () => bridgeStatus,
+        desktop_check_latest: () => ({ kind: "available", version: "0.1.7-rc.9" }),
         desktop_bridge_plugins: () => ({ plugins: [], bundles: [] }),
         desktop_bridge_config: () => [],
         dsh_step_schema: ({ remote } = {}) =>
@@ -569,6 +570,10 @@ async function main() {
 
       await page.getByRole("button", { name: "Home" }).click();
       await expectVisible(page.locator("#desktop-card"));
+      // 更新检查是新加的交互（按钮 + 异步结论）：在 WebKit 里也真的点一次，别只在 jsdom 下验过
+      await expectVisible(page.getByRole("button", { name: "Check for Updates" }));
+      await page.getByRole("button", { name: "Check for Updates" }).click();
+      await expectVisible(page.getByText("New version available: v0.1.7-rc.9"));
       // 桥接未装时给的是那一条可粘贴的地址，不是「失败」
       await expectVisible(page.getByText("The bridge plugin is not installed in DeepSeek Harness."));
       await expectVisible(page.getByText(/releases\/latest\/download\/dsh-pro-max-bridge\.tgz/));
