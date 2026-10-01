@@ -10,7 +10,7 @@
 - **纳管形态（Managed Surface）** — 本应用纳管的 dsh 官方形态，可仅一档、可两档并存：web 与 desktop。「纳管」= 本应用负责它的检测/启停/状态；未纳管的形态不进 UI、不被触碰。设置页两项开关各自 gate 一档，不允许全关。
 - **Web 运行档（Web Profile）** — dsh 的 `--profile web` 运行档，本应用全权纳管：安装、启停、插件、模型配置、远程访问。本地绑定 `127.0.0.1:3899`。
 - **桌面应用（Desktop App）** — 官方 DeepSeek Harness Electron 应用（`com.deepseek.dsh`），监听 `127.0.0.1:19387`，其 `desktop` 运行档由它独占。
-- **桥接插件（Bridge Plugin）** — 本应用发给桌面应用的 dsh 插件：用户在桌面应用内 Plugins 页装一次（GitHub Release 的 tgz URL），此后由它把桌面应用**自己的** Plugin Manager / Config Editor 服务开放给本应用。
+- **桥接插件（Bridge Plugin）** — 本应用发给桌面应用的 dsh 插件：用户在桌面应用内 Plugins 页装一次（npm 包 `@sperictao/dsh-pro-max-bridge`，钉本应用测过的精确版本，见 ADR 0011），此后由它把桌面应用**自己的** Plugin Manager / Config Editor 服务开放给本应用。
 - **桥接状态（Bridge States）** — 桌面形态的运行态：应用未运行 / 未装桥接插件 / 代次不符 / 已装未就绪 / 已连接。名字里不带数目是有意的：这个集合会长，而计数写进术语名就会在每次增删后说谎（这条已经栽过两次——三态写成四态、三条写成四条）。后三态各自是一态而不是笼统的「失败」：代次不符时界面直接说出「期望几、拿到几」；已装未就绪（插件激活了但没能建立 token，故能力路由一条都不注册）说的是真实原因与可查的位置，绝不报「未装」——报「未装」只会让人一直重装下去，而重装本身不改环境；先让人检查可写性、再重装重试才是对的下一步。
 - **桌面应用外部能力** — 不依赖桥接插件的能力：检测安装与版本、检测运行、打开/聚焦、退出（仅 macOS，见下）、新版本提示、打开日志目录。**它们是桌面形态的基础层，在所有桥接态下都可用**，不是桥接缺席时的兜底。
 - **桥接通道（Bridge Channel）** — 本应用与桥接插件之间的 HTTP 通道：`127.0.0.1:19387` 的 `/dsh-pro-max-bridge/*`（在 `/api` 之外，不参与连接插件的 capability 裁决），Bearer token 取自 `~/.dsh-pro-max/bridge-token`。应答是 `{ok, data}` / `{ok: false, error}`，业务结果在 data 里。

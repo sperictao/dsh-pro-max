@@ -11,6 +11,6 @@ protocol: number | null,
  */
 expectedProtocol: number, 
 /**
- * 一次性安装步骤要粘进应用 Plugins 页的地址
+ * 一次性安装步骤要粘进应用 Plugins 页的包规格（`包名@精确版本`）
  */
-installUrl: string, };
+installSpec: string, };

@@ -297,7 +297,7 @@ export const zhCN: Record<I18nKey, string> = {
   "Cannot check for a new DeepSeek Harness version: {{error}}": "无法检测 DeepSeek Harness 新版本：{{error}}",
 
   // —— 桌面应用：桥接通道 ——
-  "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:": "桥接插件已装，但它没能在 ~/.dsh-pro-max 里建立通信凭据。请确认该目录可写，然后用下面的地址重装桥接：",
+  "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this package spec:": "桥接插件已装，但它没能在 ~/.dsh-pro-max 里建立通信凭据。请确认该目录可写，然后用下面的包规格重装桥接：",
   "Cannot tell whether a newer version exists.": "无法判断是否有更新版本。",
   "Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.": "安装会调用应用自己的包管理器，可能要几分钟；这里没有进度显示，也不能取消。",
   "Applied": "已应用",
@@ -321,9 +321,8 @@ export const zhCN: Record<I18nKey, string> = {
   "The bridge plugin is not running in DeepSeek Harness": "桥接插件没有运行在 DeepSeek Harness 里",
   "Bridge connected": "桥接已连接",
   "Open DeepSeek Harness to manage its plugins and configuration.": "打开 DeepSeek Harness 后即可管理它的插件与配置。",
-  "The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:": "DeepSeek Harness 里还没装桥接插件。请在它的 Plugins 页粘贴下面这个地址装一次：",
-  "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:": "桥接插件代次不符：本应用期望 {{expected}}，已装桥接报 {{actual}}。请在 DeepSeek Harness 里用下面这个地址重装：",
-  "Copy address": "复制地址",
+  "The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this package spec:": "DeepSeek Harness 里还没装桥接插件。请在它的 Plugins 页粘贴下面这个包规格装一次：",
+  "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this package spec:": "桥接插件代次不符：本应用期望 {{expected}}，已装桥接报 {{actual}}。请在 DeepSeek Harness 里用下面这个包规格重装：",
   "The bridge token is missing; reinstall the bridge plugin in DeepSeek Harness": "缺少桥接 token；请在 DeepSeek Harness 里重装桥接插件",
   "Bridge returned no data": "桥接未返回数据",
   "Bridge rejected the request": "桥接拒绝了该请求",

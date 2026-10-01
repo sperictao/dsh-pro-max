@@ -18,10 +18,18 @@ const BRIDGE_PREFIX: &str = "/dsh-pro-max-bridge";
 /// 本应用期望的线协议代次，与桥接插件的 `PROTOCOL` 对应。
 /// 桥接改了路由形状或字段语义时会 +1，那时这里同步跟上并按需改调用方。
 const BRIDGE_PROTOCOL: u32 = 1;
-/// 桥接插件的一次性安装地址。资产名不含版本号、走 `releases/latest`，所以发版不会
-/// 让它失效——用户升级桥接粘的是同一条。
-pub(crate) const BRIDGE_INSTALL_URL: &str =
-    "https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro-max-bridge.tgz";
+/// 桥接插件的 npm 包名
+const BRIDGE_PACKAGE: &str = "@sperictao/dsh-pro-max-bridge";
+/// 本应用测过、协议代次对得上的那一版桥接。必须是**精确版本**，原因有两条，都已用
+/// 桌面应用内嵌的 pnpm 11.7.0 实测：
+/// - 走 registry 而不是 tarball 地址：tarball 地址的包已在本机 store 时，它复用缓存
+///   写出缺 integrity 的 lockfile 条目、随即自己拒装（`ERR_PNPM_MISSING_TARBALL_INTEGRITY`），
+///   卸载后重装同一地址必然复现；registry 包的 integrity 来自元数据，不受影响
+/// - 钉精确版本而不是 dist-tag / 范围：pnpm 11 默认拦截发布不满 24 小时的版本，精确
+///   版本照装，tag 与范围则静默解析到更旧的版本、还报成功
+///
+/// 发版前 `check:release` 会确认这个版本已在 registry 上。见 ADR 0011。
+pub(crate) const BRIDGE_VERSION: &str = "0.1.5";
 /// 桥接应答里自报的身份，用来确认这个端点确实是我们的桥接而不是别的服务
 const BRIDGE_IDENTITY: &str = "dsh-pro-max-bridge";
 /// 读（GET）走本机回环，秒级就够。
@@ -60,8 +68,13 @@ pub struct BridgeStatus {
     pub protocol: Option<u32>,
     /// 本应用期望的代次，便于界面直接说出「期望几、拿到几」
     pub expected_protocol: u32,
-    /// 一次性安装步骤要粘进应用 Plugins 页的地址
-    pub install_url: String,
+    /// 一次性安装步骤要粘进应用 Plugins 页的包规格（`包名@精确版本`）
+    pub install_spec: String,
+}
+
+/// 粘进应用 Plugins 页的包规格
+fn install_spec() -> String {
+    format!("{BRIDGE_PACKAGE}@{BRIDGE_VERSION}")
 }
 
 #[tauri::command]
@@ -344,7 +357,7 @@ fn bridge_status_once() -> Result<BridgeStatus, Message> {
         state,
         protocol,
         expected_protocol: BRIDGE_PROTOCOL,
-        install_url: BRIDGE_INSTALL_URL.to_string(),
+        install_spec: install_spec(),
     })
 }
 
@@ -448,11 +461,18 @@ fn read_token() -> Result<String, Message> {
 mod tests {
     use super::*;
 
+    /// 安装串必须是 registry 包名 + 精确版本：tarball 地址会被桌面应用内嵌的 pnpm 锁死，
+    /// tag / 范围会被 24 小时发布冷却静默解析到旧版（两条都见 BRIDGE_VERSION 的说明）
     #[test]
-    fn install_url_is_versionless_so_releases_do_not_move_it() {
-        // 地址是让人手动粘进应用的一次性步骤，带版本号就意味着每次发版都要重粘
-        assert!(BRIDGE_INSTALL_URL.contains("/releases/latest/download/"));
-        assert!(BRIDGE_INSTALL_URL.ends_with("dsh-pro-max-bridge.tgz"));
+    fn install_spec_pins_an_exact_registry_version() {
+        assert_eq!(install_spec(), format!("{BRIDGE_PACKAGE}@{BRIDGE_VERSION}"));
+        assert!(!install_spec().contains("://"), "不能退回 tarball 地址");
+        let parts: Vec<&str> = BRIDGE_VERSION.split('.').collect();
+        assert_eq!(parts.len(), 3, "版本 {BRIDGE_VERSION} 不是 x.y.z");
+        assert!(
+            parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())),
+            "版本 {BRIDGE_VERSION} 不是精确版本"
+        );
     }
 
     /// 写操作的客户端超时必须比应用自己的预算更宽：锁等待 2 分钟 + pnpm 静默 10 分钟才
@@ -536,7 +556,7 @@ mod tests {
     /// 点开界面才发现列表是空的。
     ///
     /// 用法：先在官方桌面应用的 Plugins 页装一次桥接
-    /// （地址见 BRIDGE_INSTALL_URL），再跑
+    /// （包规格见 install_spec），再跑
     /// `cargo test --manifest-path src-tauri/Cargo.toml -- --ignored --nocapture bridges_the_live_channel`
     #[test]
     #[ignore]
@@ -545,7 +565,7 @@ mod tests {
         println!("state={:?} protocol={:?}", status.state, status.protocol);
         if status.state != BridgeState::Connected {
             // 桥接没装时不假失败：这条探针的前提未满足，说清楚就够
-            println!("跳过：桥接当前不可用（{}）", status.install_url);
+            println!("跳过：桥接当前不可用（{}）", status.install_spec);
             return;
         }
 
@@ -628,7 +648,7 @@ mod tests {
             r#"{
                 "plugins": [],
                 "bundles": [{
-                    "name": "@dsh-external/dsh-pro-max-bridge", "version": "0.1.0",
+                    "name": "@sperictao/dsh-pro-max-bridge", "version": "0.1.0",
                     "description": "bridge", "enabled": true, "installed": true,
                     "optional": false, "removable": true, "rows": [], "overrides": []
                 }]
@@ -636,7 +656,7 @@ mod tests {
         )
         .unwrap();
         let row = &raw.bundles[0];
-        assert_eq!(row.name, "@dsh-external/dsh-pro-max-bridge");
+        assert_eq!(row.name, "@sperictao/dsh-pro-max-bridge");
         assert!(row.removable && row.enabled);
         assert_eq!(row.description.as_deref(), Some("bridge"));
     }

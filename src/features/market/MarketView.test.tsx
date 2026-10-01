@@ -2094,7 +2094,7 @@ describe("market tabs follow the managed surfaces", () => {
       state: "connected",
       protocol: 1,
       expectedProtocol: 1,
-      installUrl: "https://example.test/bridge.tgz",
+      installSpec: "@sperictao/dsh-pro-max-bridge@0.1.5",
     });
     vi.spyOn(cmd, "desktopBridgePlugins").mockResolvedValue({ plugins: [], bundles: [] });
     vi.spyOn(cmd, "desktopBridgeConfig").mockResolvedValue([]);
@@ -2145,7 +2145,7 @@ describe("market fetches follow the managed surfaces", () => {
       supported: true, installed: true, version: null, running: true, canQuit: true,
     });
     vi.spyOn(cmd, "desktopBridgeStatus").mockResolvedValue({
-      state: "not_installed", protocol: null, expectedProtocol: 1, installUrl: "https://example.test/b.tgz",
+      state: "not_installed", protocol: null, expectedProtocol: 1, installSpec: "@sperictao/dsh-pro-max-bridge@0.1.5",
     });
     useAppStore.setState({ config: configWith(["desktop"]) });
 

@@ -27,7 +27,7 @@ const bridge = (over: Partial<BridgeStatus> = {}): BridgeStatus => ({
   state: "not_installed",
   protocol: null,
   expectedProtocol: 1,
-  installUrl: "https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro-max-bridge.tgz",
+  installSpec: "@sperictao/dsh-pro-max-bridge@0.1.5",
   ...over,
 });
 
@@ -122,10 +122,10 @@ describe("DesktopCard bridge row", () => {
     render(createElement(DesktopCard));
 
     expect(
-      await screen.findByText("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:"),
+      await screen.findByText("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this package spec:"),
     ).toBeInTheDocument();
-    expect(screen.getByText(bridge().installUrl)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Copy address" })).toBeInTheDocument();
+    expect(screen.getByText(bridge().installSpec)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
   });
 
   it("names both protocol generations when the bridge is out of date", async () => {
@@ -135,7 +135,7 @@ describe("DesktopCard bridge row", () => {
 
     expect(
       await screen.findByText(
-        "The bridge plugin is out of date: this app expects protocol 1, the installed bridge reports 2. Reinstall it in DeepSeek Harness with this address:",
+        "The bridge plugin is out of date: this app expects protocol 1, the installed bridge reports 2. Reinstall it in DeepSeek Harness with this package spec:",
       ),
     ).toBeInTheDocument();
   });
@@ -148,7 +148,7 @@ describe("DesktopCard bridge row", () => {
     expect(
       await screen.findByText("Open DeepSeek Harness to manage its plugins and configuration."),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy address" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
   });
 
   it("stays quiet once connected", async () => {
@@ -157,7 +157,7 @@ describe("DesktopCard bridge row", () => {
     render(createElement(DesktopCard));
 
     expect(await screen.findByText("Bridge connected")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy address" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
   });
 
   it("shows no bridge row at all when the app is not installed", async () => {
@@ -183,7 +183,7 @@ describe("DesktopCard partial probe failure", () => {
     expect(await screen.findByText("DeepSeek Harness is running.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Focus DeepSeek Harness" })).toBeInTheDocument();
     expect(screen.queryByText("Bridge connected")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy address" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
   });
 });
 
@@ -225,11 +225,11 @@ describe("DesktopCard bridge readiness", () => {
     // 报「没装」会把人引向重装，而重装解决不了凭据建立失败——那是环境问题
     expect(
       await screen.findByText(
-        "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:",
+        "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this package spec:",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:"),
+      screen.queryByText("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this package spec:"),
     ).not.toBeInTheDocument();
   });
 });

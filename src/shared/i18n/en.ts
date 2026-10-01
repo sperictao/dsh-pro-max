@@ -296,7 +296,7 @@ export const en = {
   "Cannot check for a new DeepSeek Harness version: {{error}}": "Cannot check for a new DeepSeek Harness version: {{error}}",
 
   // —— 桌面应用：桥接通道 ——
-  "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:": "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this address:",
+  "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this package spec:": "The bridge plugin is installed but could not establish its credentials. Check that ~/.dsh-pro-max is writable, then reinstall the bridge with this package spec:",
   "Cannot tell whether a newer version exists.": "Cannot tell whether a newer version exists.",
   "Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.": "Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.",
   "Applied": "Applied",
@@ -320,9 +320,8 @@ export const en = {
   "The bridge plugin is not running in DeepSeek Harness": "The bridge plugin is not running in DeepSeek Harness",
   "Bridge connected": "Bridge connected",
   "Open DeepSeek Harness to manage its plugins and configuration.": "Open DeepSeek Harness to manage its plugins and configuration.",
-  "The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:": "The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:",
-  "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:": "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this address:",
-  "Copy address": "Copy address",
+  "The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this package spec:": "The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this package spec:",
+  "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this package spec:": "The bridge plugin is out of date: this app expects protocol {{expected}}, the installed bridge reports {{actual}}. Reinstall it in DeepSeek Harness with this package spec:",
   "The bridge token is missing; reinstall the bridge plugin in DeepSeek Harness": "The bridge token is missing; reinstall the bridge plugin in DeepSeek Harness",
   "Bridge returned no data": "Bridge returned no data",
   "Bridge rejected the request": "Bridge rejected the request",

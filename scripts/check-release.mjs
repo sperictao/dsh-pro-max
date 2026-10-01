@@ -5,6 +5,8 @@
 //         （v1.3.2 曾漏打包 skills/ 导致安装技能失败，见 AGENTS.md。
 //         dist/web 等构建产物被 gitignore，CI validate 阶段尚未构建，
 //         只对 git 已跟踪的路径做存在性校验）
+//   必查：bridge.rs 钉住的桥接版本已在 npm registry 上（钉一个没发布的版本，用户粘进
+//         桌面应用就是 404；同类事故见 AGENTS.md 的 v0.5.3。需要联网，查不到即失败）
 //   --tag <vX.Y.Z>：追加校验 tag 与版本一致 + release-notes/<tag>.md 存在
 // 用法：node scripts/check-release.mjs [--tag v0.12.2]
 import { readFileSync, existsSync } from "node:fs";
@@ -61,6 +63,29 @@ for (const src of resourceEntries) {
   const abs = resolve(tauriDir, src);
   if (isGitTracked(abs) && !existsSync(abs)) {
     failures.push(`bundle.resources 源路径不存在（git 已跟踪）：${src}（解析为 ${abs}）`);
+  }
+}
+
+// 桥接 pin：包名与版本的唯一事实来源是 bridge.rs 的两个常量，这里只读不抄。
+// 锚点抽不到必须报错——静默跳过就等于这道校验不存在
+const bridgeSource = read("src-tauri/src/dsh/bridge.rs");
+const bridgePackage = bridgeSource.match(/^const BRIDGE_PACKAGE: &str = "([^"]+)";$/m)?.[1];
+const bridgeVersion = bridgeSource.match(/^pub\(crate\) const BRIDGE_VERSION: &str = "([^"]+)";$/m)?.[1];
+if (!bridgePackage || !bridgeVersion) {
+  failures.push("src-tauri/src/dsh/bridge.rs 找不到 BRIDGE_PACKAGE / BRIDGE_VERSION 常量");
+} else {
+  const spec = `${bridgePackage}@${bridgeVersion}`;
+  // 查版本端点而不是 `npm view`：后者取整份 packument，那个端点会被 CDN 负缓存——
+  // 发布前查过一次 404，发布后几分钟内仍返回 404（2026-10-01 实测），版本端点不受影响
+  const url = `https://registry.npmjs.org/${bridgePackage.replace("/", "%2f")}/${bridgeVersion}`;
+  try {
+    const response = await fetch(url);
+    const published = response.ok ? (await response.json()).version : null;
+    if (published !== bridgeVersion) {
+      failures.push(`桥接 pin ${spec} 不在 npm registry 上（HTTP ${response.status}）：先发布桥接再发应用`);
+    }
+  } catch (error) {
+    failures.push(`桥接 pin ${spec} 查询失败（无法联网？）：${error.message}`);
   }
 }
 

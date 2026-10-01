@@ -7,7 +7,7 @@ import { useAppStore } from "@/shared/store";
 import type { BridgeStatus, ChangeOutcome, DesktopPlugins, DesktopStatus } from "@/shared/types";
 import { DesktopPluginsPane } from "./DesktopPluginsPane";
 
-const INSTALL_URL = "https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro-max-bridge.tgz";
+const INSTALL_SPEC = "@sperictao/dsh-pro-max-bridge@0.1.5";
 
 const desktop = (over: Partial<DesktopStatus> = {}): DesktopStatus => ({
   supported: true,
@@ -22,7 +22,7 @@ const bridge = (over: Partial<BridgeStatus> = {}): BridgeStatus => ({
   state: "connected",
   protocol: 1,
   expectedProtocol: 1,
-  installUrl: INSTALL_URL,
+  installSpec: INSTALL_SPEC,
   ...over,
 });
 
@@ -32,7 +32,7 @@ const catalog: DesktopPlugins = {
     { entryId: "e2", moduleName: "managed-by-app", enabled: true, patchId: null, readOnlyReason: "management-required" },
   ],
   bundles: [
-    { name: "@dsh-external/dsh-pro-max-bridge", version: "0.1.0", description: "bridge", enabled: true, removable: true, readOnlyReason: null },
+    { name: "@sperictao/dsh-pro-max-bridge", version: "0.1.0", description: "bridge", enabled: true, removable: true, readOnlyReason: null },
     { name: "builtin", version: null, description: null, enabled: true, removable: false, readOnlyReason: null },
   ],
 };
@@ -78,9 +78,9 @@ describe("DesktopPluginsPane gates", () => {
     mount({ bridge: bridge({ state: "not_installed", protocol: null }) });
 
     expect(
-      await screen.findByText("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this address:"),
+      await screen.findByText("The bridge plugin is not installed in DeepSeek Harness. Install it once from the app's Plugins page with this package spec:"),
     ).toBeInTheDocument();
-    expect(screen.getByText(INSTALL_URL)).toBeInTheDocument();
+    expect(screen.getByText(INSTALL_SPEC)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
     expect(cmd.desktopBridgePlugins).not.toHaveBeenCalled();
   });
