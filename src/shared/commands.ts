@@ -5,9 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { log } from "./logger";
 import type {
   BridgeStatus,
-  ChangeOutcome,
+  ChangeApplication,
   ConfigRow,
-  DesktopApplication,
   DesktopInstalledPlugin,
   DesktopPlugins,
   DesktopStatus,
@@ -93,7 +92,7 @@ export const desktopBridgePlugins = () => invokeTyped<DesktopPlugins>("desktop_b
 export const desktopBridgeSetEnabled = (
   target: { pluginId: string; bundleName?: never } | { pluginId?: never; bundleName: string },
   enabled: boolean,
-) => invokeTyped<ChangeOutcome>("desktop_bridge_set_enabled", { ...target, enabled });
+) => invokeTyped<ChangeApplication>("desktop_bridge_set_enabled", { ...target, enabled });
 export const desktopBridgeConfig = () => invokeTyped<ConfigRow[]>("desktop_bridge_config");
 export const desktopBridgeConfigEdit = (id: string, config: unknown) =>
   invokeTyped<void>("desktop_bridge_config_edit", { id, config });
@@ -102,21 +101,24 @@ export const desktopBridgeConfigEdit = (id: string, config: unknown) =>
 export const marketFetch = () => invokeTyped<MarketCatalog>("market_fetch");
 // 本地快照直读（首屏秒显，不涉及网络）；缺失/损坏为 null
 export const marketSnapshot = () => invokeTyped<MarketCatalog | null>("market_snapshot");
+// 已装列表两档各一条：web 档读自己的 profile（带落盘 spec 与上游仓库），desktop 档读桥接
+// 给的用户 bundle（只有包名与版本）。desktop 档 reject = 桥接不可用、事实未知（不是「没装」）
 export const marketInstalled = () => invokeTyped<InstalledPlugin[]>("market_installed");
-// 成功返回安装回执（落进 profile 的 name+spec）；无法唯一定位落点（github: 重装）时为 null。
-// 被 pnpm 拦截构建脚本时返回 needsApproval（包名 + 待写 yaml 路径），走用户审批流
-export const marketInstall = (specifier: string) => invokeTyped<InstallOutcome>("market_install", { specifier });
-// 用户审批放行后执行：写入 profile 的 pnpm-workspace.yaml → 重跑安装（过
-// 同一安装护栏），返回与 market_install 同构的安装结果
-export const marketApproveBuilds = (specifier: string, packages: string[]) =>
-  invokeTyped<InstallOutcome>("market_approve_builds", { specifier, packages });
-export const marketRemove = (name: string) => invokeTyped<void>("market_remove", { name });
-// 翻转插件下次启动启用状态（写 profile cordis.patch.yml 的 disabled 覆盖行，
-// 重启 dsh web 后生效）；返回落盘后的启停事实
-export const marketSetPluginEnabled = (name: string, enabled: boolean) =>
-  invokeTyped<InstalledPlugin>("market_set_plugin_enabled", { name, enabled });
-// 更新检测：npm 形态已装插件比对 registry latest；全部可检包都失败才报错
-export const marketCheckUpdates = () => invokeTyped<PluginUpdateInfo[]>("market_check_updates");
+export const marketDesktopInstalled = () => invokeTyped<DesktopInstalledPlugin[]>("market_desktop_installed");
+// 以下按目标形态分派（ADR 0012：两档同一套命令，web 档走自己的 profile，desktop 档经桥接走
+// 应用自己的 Plugin Manager）。
+// 安装：成功返回回执；无法唯一定位落点（github: 重装）时为 null。被 pnpm 拦截构建脚本时返回
+// needsApproval（包名 + web 档待写 yaml 路径），用户放行后带 approvedBuilds 再调一次
+export const marketInstall = (surface: DshSurface, specifier: string, approvedBuilds?: string[]) =>
+  invokeTyped<InstallOutcome>("market_install", { surface, specifier, approvedBuilds });
+export const marketRemove = (surface: DshSurface, name: string) =>
+  invokeTyped<ChangeApplication>("market_remove", { surface, name });
+// 启停：web 档写 disabled 覆盖行、重启 dsh web 后生效（restart-required），重复启停为 unchanged
+export const marketSetPluginEnabled = (surface: DshSurface, name: string, enabled: boolean) =>
+  invokeTyped<ChangeApplication>("market_set_plugin_enabled", { surface, name, enabled });
+// 更新检测：全部可检包都失败才报错
+export const marketCheckUpdates = (surface: DshSurface) =>
+  invokeTyped<PluginUpdateInfo[]>("market_check_updates", { surface });
 // 批量更新前预下载（store 预热）：并发 pnpm store add 把 npm 形态更新包的
 // tarball 拉进内容寻址 store，随后串行 dsh plugin add 直接复用（零下载）。
 // 恒 Ok（单包失败容忍），profile 不可得等系统级错误才 reject
@@ -133,19 +135,6 @@ export const marketReleaseNotes = (repo: string) =>
   invokeTyped<PluginReleaseNotes | null>("market_release_notes", { repo });
 // 深度诊断（G7）：dsh --dump-config 组合事实（重复入口 id / 孤儿 patch 行）
 export const marketDiagnostics = () => invokeTyped<MarketDiagnostics>("market_diagnostics");
-
-// ============ 插件市场 · desktop 档（经桥接，ADR 0012）============
-// 与 web 档共用策略、审计与更新检测核；写入走桌面应用自己的 Plugin Manager。
-// 已装列表 reject = 桥接不可用、事实未知（不是「没装」）
-export const marketDesktopInstalled = () => invokeTyped<DesktopInstalledPlugin[]>("market_desktop_installed");
-// approvedBuilds 有值即审批放行后的重装；结果与 web 档安装同构（审批时 workspaceYaml 为 null）
-export const marketDesktopInstall = (specifier: string, approvedBuilds?: string[]) =>
-  invokeTyped<InstallOutcome>("market_desktop_install", { specifier, approvedBuilds });
-export const marketDesktopRemove = (name: string) =>
-  invokeTyped<DesktopApplication>("market_desktop_remove", { name });
-export const marketDesktopSetEnabled = (name: string, enabled: boolean) =>
-  invokeTyped<DesktopApplication>("market_desktop_set_enabled", { name, enabled });
-export const marketDesktopCheckUpdates = () => invokeTyped<PluginUpdateInfo[]>("market_desktop_check_updates");
 
 // ============ 模型配置 ============
 // 按目标形态读写模型域：web 档写自己的 profile 补丁，desktop 档经桥接写应用的 Config Editor

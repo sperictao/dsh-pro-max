@@ -302,7 +302,6 @@ export const zhCN: Record<I18nKey, string> = {
   "Restart DeepSeek Harness to apply this change.": "重启 DeepSeek Harness 后该改动才会生效。",
   "A higher-priority layer overrides this change; it is not in effect.": "有更高优先级的层覆盖了该改动，它没有生效。",
   "The change was cancelled.": "改动已取消。",
-  "The change failed: {{reason}}": "改动失败：{{reason}}",
   "The desktop app manages this itself; it cannot be changed here.": "这一项由桌面应用自己管理，不能在这里改动。",
   "The profile cannot address this row; change it in DeepSeek Harness.": "该运行档无法寻址这一行；请在 DeepSeek Harness 里改。",
   "Profile configuration": "运行档配置",
@@ -320,6 +319,8 @@ export const zhCN: Record<I18nKey, string> = {
   "Bridge rejected the request": "桥接拒绝了该请求",
 
   // —— 目标形态（ADR 0012）——
+  "Package spec copied": "包规格已复制",
+  "The default model and AI providers are edited on the Models page.": "默认模型与 AI 服务在「模型」页编辑。",
   "Built-in bundles": "内置 bundle",
   "Plugins you installed are managed on the Installed tab, side by side with the web profile.": "你自己装的插件在「已安装」页管理，与 web 运行档并列。",
   "Open DeepSeek Harness to see what is installed there.": "打开 DeepSeek Harness 后才能看到它装了哪些插件。",

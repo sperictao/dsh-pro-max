@@ -1,5 +1,5 @@
 // 插件市场按目标形态参数化（ADR 0012）：两档都纳管时卡片按形态分行、角标标出装在哪几档；
-// desktop 档的写入只经桥接（marketDesktop*），绝不落到 web 档的命令上；desktop 档不可知时
+// 两档同一套命令、按 surface 分派：desktop 档的写入只带 "desktop"，绝不落到 web 档上；desktop 档不可知时
 // 如实显示「?」而不是「未安装」
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -102,17 +102,17 @@ beforeEach(() => {
     marketInstalled: [],
     marketInstalledBusy: false,
     marketDesktopInstalled: null,
-    marketDesktopBridge: null,
+    desktopStatus: null,
+    desktopBridge: null,
+    desktopChecked: false,
     marketInstalling: null,
     marketInstallLog: null,
     marketInstallError: null,
     marketRemoving: null,
     marketPendingApproval: null,
     marketReleaseAgeConfirm: null,
-    marketUpdates: null,
-    marketUpdatesBusy: false,
-    marketDesktopUpdates: null,
-    marketDesktopUpdatesBusy: false,
+    marketUpdates: { web: null, desktop: null },
+    marketUpdatesBusy: { web: false, desktop: false },
     marketUpdating: null,
     marketUpdateAllQueue: null,
     marketUpdateAllQueueSurfaces: null,
@@ -130,16 +130,20 @@ beforeEach(() => {
   vi.spyOn(cmd, "marketInstalled").mockImplementation(async () => structuredClone(webInstalled));
   vi.spyOn(cmd, "marketDesktopInstalled").mockImplementation(async () => structuredClone(desktopInstalled));
   vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([]);
-  vi.spyOn(cmd, "marketDesktopCheckUpdates").mockResolvedValue([]);
   vi.spyOn(cmd, "marketDiscoveryCompat").mockResolvedValue([]);
   vi.spyOn(cmd, "marketReleaseNotes").mockResolvedValue(null);
-  vi.spyOn(cmd, "marketInstall").mockResolvedValue(installedOutcome("x", "x@1.0.0"));
-  vi.spyOn(cmd, "marketDesktopInstall").mockResolvedValue(installedOutcome("x", "1.0.0"));
-  vi.spyOn(cmd, "marketRemove").mockResolvedValue(undefined);
-  vi.spyOn(cmd, "marketApproveBuilds").mockResolvedValue(installedOutcome("x", "x@1.0.0"));
-  vi.spyOn(cmd, "marketDesktopRemove").mockResolvedValue("applied");
-  vi.spyOn(cmd, "marketDesktopSetEnabled").mockResolvedValue("applied");
-  vi.spyOn(cmd, "marketSetPluginEnabled").mockResolvedValue(webInstalled[0]);
+  vi.spyOn(cmd, "marketInstall").mockImplementation(async (surface) =>
+    surface === "web" ? installedOutcome("x", "x@1.0.0") : installedOutcome("x", "1.0.0"),
+  );
+  vi.spyOn(cmd, "marketRemove").mockResolvedValue("applied");
+  vi.spyOn(cmd, "marketSetPluginEnabled").mockResolvedValue("applied");
+  vi.spyOn(cmd, "desktopDetect").mockResolvedValue({
+    supported: true,
+    installed: true,
+    version: "0.2.0-rc.2",
+    running: true,
+    canQuit: true,
+  });
 });
 
 describe("desktop installed match", () => {
@@ -205,15 +209,17 @@ describe("installing per surface", () => {
     await user.click(within(neither).getByRole("button", { name: "Install neither (Desktop)" }));
     await user.click(within(neither).getByRole("button", { name: "Confirm" }));
 
-    await waitFor(() => expect(cmd.marketDesktopInstall).toHaveBeenCalledWith("neither@latest"));
-    expect(cmd.marketInstall).not.toHaveBeenCalled();
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("desktop", "neither@latest"));
+    expect(cmd.marketInstall).not.toHaveBeenCalledWith("web", expect.anything());
   });
 
   // 两档都装：按顺序逐档装、各自报结果——web 失败不阻止 desktop，desktop 成功不被回滚
   it("installs to both surfaces in order and reports each on its own", async () => {
     const user = userEvent.setup();
-    vi.spyOn(cmd, "marketInstall").mockRejectedValue({ key: "registry unreachable", args: {} });
-    vi.spyOn(cmd, "marketDesktopInstall").mockResolvedValue(installedOutcome("neither", "1.0.0"));
+    vi.spyOn(cmd, "marketInstall").mockImplementation(async (surface) => {
+      if (surface === "web") throw { key: "registry unreachable", args: {} };
+      return installedOutcome("neither", "1.0.0");
+    });
     render(createElement(MarketView));
 
     const neither = await card("neither");
@@ -221,8 +227,9 @@ describe("installing per surface", () => {
     await user.click(within(neither).getByRole("button", { name: "Install neither (Web)" }));
     await user.click(within(neither).getByRole("button", { name: "Install to both" }));
 
-    await waitFor(() => expect(cmd.marketDesktopInstall).toHaveBeenCalledWith("neither@latest"));
-    expect(cmd.marketInstall).toHaveBeenCalledWith("neither@latest");
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("desktop", "neither@latest"));
+    // 按卡上的形态顺序逐档装：web 先
+    expect(vi.mocked(cmd.marketInstall).mock.calls.map((call) => call[0])).toEqual(["web", "desktop"]);
     const messages = useAppStore.getState().toasts.map((toast) => toast.message);
     expect(messages).toContain("Plugin installed in DeepSeek Harness: neither (1.0.0)");
     expect(messages.some((message) => message.startsWith("Failed to install plugin"))).toBe(true);
@@ -232,12 +239,14 @@ describe("installing per surface", () => {
 
   it("approves desktop build scripts by handing them back to the desktop app, then installs the remaining surface", async () => {
     const user = userEvent.setup();
-    vi.spyOn(cmd, "marketDesktopInstall")
-      .mockResolvedValueOnce({ status: "needsApproval", packages: ["sharp"], workspaceYaml: null })
-      .mockResolvedValueOnce(installedOutcome("neither", "1.0.0"));
+    vi.spyOn(cmd, "marketInstall").mockImplementation(async (surface, _specifier, approved) =>
+      surface === "desktop" && !approved
+        ? { status: "needsApproval", packages: ["sharp"], workspaceYaml: null }
+        : installedOutcome("neither", "1.0.0"),
+    );
     // 审批挂在第一档（desktop）上；排在后面的 web 要等审批落定再装
     await useAppStore.getState().installMarketPlugin("neither@latest", "neither", ["desktop", "web"]);
-    expect(cmd.marketInstall).not.toHaveBeenCalled();
+    expect(cmd.marketInstall).not.toHaveBeenCalledWith("web", expect.anything());
     render(createElement(MarketView));
 
     const dialog = await screen.findByRole("dialog");
@@ -249,22 +258,23 @@ describe("installing per surface", () => {
     ).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Approve & install" }));
 
-    await waitFor(() => expect(cmd.marketDesktopInstall).toHaveBeenLastCalledWith("neither@latest", ["sharp"]));
-    expect(cmd.marketApproveBuilds).not.toHaveBeenCalled();
-    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("neither@latest"));
+    // 放行名单原样交回桌面档（应用自己记录放行），不落到 web 档
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("desktop", "neither@latest", ["sharp"]));
+    expect(cmd.marketInstall).not.toHaveBeenCalledWith("web", expect.anything(), expect.anything());
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("web", "neither@latest"));
   });
 
   it("still installs the remaining surface when the user keeps the scripts blocked", async () => {
-    vi.spyOn(cmd, "marketDesktopInstall").mockResolvedValueOnce({
-      status: "needsApproval",
-      packages: ["sharp"],
-      workspaceYaml: null,
-    });
+    vi.spyOn(cmd, "marketInstall").mockImplementation(async (surface) =>
+      surface === "desktop"
+        ? { status: "needsApproval", packages: ["sharp"], workspaceYaml: null }
+        : installedOutcome("neither", "neither@1.0.0"),
+    );
     await useAppStore.getState().installMarketPlugin("neither@latest", "neither", ["desktop", "web"]);
 
     useAppStore.getState().dismissMarketApproval();
 
-    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("neither@latest"));
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("web", "neither@latest"));
     expect(useAppStore.getState().toasts.map((toast) => toast.message)).toContain(
       "Build scripts not approved. The plugin was not installed in DeepSeek Harness.",
     );
@@ -295,17 +305,17 @@ describe("installed page", () => {
     const user = await openInstalled();
     const both = await card("both");
     await user.click(await within(both).findByRole("button", { name: "Remove both (Desktop)" }));
-    await waitFor(() => expect(cmd.marketDesktopRemove).toHaveBeenCalledWith("both"));
-    expect(cmd.marketRemove).not.toHaveBeenCalled();
+    await waitFor(() => expect(cmd.marketRemove).toHaveBeenCalledWith("desktop", "both"));
+    expect(cmd.marketRemove).not.toHaveBeenCalledWith("web", expect.anything());
 
     const deskOnly = await card("desk-only");
     await user.click(within(deskOnly).getByRole("switch", { name: "Enable desk-only" }));
-    await waitFor(() => expect(cmd.marketDesktopSetEnabled).toHaveBeenCalledWith("desk-only", true));
-    expect(cmd.marketSetPluginEnabled).not.toHaveBeenCalled();
+    await waitFor(() => expect(cmd.marketSetPluginEnabled).toHaveBeenCalledWith("desktop", "desk-only", true));
+    expect(cmd.marketSetPluginEnabled).not.toHaveBeenCalledWith("web", expect.anything(), expect.anything());
   });
 
   it("says where a desktop change went when the app needs a restart", async () => {
-    vi.spyOn(cmd, "marketDesktopRemove").mockResolvedValue("restart-required");
+    vi.spyOn(cmd, "marketRemove").mockResolvedValue("restart-required");
     await useAppStore.getState().removeMarketPlugin({ surface: "desktop", name: "both" });
     const toasts = useAppStore.getState().toasts;
     expect(toasts.map((toast) => toast.message)).toContain("Restart DeepSeek Harness to apply this change.");
@@ -315,8 +325,10 @@ describe("installed page", () => {
   // desktop 档拿不到安装 spec：更新一律钉检测到的精确版本，不走 @latest（会被发布冷却
   // 静默解析到旧版），也不弹 web 档那道供应链窗口确认
   it("updates a desktop plugin by pinning the exact latest version", async () => {
-    vi.spyOn(cmd, "marketDesktopCheckUpdates").mockResolvedValue([updateInfo("desk-only", "0.3.0", "0.4.0")]);
-    vi.spyOn(cmd, "marketDesktopInstall").mockResolvedValue(installedOutcome("desk-only", "0.4.0"));
+    vi.spyOn(cmd, "marketCheckUpdates").mockImplementation(async (surface) =>
+      surface === "desktop" ? [updateInfo("desk-only", "0.3.0", "0.4.0")] : [],
+    );
+    vi.spyOn(cmd, "marketInstall").mockResolvedValue(installedOutcome("desk-only", "0.4.0"));
     const user = await openInstalled();
 
     const deskOnly = await card("desk-only");
@@ -324,21 +336,22 @@ describe("installed page", () => {
     // 先过更新说明对话框（G5），确认后才进更新管线
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Update" }));
 
-    await waitFor(() => expect(cmd.marketDesktopInstall).toHaveBeenCalledWith("desk-only@0.4.0"));
-    expect(cmd.marketInstall).not.toHaveBeenCalled();
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("desktop", "desk-only@0.4.0"));
+    expect(cmd.marketInstall).not.toHaveBeenCalledWith("web", expect.anything());
     expect(useAppStore.getState().marketReleaseAgeConfirm).toBeNull();
   });
 
   it("updates both surfaces in one batch", async () => {
-    vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([updateInfo("both", "1.0.0", "2.0.0")]);
-    vi.spyOn(cmd, "marketDesktopCheckUpdates").mockResolvedValue([updateInfo("desk-only", "0.3.0", "0.4.0")]);
+    vi.spyOn(cmd, "marketCheckUpdates").mockImplementation(async (surface) =>
+      surface === "web" ? [updateInfo("both", "1.0.0", "2.0.0")] : [updateInfo("desk-only", "0.3.0", "0.4.0")],
+    );
     vi.spyOn(cmd, "marketPrefetch").mockResolvedValue(undefined);
     const user = await openInstalled();
 
     await user.click(await screen.findByRole("button", { name: "Update all (2)" }));
 
-    await waitFor(() => expect(cmd.marketDesktopInstall).toHaveBeenCalledWith("desk-only@0.4.0"));
-    expect(cmd.marketInstall).toHaveBeenCalledWith("both@latest");
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("desktop", "desk-only@0.4.0"));
+    expect(cmd.marketInstall).toHaveBeenCalledWith("web", "both@latest");
     // 预热只对 web 档：desktop 档的安装在应用里跑，预热不到它的 store
     expect(cmd.marketPrefetch).toHaveBeenCalledWith(["both@latest"]);
     await waitFor(() => expect(useAppStore.getState().marketUpdateAllQueue).toBeNull());

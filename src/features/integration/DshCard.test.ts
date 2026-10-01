@@ -427,9 +427,7 @@ describe("start failure log disclosure", () => {
       }],
     });
     vi.spyOn(cmd, "dshDetect").mockResolvedValue({ ...ready, dshRunning: false });
-    const setEnabled = vi.spyOn(cmd, "marketSetPluginEnabled").mockResolvedValue({
-      name: "@vendor/bad-plugin",
-    } as never);
+    const setEnabled = vi.spyOn(cmd, "marketSetPluginEnabled").mockResolvedValue("restart-required");
     const startWeb = vi.spyOn(cmd, "dshStartWeb").mockResolvedValue("http://127.0.0.1:3899");
     vi.mocked(shell.open).mockResolvedValue();
 
@@ -439,7 +437,7 @@ describe("start failure log disclosure", () => {
     );
 
     await waitFor(() =>
-      expect(setEnabled).toHaveBeenCalledWith("@vendor/bad-plugin", false),
+      expect(setEnabled).toHaveBeenCalledWith("web", "@vendor/bad-plugin", false),
     );
     // 禁用成功后自动重跑当前模式的启动流程
     await waitFor(() => expect(startWeb).toHaveBeenCalledOnce());

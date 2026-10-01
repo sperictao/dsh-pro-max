@@ -120,7 +120,7 @@ function DisableRetryButton({ plugin, disabled }: { plugin: string; disabled: bo
         void (async () => {
           setDisabling(true);
           try {
-            await cmd.marketSetPluginEnabled(plugin, false);
+            await cmd.marketSetPluginEnabled("web", plugin, false);
             toast(t("Plugin {{plugin}} disabled", { plugin }), "success");
           } catch (e) {
             toast(t("Failed to disable {{plugin}}: {{error}}", { plugin, error: tErr(e) }), "error");

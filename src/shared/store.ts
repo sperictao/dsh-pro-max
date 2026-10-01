@@ -10,6 +10,7 @@ import { createThemeSlice, type ThemeSlice } from "./store/slices/theme";
 import { createUpdaterSlice, type UpdaterSlice } from "./store/slices/updater";
 import { createMarketSlice, type MarketSlice } from "./store/slices/market";
 import { createModelSlice, type ModelSlice } from "./store/slices/models";
+import { createDesktopSlice, type DesktopSlice } from "./store/slices/desktop";
 
 export type { View, SettingsSection, ToastType, ToastItem } from "./store/slices/ui";
 import type { DshSurface } from "./types";
@@ -22,7 +23,8 @@ export interface AppStore
     ThemeSlice,
     UpdaterSlice,
     MarketSlice,
-    ModelSlice {}
+    ModelSlice,
+    DesktopSlice {}
 
 export const useAppStore = create<AppStore>()((set, get, store) => ({
   ...createUiSlice(set, get, store),
@@ -32,6 +34,7 @@ export const useAppStore = create<AppStore>()((set, get, store) => ({
   ...createUpdaterSlice(set, get, store),
   ...createMarketSlice(set, get, store),
   ...createModelSlice(set, get, store),
+  ...createDesktopSlice(set, get, store),
 }));
 
 /// 本应用纳管的形态（设置页「纳管形态」的事实）。配置未加载时按仅 web 走——与首页、

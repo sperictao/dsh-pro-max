@@ -10,8 +10,7 @@ import { renderMessage, tErr } from "../../i18n/error";
 import * as cmd from "../../commands";
 import type { StoreApi } from "zustand";
 import type {
-  BridgeStatus,
-  DesktopApplication,
+  ChangeApplication,
   DesktopInstalledPlugin,
   DiscoveryCompat,
   DshSurface,
@@ -103,20 +102,29 @@ function notifyInstallOutcome(
   if (notices) toast(notices, "info");
 }
 
-/// 桌面应用接受变更后的去向：生效即成功；要重启、被覆盖、被取消各给一句，都不算失败
-function notifyDesktopApplication(toast: MarketToast, application: DesktopApplication, applied: string): void {
+/// 一次变更被接受后的去向（两档、市场与桌面 tab 共用这一个说法）：生效与「重启后生效」
+/// 都是成功，句子由调用方给（「重启 dsh web」与「重启 DeepSeek Harness」不是一回事）；
+/// 被覆盖、被取消、本来就是那个状态各给一句，都不算失败
+export function notifyChange(
+  toast: MarketToast,
+  application: ChangeApplication,
+  messages: { applied: string; restartRequired: string },
+): void {
   switch (application) {
     case "applied":
-      toast(applied, "success");
+      toast(messages.applied, "success");
       return;
     case "restart-required":
-      toast(i18n.t("Restart DeepSeek Harness to apply this change."), "info");
+      toast(messages.restartRequired, "success");
       return;
     case "overridden":
       toast(i18n.t("A higher-priority layer overrides this change; it is not in effect."), "info");
       return;
     case "cancelled":
       toast(i18n.t("The change was cancelled."), "info");
+      return;
+    case "unchanged":
+      toast(i18n.t("No change needed: the toggle is already in that state."), "info");
       return;
   }
 }
@@ -209,13 +217,8 @@ function settleUpdateAll(
 
 /// 一档的已装列表与更新检测一起重拉（操作落定后的收口）
 function refreshSurface(get: StoreApi<AppStore>["getState"], surface: DshSurface, updates = true) {
-  if (surface === "web") {
-    void get().refreshMarketInstalled();
-    if (updates) void get().refreshMarketUpdates();
-  } else {
-    void get().refreshMarketDesktopInstalled();
-    if (updates) void get().refreshMarketDesktopUpdates();
-  }
+  void get().refreshMarketInstalled(surface);
+  if (updates) void get().refreshMarketUpdates(surface);
 }
 
 /// 目录条目 url（https://github.com/<owner>/<repo>）→ "owner/repo"（G5 更新
@@ -237,12 +240,11 @@ function readStoredFavorites(): string[] {
 /// 回执背书的乐观收敛：装成 = 已到检测时的 latest，该档本包"有更新"即刻为假
 /// （徽章与 Update 按钮随回执消失，不等后台 registry 重检）
 function clearUpdateFlag(set: StoreApi<AppStore>["setState"], surface: DshSurface, name: string) {
-  const key = surface === "web" ? "marketUpdates" : "marketDesktopUpdates";
   set((s) => {
-    const updates = s[key];
+    const updates = s.marketUpdates[surface];
     const info = updates?.[name];
     if (!updates || !info) return s;
-    return { [key]: { ...updates, [name]: { ...info, updateAvailable: false } } };
+    return { marketUpdates: { ...s.marketUpdates, [surface]: { ...updates, [name]: { ...info, updateAvailable: false } } } };
   });
 }
 
@@ -251,10 +253,9 @@ export interface MarketSlice {
   marketCatalogBusy: boolean;
   marketInstalled: InstalledPlugin[];
   marketInstalledBusy: boolean;
-  // desktop 档的已装事实；null = 不可知（桥接未连接），绝不当成空列表——空列表会被读成「没装」
+  // desktop 档的已装事实；null = 不可知（桥接未连接），绝不当成空列表——空列表会被读成「没装」。
+  // 不可知的原因看 desktop 切片的桥接状态（全应用一份）
   marketDesktopInstalled: DesktopInstalledPlugin[] | null;
-  // desktop 档不可知时的桥接状态：未知角标据此说出原因与下一步
-  marketDesktopBridge: BridgeStatus | null;
   marketInstalling: { surface: DshSurface; specifier: string } | null;
   // 安装过程明细：单飞安装的流式输出行（specifier 锚定发起卡片；安装/审批
   // 重跑/更新共用同一 market_install 通道，行由事件桥追加）。只有 web 档有流式输出：
@@ -285,11 +286,9 @@ export interface MarketSlice {
     installedVersion: string | null;
     publishTime: string | null;
   } | null;
-  // 更新检测结果（name → info）；null = 尚未检测
-  marketUpdates: Record<string, PluginUpdateInfo> | null;
-  marketUpdatesBusy: boolean;
-  marketDesktopUpdates: Record<string, PluginUpdateInfo> | null;
-  marketDesktopUpdatesBusy: boolean;
+  // 每档的更新检测结果（name → info）；null = 尚未检测
+  marketUpdates: Record<DshSurface, Record<string, PluginUpdateInfo> | null>;
+  marketUpdatesBusy: Record<DshSurface, boolean>;
   // 正在更新的插件（单次或批量中的当前项），与安装 busy 分开计
   marketUpdating: MarketTarget | null;
   // 批量更新中继态：剩余待处理候选（含当前撞上窗口/审批而挂起的队首项）+ 已
@@ -312,8 +311,7 @@ export interface MarketSlice {
   // busy = 探针未覆盖或查询失败（对话框内如实显示"暂无说明"）
   marketReleaseNotes: { target: MarketTarget; notes: PluginReleaseNotes | null; busy: boolean } | null;
   refreshMarketCatalog: (force?: boolean) => Promise<void>;
-  refreshMarketInstalled: () => Promise<void>;
-  refreshMarketDesktopInstalled: () => Promise<void>;
+  refreshMarketInstalled: (surface: DshSurface) => Promise<void>;
   installMarketPlugin: (specifier: string, label: string, surfaces: DshSurface[]) => Promise<void>;
   approveMarketBuilds: () => Promise<void>;
   dismissMarketApproval: () => void;
@@ -321,8 +319,7 @@ export interface MarketSlice {
   dismissMarketInstallError: () => void;
   removeMarketPlugin: (target: MarketTarget) => Promise<void>;
   setMarketPluginEnabled: (target: MarketTarget, enabled: boolean) => Promise<void>;
-  refreshMarketUpdates: () => Promise<void>;
-  refreshMarketDesktopUpdates: () => Promise<void>;
+  refreshMarketUpdates: (surface: DshSurface) => Promise<void>;
   updateMarketPlugin: (target: MarketTarget, opts?: { silent?: boolean; releaseAgePin?: string }) => Promise<boolean>;
   confirmMarketReleaseAge: () => Promise<void>;
   dismissMarketReleaseAge: () => void;
@@ -334,14 +331,6 @@ export interface MarketSlice {
   openMarketReleaseNotes: (target: MarketTarget) => Promise<void>;
   dismissMarketReleaseNotes: () => void;
   confirmMarketReleaseNotesUpdate: () => Promise<void>;
-}
-
-/// 按形态选安装通道：web 档走自己的 profile，desktop 档经桥接走应用自己的 Plugin Manager
-function installVia(surface: DshSurface, specifier: string, approvedBuilds?: string[]): Promise<InstallOutcome> {
-  if (!approvedBuilds) return surface === "web" ? cmd.marketInstall(specifier) : cmd.marketDesktopInstall(specifier);
-  return surface === "web"
-    ? cmd.marketApproveBuilds(specifier, approvedBuilds)
-    : cmd.marketDesktopInstall(specifier, approvedBuilds);
 }
 
 /// 一次安装开始时的状态：busy 挂上、web 档开一份流式明细（desktop 档没有流式输出）、
@@ -376,7 +365,7 @@ async function installOn(
 ): Promise<boolean> {
   set(installStarted(get, surface, specifier));
   try {
-    const outcome = await installVia(surface, specifier);
+    const outcome = await cmd.marketInstall(surface, specifier);
     if (outcome.status === "needsApproval") {
       set({
         marketInstalling: null,
@@ -398,7 +387,7 @@ async function installOn(
     if (!installed) return false;
     notifyInstallOutcome(get().toast, installed, label, "installed", surface);
     set({ marketInstallLog: null });
-    await (surface === "web" ? get().refreshMarketInstalled() : get().refreshMarketDesktopInstalled());
+    await get().refreshMarketInstalled(surface);
   } catch (e) {
     set({ marketInstallError: { surface, specifier, message: renderMessage(e) } });
     get().toast(i18n.t("Failed to install plugin: {{error}}", { error: tErr(e) }), "error");
@@ -427,17 +416,14 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   marketInstalled: [],
   marketInstalledBusy: false,
   marketDesktopInstalled: null,
-  marketDesktopBridge: null,
   marketInstalling: null,
   marketInstallLog: null,
   marketInstallError: null,
   marketRemoving: null,
   marketPendingApproval: null,
   marketReleaseAgeConfirm: null,
-  marketUpdates: null,
-  marketUpdatesBusy: false,
-  marketDesktopUpdates: null,
-  marketDesktopUpdatesBusy: false,
+  marketUpdates: { web: null, desktop: null },
+  marketUpdatesBusy: { web: false, desktop: false },
   marketUpdating: null,
   marketUpdateAllQueue: null,
   marketUpdateAllQueueSurfaces: null,
@@ -471,7 +457,19 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
     }
   },
 
-  refreshMarketInstalled: async () => {
+  // 两档的已装事实来源不同（web 档读自己的 profile，desktop 档读桥接），失败的含义也不同：
+  // web 档读不到是错误；desktop 档读不到是常态（应用没开或桥接没装），角标如实显示「未知」，
+  // 原因去问一次桥接状态（读到了就说明它是连着的，不必问）
+  refreshMarketInstalled: async (surface) => {
+    if (surface === "desktop") {
+      try {
+        set({ marketDesktopInstalled: await cmd.marketDesktopInstalled() });
+      } catch {
+        set({ marketDesktopInstalled: null });
+        await get().refreshDesktop();
+      }
+      return;
+    }
     if (get().marketInstalledBusy) return;
     set({ marketInstalledBusy: true });
     try {
@@ -480,22 +478,6 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       get().toast(i18n.t("Failed to list installed plugins: {{error}}", { error: tErr(e) }), "error");
     } finally {
       set({ marketInstalledBusy: false });
-    }
-  },
-
-  // 桌面档读不到不是错误、不 toast：应用没开或桥接没装是常态，角标如实显示「未知」
-  // 并给出去向。桥接状态只在读不到时才去问（读到了就说明它是连着的）
-  refreshMarketDesktopInstalled: async () => {
-    try {
-      set({ marketDesktopInstalled: await cmd.marketDesktopInstalled(), marketDesktopBridge: null });
-    } catch {
-      let bridge: BridgeStatus | null = null;
-      try {
-        bridge = await cmd.desktopBridgeStatus();
-      } catch {
-        // 状态也问不到：原因未知，角标退回通用说法
-      }
-      set({ marketDesktopInstalled: null, marketDesktopBridge: bridge });
     }
   },
 
@@ -519,7 +501,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
     const { specifier, surface } = pending;
     set(installStarted(get, surface, specifier));
     try {
-      const outcome = await installVia(surface, specifier, pending.packages);
+      const outcome = await cmd.marketInstall(surface, specifier, pending.packages);
       if (outcome.status === "needsApproval") {
         // 放行后重装又撞上新的被拦包（依赖的依赖）：再挂审批，不当作失败
         set({
@@ -602,16 +584,13 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
     const { surface, name } = target;
     set({ marketRemoving: target });
     try {
-      if (surface === "web") {
-        await cmd.marketRemove(name);
-        get().toast(i18n.t("Plugin removed: {{name}}", { name }), "success");
-      } else {
-        notifyDesktopApplication(
-          get().toast,
-          await cmd.marketDesktopRemove(name),
-          i18n.t("Plugin removed from DeepSeek Harness: {{name}}", { name }),
-        );
-      }
+      notifyChange(get().toast, await cmd.marketRemove(surface, name), {
+        applied:
+          surface === "web"
+            ? i18n.t("Plugin removed: {{name}}", { name })
+            : i18n.t("Plugin removed from DeepSeek Harness: {{name}}", { name }),
+        restartRequired: i18n.t("Restart DeepSeek Harness to apply this change."),
+      });
       refreshSurface(get, surface, false);
     } catch (e) {
       get().toast(i18n.t("Failed to remove plugin: {{error}}", { error: tErr(e) }), "error");
@@ -621,38 +600,28 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   },
 
   // 启停开关。web 档写 profile patch 的 disabled 覆盖行，重启 dsh web 后生效（运行中的
-  // dsh 不受影响）；落盘回执（重读后的落盘事实）与请求一致才出变更 toast，不一致 =
-  // 内容未变化的空操作（重复启停），如实提示没改。desktop 档由应用自己翻转并热生效，
-  // 去向按应用回报的结果给
+  // dsh 不受影响，Rust 侧报 restart-required），重复启停免写盘报 unchanged；desktop 档由
+  // 应用自己翻转，去向按应用回报的结果给
   setMarketPluginEnabled: async ({ surface, name }, enabled) => {
     if (hasMarketOperation(get())) return;
     try {
-      if (surface === "desktop") {
-        notifyDesktopApplication(
-          get().toast,
-          await cmd.marketDesktopSetEnabled(name, enabled),
-          i18n.t(enabled ? "Plugin {{name}} enabled in DeepSeek Harness." : "Plugin {{name}} disabled in DeepSeek Harness.", {
-            name,
-          }),
-        );
-        await get().refreshMarketDesktopInstalled();
-        return;
-      }
-      const receipt = await cmd.marketSetPluginEnabled(name, enabled);
-      if (receipt.enabled === enabled) {
-        get().toast(
-          i18n.t(
-            enabled
-              ? "Plugin {{name}} will be enabled at the next dsh web start."
-              : "Plugin {{name}} will be disabled at the next dsh web start.",
-            { name },
-          ),
-          "success",
-        );
-      } else {
-        get().toast(i18n.t("No change needed: the toggle is already in that state."), "info");
-      }
-      await get().refreshMarketInstalled();
+      const restartRequired =
+        surface === "web"
+          ? i18n.t(
+              enabled
+                ? "Plugin {{name}} will be enabled at the next dsh web start."
+                : "Plugin {{name}} will be disabled at the next dsh web start.",
+              { name },
+            )
+          : i18n.t("Restart DeepSeek Harness to apply this change.");
+      notifyChange(get().toast, await cmd.marketSetPluginEnabled(surface, name, enabled), {
+        applied: i18n.t(
+          enabled ? "Plugin {{name}} enabled in DeepSeek Harness." : "Plugin {{name}} disabled in DeepSeek Harness.",
+          { name },
+        ),
+        restartRequired,
+      });
+      await get().refreshMarketInstalled(surface);
     } catch (e) {
       get().toast(i18n.t("Failed to toggle plugin: {{error}}", { error: tErr(e) }), "error");
     }
@@ -661,32 +630,22 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   // 更新检测（registry latest 比对）：进入市场页自动跑，已安装页可手动重跑。
   // 部分包检测失败不放大为整体失败（如实无 latest、不出更新按钮），
   // 全部可检包都失败才 toast（Rust 侧聚合的网络错误）
-  refreshMarketUpdates: async () => {
-    if (get().marketUpdatesBusy) return;
-    set({ marketUpdatesBusy: true });
+  // desktop 档桥接不可用时已装事实本就未知，检测失败静默留空（角标已说明原因）
+  refreshMarketUpdates: async (surface) => {
+    if (get().marketUpdatesBusy[surface]) return;
+    const busy = (value: boolean) => set((s) => ({ marketUpdatesBusy: { ...s.marketUpdatesBusy, [surface]: value } }));
+    busy(true);
     try {
-      const infos = await cmd.marketCheckUpdates();
-      set({ marketUpdates: Object.fromEntries(infos.map((i) => [i.name, i])) });
+      const infos = await cmd.marketCheckUpdates(surface);
+      set((s) => ({
+        marketUpdates: { ...s.marketUpdates, [surface]: Object.fromEntries(infos.map((i) => [i.name, i])) },
+      }));
     } catch (e) {
-      get().toast(i18n.t("Failed to check plugin updates: {{error}}", { error: tErr(e) }), "error");
-    } finally {
-      set({ marketUpdatesBusy: false });
-    }
-  },
-
-  // 桌面档的更新检测：桥接不可用时已装事实本就未知，静默留空（角标已说明原因）
-  refreshMarketDesktopUpdates: async () => {
-    if (get().marketDesktopUpdatesBusy) return;
-    set({ marketDesktopUpdatesBusy: true });
-    try {
-      const infos = await cmd.marketDesktopCheckUpdates();
-      set({ marketDesktopUpdates: Object.fromEntries(infos.map((i) => [i.name, i])) });
-    } catch (e) {
-      if (get().marketDesktopInstalled !== null) {
+      if (surface === "web" || get().marketDesktopInstalled !== null) {
         get().toast(i18n.t("Failed to check plugin updates: {{error}}", { error: tErr(e) }), "error");
       }
     } finally {
-      set({ marketDesktopUpdatesBusy: false });
+      busy(false);
     }
   },
 
@@ -706,7 +665,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
     if (hasMarketOperation(get(), { allowBatchQueue: true })) return false;
     let specifier: string;
     if (surface === "web") {
-      const info = get().marketUpdates?.[name];
+      const info = get().marketUpdates.web?.[name];
       if (!opts?.releaseAgePin && info?.updateAvailable && info.latestInReleaseAgeWindow && info.latestVersion) {
         set({
           marketReleaseAgeConfirm: {
@@ -721,13 +680,13 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       const installed = get().marketInstalled.find((p) => p.name === name) ?? null;
       specifier = opts?.releaseAgePin ? `${name}@${opts.releaseAgePin}` : updateSpecifierFor(name, installed, info);
     } else {
-      const pinned = desktopUpdateSpecifierFor(name, get().marketDesktopUpdates?.[name]);
+      const pinned = desktopUpdateSpecifierFor(name, get().marketUpdates.desktop?.[name]);
       if (pinned === null) return false;
       specifier = pinned;
     }
     set({ marketUpdating: target, marketInstallLog: surface === "web" ? { specifier, lines: [] } : null });
     try {
-      const outcome = await installVia(surface, specifier);
+      const outcome = await cmd.marketInstall(surface, specifier);
       if (outcome.status === "needsApproval") {
         set({
           marketUpdating: null,
@@ -815,14 +774,12 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
   updateAllMarketPlugins: async () => {
     // 兼容门禁判 false（目标要求更高 dsh 版本）的更新不进批量——单卡
     // Update 按钮已禁用，批量入口同样排除
-    const pending = (updates: Record<string, PluginUpdateInfo> | null, surface: DshSurface): MarketTarget[] =>
-      Object.values(updates ?? {})
+    const updates = get().marketUpdates;
+    const targets = (["web", "desktop"] as const).flatMap((surface) =>
+      Object.values(updates[surface] ?? {})
         .filter((u) => u.updateAvailable && !u.managed && u.compatible !== false)
-        .map((u) => ({ surface, name: u.name }));
-    const targets = [
-      ...pending(get().marketUpdates, "web"),
-      ...pending(get().marketDesktopUpdates, "desktop"),
-    ];
+        .map((u): MarketTarget => ({ surface, name: u.name })),
+    );
     if (targets.length === 0 || hasMarketOperation(get())) return;
     // 预下载候选：与后续安装同源生成 specifier（上游是 GitHub 仓库的形态
     // 生成 github:owner/repo），只有 npm 形态（githubRepoId(specifier) 为
@@ -831,7 +788,7 @@ export const createMarketSlice: Slice<MarketSlice> = (set, get) => ({
       .filter((target) => target.surface === "web")
       .map(({ name }) => {
         const installed = get().marketInstalled.find((p) => p.name === name) ?? null;
-        const info = get().marketUpdates?.[name] ?? null;
+        const info = get().marketUpdates.web?.[name] ?? null;
         return updateSpecifierFor(name, installed, info);
       })
       .filter((specifier) => !githubRepoId(specifier));

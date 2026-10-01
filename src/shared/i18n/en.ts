@@ -301,7 +301,6 @@ export const en = {
   "Restart DeepSeek Harness to apply this change.": "Restart DeepSeek Harness to apply this change.",
   "A higher-priority layer overrides this change; it is not in effect.": "A higher-priority layer overrides this change; it is not in effect.",
   "The change was cancelled.": "The change was cancelled.",
-  "The change failed: {{reason}}": "The change failed: {{reason}}",
   "The desktop app manages this itself; it cannot be changed here.": "The desktop app manages this itself; it cannot be changed here.",
   "The profile cannot address this row; change it in DeepSeek Harness.": "The profile cannot address this row; change it in DeepSeek Harness.",
   "Profile configuration": "Profile configuration",
@@ -319,6 +318,8 @@ export const en = {
   "Bridge rejected the request": "Bridge rejected the request",
 
   // —— 目标形态（ADR 0012）——
+  "Package spec copied": "Package spec copied",
+  "The default model and AI providers are edited on the Models page.": "The default model and AI providers are edited on the Models page.",
   "Built-in bundles": "Built-in bundles",
   "Plugins you installed are managed on the Installed tab, side by side with the web profile.": "Plugins you installed are managed on the Installed tab, side by side with the web profile.",
   "Open DeepSeek Harness to see what is installed there.": "Open DeepSeek Harness to see what is installed there.",

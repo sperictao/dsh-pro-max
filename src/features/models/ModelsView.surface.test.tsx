@@ -50,7 +50,21 @@ const configWith = (surfaces: DshSurface[]) => ({
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  useAppStore.setState({ toasts: [], modelConfigBusy: false, config: configWith(["web", "desktop"]) });
+  useAppStore.setState({
+    toasts: [],
+    modelConfigBusy: false,
+    config: configWith(["web", "desktop"]),
+    desktopStatus: null,
+    desktopBridge: null,
+    desktopChecked: false,
+  });
+  vi.spyOn(cmd, "desktopDetect").mockResolvedValue({
+    supported: true,
+    installed: true,
+    version: "0.2.0-rc.2",
+    running: true,
+    canQuit: true,
+  });
   vi.spyOn(cmd, "modelConfigLoad").mockImplementation(async (surface) => configFor(surface));
   vi.spyOn(cmd, "modelConfigSave").mockResolvedValue(undefined);
   vi.spyOn(cmd, "modelCatalogLoad").mockResolvedValue(catalog);
@@ -111,6 +125,23 @@ describe("ModelsView target surface", () => {
 
     release(configFor("desktop"));
     expect(await screen.findByText("OpenAI (desktop)")).toBeInTheDocument();
+  });
+
+  // 桌面状态全应用一份：别的页面留下的「已连接」可能已经过期。进门要以这次探测为准，
+  // 否则桥接刚断时编辑器先挂上、读一次注定失败的配置、弹一条错误
+  it("does not trust a stale connected state left by another page", async () => {
+    const user = userEvent.setup();
+    useAppStore.setState({ desktopBridge: bridge("connected"), desktopChecked: true });
+    vi.spyOn(cmd, "desktopBridgeStatus").mockResolvedValue(bridge("app_unavailable"));
+    render(createElement(ModelsView));
+    await screen.findByText("OpenAI (web)");
+
+    await user.click(screen.getByRole("button", { name: "Desktop" }));
+    expect(
+      await screen.findByText("Open DeepSeek Harness to manage its plugins and configuration."),
+    ).toBeInTheDocument();
+    expect(cmd.modelConfigLoad).not.toHaveBeenCalledWith("desktop");
+    expect(useAppStore.getState().toasts.filter((toast) => toast.type === "error")).toHaveLength(0);
   });
 
   it("shows no switch when only one surface is managed", async () => {

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useAppStore, isConfigDirty, type SettingsSection } from "@/shared/store";
+import { useAppStore, useManagedSurfaces, isConfigDirty, type SettingsSection } from "@/shared/store";
 import {
   BTN,
   BTN_PRIMARY,
@@ -90,7 +90,7 @@ const SECTION_GROUPS: { labelKey: string; sections: { id: SettingsSection; label
 export function SettingsView() {
   const { t } = useTranslation();
   const settingsSection = useAppStore((s) => s.settingsSection);
-  const webManaged = useAppStore((s) => s.config?.managed_surfaces.includes("web") ?? true);
+  const { web: webManaged } = useManagedSurfaces();
   // 与市场 tab / 顶层导航同一手法：按纳管形态过滤导航，并派生出实际分区，让「停在已消失的
   // 分区上」无法表示。界面到不了那个状态（开关本身在恒可用的「纳管形态」节里），这条是让
   // 渲染对所有状态成立，不是补流程的漏——别当死代码删

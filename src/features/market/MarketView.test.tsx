@@ -62,6 +62,9 @@ const catalog: MarketCatalog = {
   ],
 };
 
+/// 带放行名单的安装调用 = 用户放行构建脚本后的重装（与普通安装是同一条命令）
+const approvalCalls = () => vi.mocked(cmd.marketInstall).mock.calls.filter((call) => call[2] !== undefined);
+
 const installed: InstalledPlugin[] = [
   { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
   { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, upstreamRepo: null, managed: true, enabled: true },
@@ -108,15 +111,12 @@ beforeEach(() => {
     marketReleaseAgeConfirm: null,
     // 更新检测态一并重置：挂起的检测 promise 会把 busy 卡在 true，泄漏到
     // 后续测试会让所有重检被 busy 守卫拦掉（卡片永远等不到 outdated 数据）
-    marketUpdates: null,
-    marketUpdatesBusy: false,
+    marketUpdates: { web: null, desktop: null },
+    marketUpdatesBusy: { web: false, desktop: false },
     marketUpdating: null,
     marketUpdateAllQueue: null,
     marketUpdateAllQueueSurfaces: null,
     marketDesktopInstalled: null,
-    marketDesktopBridge: null,
-    marketDesktopUpdates: null,
-    marketDesktopUpdatesBusy: false,
     marketUpdateAllOk: 0,
     marketUpdateAllFailed: 0,
     marketUpdateAllPrefetching: false,
@@ -128,7 +128,7 @@ beforeEach(() => {
   vi.spyOn(cmd, "marketFetch").mockResolvedValue(catalog);
   vi.spyOn(cmd, "marketSnapshot").mockResolvedValue(null);
   vi.spyOn(cmd, "marketInstalled").mockResolvedValue(installed);
-  vi.spyOn(cmd, "marketApproveBuilds").mockResolvedValue({ status: "installed", receipt: null, notices: [] });
+  vi.spyOn(cmd, "marketInstall").mockResolvedValue({ status: "installed", receipt: null, notices: [] });
   vi.spyOn(cmd, "marketCheckUpdates").mockResolvedValue([]);
   vi.spyOn(cmd, "marketPrefetch").mockResolvedValue(undefined);
   // G 块新增通道的默认桩：兼容性空、说明未覆盖、取消幂等
@@ -329,7 +329,7 @@ describe("market operation serialization", () => {
       marketInstalled: [
         { name: "dsh-existing", spec: "dsh-existing@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
       ],
-      marketUpdates: {
+      marketUpdates: { web: {
         "dsh-existing": {
           name: "dsh-existing",
           spec: "dsh-existing@1.0.0",
@@ -342,11 +342,11 @@ describe("market operation serialization", () => {
           compatible: null,
           updateAvailable: true,
         },
-      },
+      }, desktop: null },
     });
 
     const update = useAppStore.getState().updateMarketPlugin({ surface: "web", name: "dsh-existing" });
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-existing@latest"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-existing@latest"));
 
     // A second write would race the same web profile. The store gate must
     // leave the active update untouched and reject this install request.
@@ -519,9 +519,8 @@ describe("MarketView", () => {
       { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
       { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", version: null, upstreamRepo: null, managed: true, enabled: true },
     ]);
-    const setEnabled = vi
-      .spyOn(cmd, "marketSetPluginEnabled")
-      .mockResolvedValue({ name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: false });
+    // web 档的启停写的是下次启动才认读的覆盖行：去向是 restart-required
+    const setEnabled = vi.spyOn(cmd, "marketSetPluginEnabled").mockResolvedValue("restart-required");
     const user = userEvent.setup();
     render(createElement(MarketView));
     await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
@@ -531,7 +530,7 @@ describe("MarketView", () => {
     const toggle = await screen.findByRole("switch", { name: "Disable dsh-better-sidebar" });
     expect(toggle).toHaveAttribute("data-state-text", "Enabled");
     await user.click(toggle);
-    await waitFor(() => expect(setEnabled).toHaveBeenCalledWith("dsh-better-sidebar", false));
+    await waitFor(() => expect(setEnabled).toHaveBeenCalledWith("web", "dsh-better-sidebar", false));
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((x) => x.message)).toContainEqual(
         "Plugin dsh-better-sidebar will be disabled at the next dsh web start.",
@@ -543,19 +542,11 @@ describe("MarketView", () => {
   });
 
   it("repeated toggle that changes nothing toasts a no-op instead of a change", async () => {
-    // 回执 enabled 与请求一致 = 内容未变化的空操作（后端免写盘）：如实提示
-    // 没改，不谎称「将于下次启动停用」
+    // 内容未变化的空操作（后端免写盘、报 unchanged）：如实提示没改，不谎称「将于下次启动停用」
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([
       { name: "dsh-better-sidebar", spec: "npm:dsh-better-sidebar@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
     ]);
-    vi.spyOn(cmd, "marketSetPluginEnabled").mockResolvedValue({
-      name: "dsh-better-sidebar",
-      spec: "npm:dsh-better-sidebar@1.0.0",
-      version: "1.0.0",
-      upstreamRepo: null,
-      managed: false,
-      enabled: true,
-    });
+    vi.spyOn(cmd, "marketSetPluginEnabled").mockResolvedValue("unchanged");
     const user = userEvent.setup();
     render(createElement(MarketView));
     await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
@@ -598,7 +589,7 @@ describe("MarketView", () => {
     // minimumReleaseAge 窗口内的版本走确认框钉版本，另测。
     // 串行安装前先并发预下载（nPM 形态预热 store，specifier 与安装同源）
     await waitFor(() => expect(cmd.marketPrefetch).toHaveBeenCalledWith(["dsh-better-sidebar@latest"]));
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@latest"));
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual("Updated 1 plugins"),
     );
@@ -633,7 +624,7 @@ describe("MarketView", () => {
     // G5：更新先过说明框（本 fixture 探针未覆盖 → "暂无说明"不阻塞），框内
     // 确认后走既有更新管线
     await user.click(await screen.findByRole("button", { name: "Update" }));
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@latest"));
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual(
         "Plugin updated: dsh-better-sidebar (npm:dsh-better-sidebar@2.0.0)",
@@ -648,7 +639,7 @@ describe("MarketView", () => {
     // 还会更久）。重检挂起恰好复现 busy 场景：乐观置位不被覆盖
     vi.spyOn(cmd, "marketCheckUpdates").mockImplementation(() => new Promise(() => {}));
     useAppStore.setState({
-      marketUpdates: {
+      marketUpdates: { web: {
         "dsh-better-sidebar": {
           name: "dsh-better-sidebar",
           spec: "npm:dsh-better-sidebar@1.0.0",
@@ -661,7 +652,7 @@ describe("MarketView", () => {
           compatible: null,
           updateAvailable: true,
         },
-      },
+      }, desktop: null },
     });
     vi.spyOn(cmd, "marketInstalled")
       .mockResolvedValueOnce([
@@ -687,7 +678,7 @@ describe("MarketView", () => {
     // 回执落地即翻转：乐观收敛清掉"有更新"，版本号随磁盘刷新换新，
     // "Up to date" 立即可见，全程不依赖挂起中的重检
     await waitFor(() =>
-      expect(useAppStore.getState().marketUpdates?.["dsh-better-sidebar"]?.updateAvailable).toBe(false),
+      expect(useAppStore.getState().marketUpdates.web?.["dsh-better-sidebar"]?.updateAvailable).toBe(false),
     );
     expect(await screen.findByRole("button", { name: "Reinstall dsh-better-sidebar" })).toBeInTheDocument();
     expect(screen.getByText("v2.0.0")).toBeInTheDocument();
@@ -713,7 +704,7 @@ describe("MarketView", () => {
     expect(screen.queryByRole("button", { name: "Reinstall @dsh-external/dsh-auth-tailscale" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Reinstall dsh-better-sidebar" }));
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@latest"));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual(
       "Paused: approve build scripts for dsh-better-sidebar, then retry.",
@@ -784,7 +775,7 @@ describe("MarketView", () => {
     expect(installSpy).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Update anyway" }));
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@2.0.0"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@2.0.0"));
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual(
         "Plugin updated: dsh-better-sidebar (npm:dsh-better-sidebar@2.0.0)",
@@ -900,7 +891,7 @@ describe("MarketView", () => {
         updateAvailable: true,
       },
     ]);
-    const installSpy = vi.spyOn(cmd, "marketInstall").mockImplementation((specifier) =>
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockImplementation((_surface, specifier) =>
       Promise.resolve({
         status: "installed",
         receipt: { name: specifier.split("@")[0], spec: specifier },
@@ -924,13 +915,13 @@ describe("MarketView", () => {
     );
     // 队列顺序执行：先更新 a，撞上窗口内 b 弹知情确认框（a 之后的 c 尚未更新）
     await screen.findByRole("dialog");
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
-    expect(installSpy).not.toHaveBeenCalledWith("dsh-better-cards@latest");
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@latest"));
+    expect(installSpy).not.toHaveBeenCalledWith("web", "dsh-better-cards@latest");
     // 确认 b → 钉版本安装 b
     await user.click(screen.getByRole("button", { name: "Update anyway" }));
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-context@0.41.3"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-context@0.41.3"));
     // 装完 b 继续下一个：c 也被更新，最终全部完成
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-cards@latest"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-cards@latest"));
     // 批量汇总如实报成功
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual("Updated 3 plugins"),
@@ -970,7 +961,7 @@ describe("MarketView", () => {
         updateAvailable: true,
       },
     ]);
-    const installSpy = vi.spyOn(cmd, "marketInstall").mockImplementation((specifier) =>
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockImplementation((_surface, specifier) =>
       Promise.resolve({
         status: "installed",
         receipt: { name: specifier.split("@")[0], spec: specifier },
@@ -987,8 +978,8 @@ describe("MarketView", () => {
     await waitFor(() => expect(cmd.marketPrefetch).toHaveBeenCalledWith(["dsh-better-sidebar@latest"]));
     expect(cmd.marketPrefetch).not.toHaveBeenCalledWith(expect.arrayContaining([expect.stringContaining("github:")]));
     // 串行安装：npm 包 name@latest，GitHub 包原仓重装
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("github:omdsh-dev/dsh-at-file"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@latest"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "github:omdsh-dev/dsh-at-file"));
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual("Updated 2 plugins"),
     );
@@ -1027,7 +1018,7 @@ describe("MarketView", () => {
         updateAvailable: true,
       },
     ]);
-    const installSpy = vi.spyOn(cmd, "marketInstall").mockImplementation((specifier) =>
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockImplementation((_surface, specifier) =>
       Promise.resolve({
         status: "installed",
         receipt: { name: specifier.split("@")[0], spec: specifier },
@@ -1042,9 +1033,9 @@ describe("MarketView", () => {
     await user.click(await screen.findByRole("button", { name: "Update all (2)" }));
     // 先更新普通项，最后撞上窗口项 dsh-context → 确认
     await screen.findByRole("dialog");
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@latest"));
     await user.click(screen.getByRole("button", { name: "Update anyway" }));
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-context@0.41.3"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-context@0.41.3"));
     // 弹空队列收尾：汇总 toast、中继态清空
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual("Updated 2 plugins"),
@@ -1084,7 +1075,7 @@ describe("MarketView", () => {
         updateAvailable: true,
       },
     ]);
-    const installSpy = vi.spyOn(cmd, "marketInstall").mockImplementation((specifier) =>
+    const installSpy = vi.spyOn(cmd, "marketInstall").mockImplementation((_surface, specifier) =>
       Promise.resolve({
         status: "installed",
         receipt: { name: specifier.split("@")[0], spec: specifier },
@@ -1102,8 +1093,8 @@ describe("MarketView", () => {
     expect(installSpy).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Keep current version" }));
     // 放弃窗口项后继续：普通项 dsh-better-sidebar 照常更新
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
-    expect(installSpy).not.toHaveBeenCalledWith("dsh-context@0.41.3");
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@latest"));
+    expect(installSpy).not.toHaveBeenCalledWith("web", "dsh-context@0.41.3");
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual("Updated 1 plugins"),
     );
@@ -1260,9 +1251,9 @@ describe("MarketView", () => {
     expect(useAppStore.getState().toasts.map((t) => t.type)).not.toContain("error");
   });
 
-  it("approving writes the allowlist via marketApproveBuilds and toasts the receipt", async () => {
+  it("approving reruns the install with the approved builds and toasts the receipt", async () => {
     const approveSpy = vi
-      .spyOn(cmd, "marketApproveBuilds")
+      .spyOn(cmd, "marketInstall")
       .mockResolvedValue({ status: "installed", receipt: { name: "dsh-better-sidebar", spec: "dsh-better-sidebar@1.2.3" }, notices: [] });
     useAppStore.setState({
       marketPendingApproval: {
@@ -1280,7 +1271,7 @@ describe("MarketView", () => {
     render(createElement(MarketView));
 
     await user.click(await screen.findByText("Approve & install"));
-    await waitFor(() => expect(approveSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest", ["node-pty"]));
+    await waitFor(() => expect(approveSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@latest", ["node-pty"]));
     await waitFor(() =>
       expect(useAppStore.getState().toasts.map((t) => t.message)).toContainEqual(
         "Plugin installed: dsh-better-sidebar (dsh-better-sidebar@1.2.3)",
@@ -1290,7 +1281,7 @@ describe("MarketView", () => {
   });
 
   it("approving a paused update preserves update semantics and clears the update badge", async () => {
-    vi.spyOn(cmd, "marketApproveBuilds").mockResolvedValue({
+    vi.spyOn(cmd, "marketInstall").mockResolvedValue({
       status: "installed",
       receipt: { name: "dsh-better-sidebar", spec: "dsh-better-sidebar@2.0.0" },
       notices: [],
@@ -1310,7 +1301,7 @@ describe("MarketView", () => {
       },
     ]);
     useAppStore.setState({
-      marketUpdates: {
+      marketUpdates: { web: {
         "dsh-better-sidebar": {
           name: "dsh-better-sidebar",
           spec: "dsh-better-sidebar@1.0.0",
@@ -1323,7 +1314,7 @@ describe("MarketView", () => {
           compatible: null,
           updateAvailable: true,
         },
-      },
+      }, desktop: null },
       marketPendingApproval: {
         surface: "web",
         specifier: "dsh-better-sidebar@latest",
@@ -1341,7 +1332,7 @@ describe("MarketView", () => {
     const messages = useAppStore.getState().toasts.map((toast) => toast.message);
     expect(messages).toContain("Plugin updated: dsh-better-sidebar (dsh-better-sidebar@2.0.0)");
     expect(messages).not.toContain("Plugin installed: dsh-better-sidebar (dsh-better-sidebar@2.0.0)");
-    expect(useAppStore.getState().marketUpdates?.["dsh-better-sidebar"]?.updateAvailable).toBe(false);
+    expect(useAppStore.getState().marketUpdates.web?.["dsh-better-sidebar"]?.updateAvailable).toBe(false);
     expect(useAppStore.getState().marketPendingApproval).toBeNull();
   });
 
@@ -1363,7 +1354,7 @@ describe("MarketView", () => {
         { name: "blocked", spec: "blocked@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
         { name: "next", spec: "next@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
       ],
-      marketUpdates: { blocked: update("blocked"), next: update("next") },
+      marketUpdates: { web: { blocked: update("blocked"), next: update("next") }, desktop: null },
       marketUpdateAllQueue: [
         { surface: "web", name: "blocked" },
         { surface: "web", name: "next" },
@@ -1388,8 +1379,8 @@ describe("MarketView", () => {
 
     useAppStore.getState().dismissMarketApproval();
 
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("next@latest"));
-    expect(installSpy).not.toHaveBeenCalledWith("blocked@latest");
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "next@latest"));
+    expect(installSpy).not.toHaveBeenCalledWith("web", "blocked@latest");
     await waitFor(() => expect(useAppStore.getState().marketUpdateAllQueue).toBeNull());
     expect(useAppStore.getState().toasts.map((toast) => toast.message)).toContain("Updated 1 plugins");
   });
@@ -1413,7 +1404,7 @@ describe("MarketView", () => {
     await user.click(screen.getByText("Keep scripts blocked"));
     expect(useAppStore.getState().marketPendingApproval).toBeNull();
     expect(useAppStore.getState().toasts.map((t) => t.type)).toContain("info");
-    expect(cmd.marketApproveBuilds).not.toHaveBeenCalled();
+    expect(approvalCalls()).toHaveLength(0);
   });
 
   it("Escape dismisses the build approval dialog and cancel is the focused default", async () => {
@@ -1437,7 +1428,7 @@ describe("MarketView", () => {
     expect(screen.getByRole("button", { name: "Keep scripts blocked" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(useAppStore.getState().marketPendingApproval).toBeNull();
-    expect(cmd.marketApproveBuilds).not.toHaveBeenCalled();
+    expect(approvalCalls()).toHaveLength(0);
   });
 
   it("shows the local snapshot instantly and replaces it once the fetch lands", async () => {
@@ -1583,7 +1574,7 @@ describe("MarketView", () => {
     await user.type(screen.getByPlaceholderText("e.g. github:owner/repo or pkg@1.2.3"), "https://github.com/owner/repo");
     await user.click(within(dialog).getByRole("button", { name: "Install" }));
     // 粘贴的 GitHub 网址归一为 github: 形态后才进安装闸门（与目录安装同一命令通道）
-    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("github:owner/repo"));
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("web", "github:owner/repo"));
     // 流式进度明细与卡片同款：首行命令 + pnpm 输出实时上屏
     useAppStore.getState().appendMarketInstallLog({ specifier: "github:owner/repo", line: "Packages: +1" });
     expect(await within(dialog).findByText("Packages: +1")).toBeInTheDocument();
@@ -1628,14 +1619,14 @@ describe("MarketView", () => {
     const dialog = screen.getByRole("dialog");
     await user.type(screen.getByPlaceholderText("e.g. github:owner/repo or pkg@1.2.3"), "owner/repo");
     await user.click(within(dialog).getByRole("button", { name: "Install" }));
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("github:owner/repo"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "github:owner/repo"));
     // 失败态持久在对话框内：原因 + 留存明细
     expect(await screen.findByText("Install failed: Error: network down")).toBeInTheDocument();
     expect(screen.getByText("$ dsh plugin --profile web add github:owner/repo")).toBeInTheDocument();
 
     // Retry 固定重跑原 specifier（输入可能已被改掉）
     await user.click(within(dialog).getByRole("button", { name: "Retry" }));
-    await waitFor(() => expect(installSpy).toHaveBeenNthCalledWith(2, "github:owner/repo"));
+    await waitFor(() => expect(installSpy).toHaveBeenNthCalledWith(2, "web", "github:owner/repo"));
     expect(await within(dialog).findByText("Installed")).toBeInTheDocument();
   });
 });
@@ -1713,16 +1704,12 @@ describe("failed install affordances", () => {
     // git 来源插件的 prepare 拦截：pnpm 11+ 打印的精确键原样进审批载荷
     // （自定义安装的主战场正是目录之外的 GitHub 仓库）
     const gitKey = "dsh-repo@git+https://github.com/owner/repo.git#abc123";
-    vi.spyOn(cmd, "marketInstall").mockResolvedValue({
-      status: "needsApproval",
-      packages: [gitKey],
-      workspaceYaml: "/home/u/.dsh/profiles/web/pnpm-workspace.yaml",
-    });
-    const approveSpy = vi.spyOn(cmd, "marketApproveBuilds").mockResolvedValue({
-      status: "installed",
-      receipt: { name: "dsh-repo", spec: "github:owner/repo" },
-      notices: [],
-    });
+    // 同一条命令：不带放行名单 → 被拦转审批；带着放行名单 → 装成
+    vi.spyOn(cmd, "marketInstall").mockImplementation(async (_surface, _specifier, approved) =>
+      approved
+        ? { status: "installed", receipt: { name: "dsh-repo", spec: "github:owner/repo" }, notices: [] }
+        : { status: "needsApproval", packages: [gitKey], workspaceYaml: "/home/u/.dsh/profiles/web/pnpm-workspace.yaml" },
+    );
     const user = userEvent.setup();
     render(createElement(MarketView));
     await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
@@ -1731,7 +1718,7 @@ describe("failed install affordances", () => {
     const customDialog = document.getElementById("custom-install-dialog")!;
     await user.type(screen.getByPlaceholderText("e.g. github:owner/repo or pkg@1.2.3"), "owner/repo");
     await user.click(within(customDialog).getByRole("button", { name: "Install" }));
-    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("github:owner/repo"));
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("web", "github:owner/repo"));
 
     // 被拦转审批：approval 态不是终态——对话框不能谎报 done/failed，且 busy
     // 中 Close 禁撤；审批框列出待写 allowBuilds 的完整 git 键
@@ -1749,7 +1736,7 @@ describe("failed install affordances", () => {
     // 放行：写 allowBuilds（packages 原样回传，git 键不剥）并重跑安装，
     // 成功后对话框落 done（回执 toast 与目录安装同一形态）
     await user.click(within(approvalDialog).getByRole("button", { name: "Approve & install" }));
-    await waitFor(() => expect(approveSpy).toHaveBeenCalledWith("github:owner/repo", [gitKey]));
+    await waitFor(() => expect(cmd.marketInstall).toHaveBeenCalledWith("web", "github:owner/repo", [gitKey]));
     expect(await within(customDialog).findByText("Installed")).toBeInTheDocument();
     expect(within(customDialog).getByText("github:owner/repo")).toBeInTheDocument();
     expect(useAppStore.getState().marketPendingApproval).toBeNull();
@@ -1784,7 +1771,7 @@ describe("failed install affordances", () => {
     // 回输入态（可改地址重装或直接关闭），不当失败也不当成功
     await user.click(within(approvalDialog).getByRole("button", { name: "Keep scripts blocked" }));
     expect(useAppStore.getState().marketPendingApproval).toBeNull();
-    expect(cmd.marketApproveBuilds).not.toHaveBeenCalled();
+    expect(approvalCalls()).toHaveLength(0);
     expect(
       useAppStore.getState().toasts.some((t) => t.type === "info" && t.message.includes("pnpm approve-builds")),
     ).toBe(true);
@@ -1987,7 +1974,7 @@ describe("release notes dialog (G5)", () => {
     expect(installSpy).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Update" }));
     await waitFor(() =>
-      expect(installSpy).toHaveBeenCalledWith("github:sperictao/dsh-auto-review-jev"),
+      expect(installSpy).toHaveBeenCalledWith("web", "github:sperictao/dsh-auto-review-jev"),
     );
   });
 
@@ -2030,7 +2017,7 @@ describe("release notes dialog (G5)", () => {
     expect(dialog.textContent).toContain("feat: x");
     expect(installSpy).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Update" }));
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@latest"));
   });
 
   it("uncovered plugins show an honest no-notes state and still update", async () => {
@@ -2063,7 +2050,7 @@ describe("release notes dialog (G5)", () => {
     await user.click(await screen.findByRole("button", { name: "Update dsh-better-sidebar" }));
     expect(await screen.findByText("No release notes for this plugin.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Update" }));
-    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-better-sidebar@latest"));
+    await waitFor(() => expect(installSpy).toHaveBeenCalledWith("web", "dsh-better-sidebar@latest"));
   });
 });
 
@@ -2151,10 +2138,8 @@ describe("market fetches follow the managed surfaces", () => {
   const spyRefreshes = () => {
     const spies = {
       refreshMarketCatalog: vi.fn(),
-      refreshMarketInstalled: vi.fn(),
+      refreshMarketInstalled: vi.fn(async () => {}),
       refreshMarketUpdates: vi.fn(),
-      refreshMarketDesktopInstalled: vi.fn(async () => {}),
-      refreshMarketDesktopUpdates: vi.fn(),
     };
     useAppStore.setState(spies);
     return spies;
@@ -2173,13 +2158,13 @@ describe("market fetches follow the managed surfaces", () => {
     render(createElement(MarketView));
     await waitFor(() => expect(document.getElementById("market-tab-desktop")).not.toBeNull());
 
-    // 这两条读 web profile 的落盘状态、并按包发 HTTP 查询——未纳管 web 时一次都不该跑。
-    // 目录两档共用（桌面档同样从目录装插件），照拉
-    expect(spies.refreshMarketInstalled).not.toHaveBeenCalled();
-    expect(spies.refreshMarketUpdates).not.toHaveBeenCalled();
+    // web 档的已装与更新检测读它的落盘状态、并按包发 HTTP 查询——未纳管 web 时一次都不该
+    // 跑。目录两档共用（桌面档同样从目录装插件），照拉
+    await waitFor(() => expect(spies.refreshMarketUpdates).toHaveBeenCalledWith("desktop"));
+    expect(spies.refreshMarketInstalled).toHaveBeenCalledWith("desktop");
+    expect(spies.refreshMarketInstalled).not.toHaveBeenCalledWith("web");
+    expect(spies.refreshMarketUpdates).not.toHaveBeenCalledWith("web");
     expect(spies.refreshMarketCatalog).toHaveBeenCalled();
-    await waitFor(() => expect(spies.refreshMarketDesktopUpdates).toHaveBeenCalled());
-    expect(spies.refreshMarketDesktopInstalled).toHaveBeenCalled();
   });
 
   it("fetches them once web is managed, and leaves the desktop app alone", () => {
@@ -2188,10 +2173,10 @@ describe("market fetches follow the managed surfaces", () => {
     render(createElement(MarketView));
 
     expect(spies.refreshMarketCatalog).toHaveBeenCalled();
-    expect(spies.refreshMarketInstalled).toHaveBeenCalled();
-    expect(spies.refreshMarketUpdates).toHaveBeenCalled();
+    expect(spies.refreshMarketInstalled).toHaveBeenCalledWith("web");
+    expect(spies.refreshMarketUpdates).toHaveBeenCalledWith("web");
     // 未纳管的形态不被触碰：桥接一次都不问
-    expect(spies.refreshMarketDesktopInstalled).not.toHaveBeenCalled();
-    expect(spies.refreshMarketDesktopUpdates).not.toHaveBeenCalled();
+    expect(spies.refreshMarketInstalled).not.toHaveBeenCalledWith("desktop");
+    expect(spies.refreshMarketUpdates).not.toHaveBeenCalledWith("desktop");
   });
 });

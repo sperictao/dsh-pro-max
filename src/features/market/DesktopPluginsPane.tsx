@@ -9,38 +9,29 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
+import { notifyChange } from "@/shared/store/slices/market";
 import { renderMessage } from "@/shared/i18n/error";
 import * as cmd from "@/shared/commands";
 import { BTN_OUTLINE, MUTED, PANEL, TEXTAREA, TOGGLE } from "@/shared/lib/ui";
-import type { BridgeStatus, ChangeOutcome, ConfigRow, DesktopPlugins, DesktopStatus } from "@/shared/types";
+import type { ChangeApplication, ConfigRow, DesktopPlugins } from "@/shared/types";
 import { BridgeNotice } from "@/features/integration/BridgeNotice";
 
 export function DesktopPluginsPane() {
   const { t } = useTranslation();
   const toast = useAppStore((s) => s.toast);
-  const [desktop, setDesktop] = useState<DesktopStatus | null>(null);
-  const [bridge, setBridge] = useState<BridgeStatus | null>(null);
+  // 应用与桥接的状态全应用一份（desktop 切片），这里只读、需要时刷新
+  const desktop = useAppStore((s) => s.desktopStatus);
+  const bridge = useAppStore((s) => s.desktopBridge);
+  const checked = useAppStore((s) => s.desktopChecked);
+  const refreshDesktop = useAppStore((s) => s.refreshDesktop);
   const [plugins, setPlugins] = useState<DesktopPlugins | null>(null);
   const [config, setConfig] = useState<ConfigRow[] | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    try {
-      setDesktop(await cmd.desktopDetect());
-    } catch (e) {
-      // 应用本身探测不了就没有可判断的前提，说明原因后到此为止
-      toast(renderMessage(e), "error");
-      return;
-    }
-    // 桥接探测失败不该牵连上面那一项：它是这个 tab 的下半段，不是全部
-    let nextBridge: BridgeStatus | null = null;
-    try {
-      nextBridge = await cmd.desktopBridgeStatus();
-    } catch {
-      // 静默：下面的内容本就因桥接不可用而不显示
-    }
-    setBridge(nextBridge);
-    if (nextBridge?.state !== "connected") {
+    await refreshDesktop();
+    // 桥接没连上时下面的内容本就不显示：不去拉，也不留上一次的旧列表
+    if (useAppStore.getState().desktopBridge?.state !== "connected") {
       setPlugins(null);
       setConfig(null);
       return;
@@ -52,32 +43,22 @@ export function DesktopPluginsPane() {
     } catch (e) {
       toast(renderMessage(e), "error");
     }
-  }, [toast]);
+  }, [refreshDesktop, toast]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  /// 管理动作的统一外壳：busy 守卫、失败去向、成功后重拉。
-  /// `null` 表示这个动作没有变更结果可看（配置写入走的是桥接的 /config/edit，返回的不是
-  /// ChangeResult）——那种情况下成功即成功，不给它现编一份假的 ChangeOutcome。
-  /// 有结果时按 application 各给一句去向：上游把管理失败折叠进返回值而不是抛出，
-  /// 所以判断成败看 application，不是「没抛就算成功」。
+  /// 管理动作的统一外壳：busy 守卫、去向、成功后重拉。去向与市场同一个说法（notifyChange）：
+  /// 上游把管理失败折叠进返回值，Rust 侧已把它解读成 Err 或去向，这里不再自己判
   const run = useCallback(
-    async (action: () => Promise<ChangeOutcome | null>) => {
+    async (action: () => Promise<ChangeApplication>) => {
       setBusy(true);
       try {
-        const outcome = await action();
-        if (outcome === null) {
-          toast(t("Applied"), "info");
-          await load();
-          return;
-        }
-        if (outcome.application === "applied") toast(t("Applied"), "info");
-        else if (outcome.application === "restart-required") toast(t("Restart DeepSeek Harness to apply this change."), "info");
-        else if (outcome.application === "overridden") toast(t("A higher-priority layer overrides this change; it is not in effect."), "error");
-        else if (outcome.application === "cancelled") toast(t("The change was cancelled."), "error");
-        else toast(t("The change failed: {{reason}}", { reason: outcome.errorDiagnostic ?? outcome.errorCode ?? "" }), "error");
+        notifyChange(toast, await action(), {
+          applied: t("Applied"),
+          restartRequired: t("Restart DeepSeek Harness to apply this change."),
+        });
         await load();
       } catch (e) {
         toast(renderMessage(e), "error");
@@ -88,16 +69,13 @@ export function DesktopPluginsPane() {
     [load, t, toast],
   );
 
-  const copyAddress = async (address: string) => {
-    try {
-      await navigator.clipboard.writeText(address);
-      toast(t("Address copied"), "info");
-    } catch (e) {
-      toast(t("Failed to copy: {{error}}", { error: String(e) }), "error");
-    }
-  };
-
-  if (!desktop) return <p className={`${MUTED} p-4`}>{t("Checking...")}</p>;
+  if (!desktop) {
+    return (
+      <p className={`${MUTED} p-4`}>
+        {checked ? t("Could not reach DeepSeek Harness. Open it, then check again.") : t("Checking...")}
+      </p>
+    );
+  }
 
   if (!desktop.installed) {
     return <p className={`${MUTED} p-4`}>{t("DeepSeek Harness is not installed. Install it from the official channel; this app only detects and manages it.")}</p>;
@@ -105,7 +83,7 @@ export function DesktopPluginsPane() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4" id="desktop-plugins-pane">
-      {bridge && <BridgeNotice bridge={bridge} onCopy={copyAddress} />}
+      {bridge && <BridgeNotice bridge={bridge} />}
 
       {bridge?.state === "connected" && (
         <>
@@ -144,34 +122,33 @@ export function DesktopPluginsPane() {
             <h3 className="text-sm font-medium">{t("Built-in bundles")}</h3>
             <p className={MUTED}>{t("Plugins you installed are managed on the Installed tab, side by side with the web profile.")}</p>
             <div className={`${PANEL} divide-y divide-border`}>
-              {plugins?.bundles
-                .filter((row) => !row.removable)
-                .map((row) => (
-                  <div key={row.name} className="flex items-center justify-between gap-3 p-3">
-                    <span className="flex min-w-0 flex-col gap-0.5">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="truncate font-mono text-xs">{row.name}</span>
-                        {row.version && <span className="shrink-0 font-mono text-xs opacity-70">{row.version}</span>}
-                      </span>
-                      {row.description && <span className={MUTED}>{row.description}</span>}
+              {plugins?.bundles.map((row) => (
+                <div key={row.name} className="flex items-center justify-between gap-3 p-3">
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-mono text-xs">{row.name}</span>
+                      {row.version && <span className="shrink-0 font-mono text-xs opacity-70">{row.version}</span>}
                     </span>
-                    <input
-                      type="checkbox"
-                      className={TOGGLE}
-                      checked={row.enabled}
-                      disabled={busy || row.readOnlyReason !== null}
-                      aria-label={row.name}
-                      onChange={(e) => void run(() => cmd.desktopBridgeSetEnabled({ bundleName: row.name }, e.target.checked))}
-                    />
-                  </div>
-                ))}
+                    {row.description && <span className={MUTED}>{row.description}</span>}
+                  </span>
+                  <input
+                    type="checkbox"
+                    className={TOGGLE}
+                    checked={row.enabled}
+                    disabled={busy || row.readOnlyReason !== null}
+                    aria-label={row.name}
+                    onChange={(e) => void run(() => cmd.desktopBridgeSetEnabled({ bundleName: row.name }, e.target.checked))}
+                  />
+                </div>
+              ))}
             </div>
           </section>
 
           <section className="flex flex-col gap-2">
             <h3 className="text-sm font-medium">{t("Profile configuration")}</h3>
             <p className={MUTED}>
-              {t("Each row is one plugin's configuration in this profile, as the desktop app stores it. Edit the JSON and save to write the whole row back.")}
+              {t("Each row is one plugin's configuration in this profile, as the desktop app stores it. Edit the JSON and save to write the whole row back.")}{" "}
+              {t("The default model and AI providers are edited on the Models page.")}
             </p>
             {config?.map((row) => (
               <ConfigRowEditor key={row.id} row={row} busy={busy} onSave={run} />
@@ -186,7 +163,7 @@ export function DesktopPluginsPane() {
 }
 
 /// 一行配置的原文编辑。整份替换而不是合并：上游的 edit 收到的就是下一份原始 config，
-/// 它自己负责在落盘时保住文件其余部分
+/// 它自己负责在落盘时保住文件其余部分，并当场经 Loader 重新协调（所以成功即 applied）
 function ConfigRowEditor({
   row,
   busy,
@@ -194,7 +171,7 @@ function ConfigRowEditor({
 }: {
   row: ConfigRow;
   busy: boolean;
-  onSave: (action: () => Promise<ChangeOutcome | null>) => Promise<void>;
+  onSave: (action: () => Promise<ChangeApplication>) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const toast = useAppStore((s) => s.toast);
@@ -211,10 +188,9 @@ function ConfigRowEditor({
       toast(t("Not valid JSON: {{error}}", { error: String(e) }), "error");
       return;
     }
-    // null：这条路由没有 ChangeResult 可看，调用方按「成功即成功」处理
     await onSave(async () => {
       await cmd.desktopBridgeConfigEdit(row.id, parsed);
-      return null;
+      return "applied";
     });
   };
 

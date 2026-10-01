@@ -1,5 +1,6 @@
 //! 桌面档的插件市场操作（ADR 0012）：与 web 档共用安装策略、审计台账与更新检测核，
-//! 写入只经桥接、走桌面应用自己的 Plugin Manager（ADR 0011）。
+//! 写入只经桥接、走桌面应用自己的 Plugin Manager（ADR 0011）。IPC 入口与 web 档是同一
+//! 套命令（market.rs 按形态分派到这里），本模块只放 desktop 档的实现。
 //!
 //! 与 web 档的差别都来自「这是应用自己的 profile」：
 //! - web 档安装护栏里的 `--dump-config` 组合预检对桌面档物理不可执行（CLI 按名字拒绝
@@ -13,9 +14,10 @@ use serde::Serialize;
 use super::bridge::{self, BundleRow, ChangeOutcome, BRIDGE_PACKAGE};
 use super::market::{
     audit_line, check_updates_with, enforce_install_policy, package_name_from_specifier,
-    valid_allow_key, valid_identifier, write_audit, InstallNotice, InstallOutcome, InstallReceipt,
-    PluginUpdateInfo, UpdateCandidate,
+    write_audit, InstallNotice, InstallOutcome, InstallReceipt, PluginUpdateInfo,
+    UpdateCandidate,
 };
+use super::ChangeApplication;
 use crate::config::DshSurface;
 use crate::i18n::Message;
 
@@ -33,20 +35,6 @@ pub struct DesktopInstalledPlugin {
     pub enabled: bool,
     /// 桥接插件本身：显示，但不给移除与停用——停了它本应用就失去通往桌面档的通道
     pub managed: bool,
-}
-
-/// 一次变更被应用接受后的结果。失败不在这里：它转成 Err，原因是上游的诊断
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
-#[serde(rename_all = "kebab-case")]
-#[ts(export, export_to = "../../src/shared/bindings/")]
-pub enum DesktopApplication {
-    Applied,
-    /// 重启桌面应用后生效。只就近提示，不提供重启入口（CONTEXT.md）
-    RestartRequired,
-    /// 落盘了，但被更高优先级的层盖住、没有生效
-    Overridden,
-    /// 应用自己取消了这次变更（例如用户在应用里点了取消）
-    Cancelled,
 }
 
 pub(crate) fn installed_from(bundles: Vec<BundleRow>) -> Vec<DesktopInstalledPlugin> {
@@ -69,34 +57,12 @@ fn dsh_version_from(bundles: &[BundleRow]) -> Option<String> {
         .and_then(|row| row.version.clone())
 }
 
-/// 上游 ChangeResult.application → 结果。上游把管理失败折叠进返回值而不是抛出，所以
-/// 成败看 application；认不出的值按失败处理（不把没见过的状态说成成功）
-pub(crate) fn application_of(outcome: &ChangeOutcome) -> Result<DesktopApplication, Message> {
-    match outcome.application.as_str() {
-        "applied" => Ok(DesktopApplication::Applied),
-        "restart-required" => Ok(DesktopApplication::RestartRequired),
-        "overridden" => Ok(DesktopApplication::Overridden),
-        "cancelled" => Ok(DesktopApplication::Cancelled),
-        other => {
-            let reason = outcome
-                .error_diagnostic
-                .clone()
-                .or_else(|| outcome.error_code.clone())
-                .unwrap_or_else(|| other.to_string());
-            Err(Message::localized(
-                "DeepSeek Harness could not apply this change: {{reason}}",
-                &[("reason", reason)],
-            ))
-        }
-    }
-}
-
 /// 结果附带的提示：生效即无话可说，其余两种各给一句去向
-fn notices_of(application: DesktopApplication) -> Vec<InstallNotice> {
+fn notices_of(application: ChangeApplication) -> Vec<InstallNotice> {
     match application {
-        DesktopApplication::RestartRequired => vec![InstallNotice::DesktopRestartRequired],
-        DesktopApplication::Overridden => vec![InstallNotice::DesktopOverridden],
-        DesktopApplication::Applied | DesktopApplication::Cancelled => Vec::new(),
+        ChangeApplication::RestartRequired => vec![InstallNotice::DesktopRestartRequired],
+        ChangeApplication::Overridden => vec![InstallNotice::DesktopOverridden],
+        ChangeApplication::Applied | ChangeApplication::Cancelled | ChangeApplication::Unchanged => Vec::new(),
     }
 }
 
@@ -127,19 +93,13 @@ fn audit(app: &tauri::AppHandle, dsh: Option<String>, action: &str, identifier: 
     write_audit(app, &audit_line(DshSurface::Desktop, action, identifier, dsh, error));
 }
 
-fn install_once(
+/// 装进桌面档。approved 有值即放行这批构建脚本后的重装（与 web 档同一审批流程：列出
+/// 包名 → 用户放行 → 带着它再调一次）。入参校验在命令入口（market_install）
+pub(crate) fn install_once(
     app: &tauri::AppHandle,
     specifier: &str,
     approved: Option<Vec<String>>,
 ) -> Result<InstallOutcome, Message> {
-    if !valid_identifier(specifier) {
-        return Err(Message::key("Invalid plugin identifier"));
-    }
-    if let Some(keys) = &approved {
-        if keys.is_empty() || keys.iter().any(|k| !valid_allow_key(k)) {
-            return Err(Message::key("Invalid plugin identifier"));
-        }
-    }
     // 先读一次：桥接不在就没有可装的地方；读到的列表同时是回执的 before 与台账的版本
     let bundles = bridge::plugins_once()?.bundles;
     let dsh = dsh_version_from(&bundles);
@@ -166,8 +126,8 @@ fn install_once(
             workspace_yaml: None,
         });
     }
-    let application = match application_of(&outcome) {
-        Ok(DesktopApplication::Cancelled) => {
+    let application = match outcome.application() {
+        Ok(ChangeApplication::Cancelled) => {
             audit(app, dsh, "add", specifier, Some("cancelled by the desktop app"));
             return Err(Message::key("DeepSeek Harness cancelled the install."));
         }
@@ -187,17 +147,14 @@ fn install_once(
     })
 }
 
-/// 移除与启停的共同前提：目标是用户装的、非受管的 bundle
+/// 移除与启停的共同前提：目标是用户装的、非受管的 bundle。入参校验在命令入口
 fn change_user_bundle(
     app: &tauri::AppHandle,
     name: &str,
     action: &str,
     identifier: &str,
     change: impl FnOnce() -> Result<ChangeOutcome, Message>,
-) -> Result<DesktopApplication, Message> {
-    if !valid_identifier(name) {
-        return Err(Message::key("Invalid plugin identifier"));
-    }
+) -> Result<ChangeApplication, Message> {
     let bundles = bridge::plugins_once()?.bundles;
     let dsh = dsh_version_from(&bundles);
     match installed_from(bundles).into_iter().find(|p| p.name == name) {
@@ -211,16 +168,29 @@ fn change_user_bundle(
         }
         Some(_) => {}
     }
-    let result = change().and_then(|outcome| application_of(&outcome));
+    let result = change().and_then(|outcome| outcome.application());
     match &result {
-        Ok(DesktopApplication::Cancelled) => audit(app, dsh, action, identifier, Some("cancelled by the desktop app")),
+        Ok(ChangeApplication::Cancelled) => audit(app, dsh, action, identifier, Some("cancelled by the desktop app")),
         Ok(_) => audit(app, dsh, action, identifier, None),
         Err(e) => audit(app, dsh, action, identifier, Some(&e.to_english())),
     }
     result
 }
 
-fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, Message> {
+pub(crate) fn remove_once(app: &tauri::AppHandle, name: &str) -> Result<ChangeApplication, Message> {
+    change_user_bundle(app, name, "remove", name, || bridge::remove(name))
+}
+
+pub(crate) fn set_enabled_once(
+    app: &tauri::AppHandle,
+    name: &str,
+    enabled: bool,
+) -> Result<ChangeApplication, Message> {
+    let identifier = format!("{name} enabled={enabled}");
+    change_user_bundle(app, name, "set-enabled", &identifier, || bridge::set_bundle_enabled(name, enabled))
+}
+
+pub(crate) fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, Message> {
     let bundles = bridge::plugins_once()?.bundles;
     let dsh = dsh_version_from(&bundles);
     let candidates = installed_from(bundles)
@@ -248,45 +218,6 @@ pub async fn market_desktop_installed() -> Result<Vec<DesktopInstalledPlugin>, M
     super::ipc_blocking(|| Ok(installed_from(bridge::plugins_once()?.bundles))).await
 }
 
-/// 装进桌面档。approved_builds 有值即放行这批构建脚本后的重装（与 web 档的审批对话框
-/// 同一流程：列出包名 → 用户放行 → 带着它再调一次）
-#[tauri::command]
-pub async fn market_desktop_install(
-    app: tauri::AppHandle,
-    specifier: String,
-    approved_builds: Option<Vec<String>>,
-) -> Result<InstallOutcome, Message> {
-    super::ipc_blocking(move || install_once(&app, &specifier, approved_builds)).await
-}
-
-#[tauri::command]
-pub async fn market_desktop_remove(app: tauri::AppHandle, name: String) -> Result<DesktopApplication, Message> {
-    super::ipc_blocking(move || {
-        change_user_bundle(&app, &name, "remove", &name, || bridge::remove(&name))
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn market_desktop_set_enabled(
-    app: tauri::AppHandle,
-    name: String,
-    enabled: bool,
-) -> Result<DesktopApplication, Message> {
-    super::ipc_blocking(move || {
-        let identifier = format!("{name} enabled={enabled}");
-        change_user_bundle(&app, &name, "set-enabled", &identifier, || {
-            bridge::set_bundle_enabled(&name, enabled)
-        })
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn market_desktop_check_updates() -> Result<Vec<PluginUpdateInfo>, Message> {
-    super::ipc_blocking(check_updates_once).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,15 +230,6 @@ mod tests {
             enabled: true,
             removable,
             read_only_reason: None,
-        }
-    }
-
-    fn change(application: &str) -> ChangeOutcome {
-        ChangeOutcome {
-            application: application.to_string(),
-            error_code: None,
-            error_diagnostic: None,
-            pending_builds: Vec::new(),
         }
     }
 
@@ -333,32 +255,15 @@ mod tests {
         assert_eq!(dsh_version_from(&[]), None);
     }
 
-    /// 失败带上游的诊断出去；没见过的 application 不被说成成功
-    #[test]
-    fn maps_every_upstream_application() {
-        assert_eq!(application_of(&change("applied")).unwrap(), DesktopApplication::Applied);
-        assert_eq!(application_of(&change("restart-required")).unwrap(), DesktopApplication::RestartRequired);
-        assert_eq!(application_of(&change("overridden")).unwrap(), DesktopApplication::Overridden);
-        assert_eq!(application_of(&change("cancelled")).unwrap(), DesktopApplication::Cancelled);
-
-        let mut failed = change("failed");
-        failed.error_code = Some("E_PNPM".into());
-        failed.error_diagnostic = Some("registry unreachable".into());
-        let err = application_of(&failed).unwrap_err().to_english();
-        assert!(err.contains("registry unreachable"), "{err}");
-
-        assert!(application_of(&change("something-new")).is_err());
-    }
-
     #[test]
     fn notices_tell_where_a_change_went() {
-        assert!(notices_of(DesktopApplication::Applied).is_empty());
+        assert!(notices_of(ChangeApplication::Applied).is_empty());
         assert!(matches!(
-            notices_of(DesktopApplication::RestartRequired).as_slice(),
+            notices_of(ChangeApplication::RestartRequired).as_slice(),
             [InstallNotice::DesktopRestartRequired]
         ));
         assert!(matches!(
-            notices_of(DesktopApplication::Overridden).as_slice(),
+            notices_of(ChangeApplication::Overridden).as_slice(),
             [InstallNotice::DesktopOverridden]
         ));
     }
@@ -390,7 +295,7 @@ mod tests {
         let installed = bridge::install(PROBE_SPEC, None).unwrap();
         println!("install: {:?}", installed.application);
         assert!(installed.pending_builds.is_empty());
-        let application = application_of(&installed).unwrap();
+        let application = installed.application().unwrap();
         let after = installed_from(bridge::plugins_once().unwrap().bundles);
         let receipt = desktop_receipt(PROBE_SPEC, &before, &after).expect("回执");
         println!("receipt: {} {} ({application:?})", receipt.name, receipt.spec);
@@ -404,13 +309,13 @@ mod tests {
         assert!(updates.iter().all(|u| u.name != BRIDGE_PACKAGE || u.managed));
 
         for enabled in [false, true] {
-            let outcome = application_of(&bridge::set_bundle_enabled(PROBE, enabled).unwrap()).unwrap();
+            let outcome = bridge::set_bundle_enabled(PROBE, enabled).unwrap().application().unwrap();
             let now = installed_from(bridge::plugins_once().unwrap().bundles);
             let row = now.iter().find(|p| p.name == PROBE).unwrap();
             println!("enabled={enabled}: {outcome:?}");
             assert_eq!(row.enabled, enabled);
         }
-        let removed = application_of(&bridge::remove(PROBE).unwrap()).unwrap();
+        let removed = bridge::remove(PROBE).unwrap().application().unwrap();
         println!("remove: {removed:?}");
         let gone = installed_from(bridge::plugins_once().unwrap().bundles);
         assert!(gone.iter().all(|p| p.name != PROBE));

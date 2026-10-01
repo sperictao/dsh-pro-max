@@ -96,7 +96,6 @@ reexport_commands! {
     market::market_installed,
     market::market_snapshot,
     market::market_install,
-    market::market_approve_builds,
     market::market_remove,
     market::market_check_updates,
     market::market_prefetch,
@@ -106,10 +105,6 @@ reexport_commands! {
     market::market_release_notes,
     market::market_diagnostics,
     market_desktop::market_desktop_installed,
-    market_desktop::market_desktop_install,
-    market_desktop::market_desktop_remove,
-    market_desktop::market_desktop_set_enabled,
-    market_desktop::market_desktop_check_updates,
     models::model_config_load,
     models::model_config_save,
     models::model_catalog_load,
@@ -117,6 +112,26 @@ reexport_commands! {
     models::model_remote_list,
     model_import::model_config_import_scan,
     model_import::model_config_import_run,
+}
+
+// ============ 共享 IPC 结构 ============
+
+/// 一次插件变更被接受后的去向，两档同一套说法（失败不在这里：它是 Err）。web 档的启停
+/// 写补丁层、重启 dsh web 后生效，正是 RestartRequired；内容没变的重复启停是 Unchanged。
+/// desktop 档按桌面应用回报的结果给
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export, export_to = "../../src/shared/bindings/")]
+pub enum ChangeApplication {
+    Applied,
+    /// 重启该形态后生效。desktop 档只就近提示、不提供重启入口（CONTEXT.md）
+    RestartRequired,
+    /// 落盘了，但被更高优先级的层盖住、没有生效
+    Overridden,
+    /// 桌面应用自己取消了这次变更（例如用户在应用里点了取消）
+    Cancelled,
+    /// 已经是那个状态，什么都没写
+    Unchanged,
 }
 
 // ============ 共享常量 ============

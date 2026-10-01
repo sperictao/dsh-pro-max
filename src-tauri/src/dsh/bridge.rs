@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::DESKTOP_PORT;
+use super::{ChangeApplication, DESKTOP_PORT};
 use crate::i18n::Message;
 
 /// 桥接插件注册的路由前缀（`/api` 之外，不参与连接插件的 capability 裁决）
@@ -132,11 +132,10 @@ pub struct DesktopPlugins {
     pub bundles: Vec<BundleRow>,
 }
 
-/// 一次管理操作的结果。上游把管理失败**折叠进返回值**而不是抛出，所以判断成败看
+/// 一次管理操作的上游结果（线上形状，只在本侧解读，不过 IPC——过 IPC 的是解读后的
+/// ChangeApplication）。上游把管理失败**折叠进返回值**而不是抛出，所以判断成败看
 /// `application`，不是 HTTP 状态码也不是有没有 Err
-#[derive(Debug, Clone, Serialize, ts_rs::TS)]
-#[serde(rename_all = "camelCase")]
-#[ts(export, export_to = "../../src/shared/bindings/")]
+#[derive(Debug, Clone)]
 pub struct ChangeOutcome {
     /// applied / restart-required / overridden / failed / cancelled
     pub application: String,
@@ -145,6 +144,30 @@ pub struct ChangeOutcome {
     pub error_diagnostic: Option<String>,
     /// 需要用户显式放行的构建脚本；非空时这次安装没完成，要拿它原样再调一次
     pub pending_builds: Vec<String>,
+}
+
+impl ChangeOutcome {
+    /// 上游 application → 去向。认不出的值按失败处理（不把没见过的状态说成成功），失败
+    /// 带上游的诊断出去
+    pub(crate) fn application(&self) -> Result<ChangeApplication, Message> {
+        match self.application.as_str() {
+            "applied" => Ok(ChangeApplication::Applied),
+            "restart-required" => Ok(ChangeApplication::RestartRequired),
+            "overridden" => Ok(ChangeApplication::Overridden),
+            "cancelled" => Ok(ChangeApplication::Cancelled),
+            other => {
+                let reason = self
+                    .error_diagnostic
+                    .clone()
+                    .or_else(|| self.error_code.clone())
+                    .unwrap_or_else(|| other.to_string());
+                Err(Message::localized(
+                    "DeepSeek Harness could not apply this change: {{reason}}",
+                    &[("reason", reason)],
+                ))
+            }
+        }
+    }
 }
 
 /// 活动 profile 里的一行配置
@@ -171,7 +194,7 @@ pub struct ConfigRow {
 
 #[tauri::command]
 pub async fn desktop_bridge_plugins() -> Result<DesktopPlugins, Message> {
-    super::ipc_blocking(plugins_once).await
+    super::ipc_blocking(|| Ok(builtin_only(required("/plugins")?))).await
 }
 
 /// 经应用自己的 Plugin Manager 安装一个包。调用方是市场域（策略、审计、回执都在那边，
@@ -201,13 +224,23 @@ pub async fn desktop_bridge_set_enabled(
     plugin_id: Option<String>,
     bundle_name: Option<String>,
     enabled: bool,
-) -> Result<ChangeOutcome, Message> {
-    super::ipc_blocking(move || change_once("/plugins/enable", enable_body(plugin_id, bundle_name, enabled)?)).await
+) -> Result<ChangeApplication, Message> {
+    super::ipc_blocking(move || {
+        change_once("/plugins/enable", enable_body(plugin_id, bundle_name, enabled)?)?.application()
+    })
+    .await
 }
 
+/// 桌面 tab 原始配置编辑的行：模型域的行除外——它们由模型页编辑，同一行不留第二个入口
 #[tauri::command]
 pub async fn desktop_bridge_config() -> Result<Vec<ConfigRow>, Message> {
-    super::ipc_blocking(config_rows).await
+    super::ipc_blocking(|| {
+        Ok(config_rows()?
+            .into_iter()
+            .filter(|row| !super::models::owns_config_row(&row.id))
+            .collect())
+    })
+    .await
 }
 
 /// 写入一行的绝对 config。整份替换（不是合并）：上游的 edit 收到的就是下一份原始 config
@@ -239,8 +272,27 @@ fn enable_body(
 }
 
 pub(crate) fn plugins_once() -> Result<DesktopPlugins, Message> {
-    let raw: UpstreamPlugins = required("/plugins")?;
-    Ok(DesktopPlugins {
+    Ok(desktop_plugins(required("/plugins")?))
+}
+
+/// 桌面 tab 只管 web 档没有对应物的那部分：内置 bundle 及其插件行。用户装的 bundle 连同
+/// 它们带来的插件行归市场（ADR 0012）——在这里再给一份开关就是第二个修改入口，还会让
+/// 桥接插件自己的那一行可以被关掉（市场把它当受管插件不给停用，关了它本应用就失去通道）
+fn builtin_only(raw: UpstreamPlugins) -> DesktopPlugins {
+    let user_entries: Vec<String> = raw
+        .bundles
+        .iter()
+        .filter(|bundle| bundle.removable)
+        .flat_map(|bundle| bundle.rows.iter().filter_map(|row| row.entry_id.clone()))
+        .collect();
+    desktop_plugins(UpstreamPlugins {
+        plugins: raw.plugins.into_iter().filter(|row| !user_entries.contains(&row.entry_id)).collect(),
+        bundles: raw.bundles.into_iter().filter(|bundle| !bundle.removable).collect(),
+    })
+}
+
+fn desktop_plugins(raw: UpstreamPlugins) -> DesktopPlugins {
+    DesktopPlugins {
         plugins: raw
             .plugins
             .into_iter()
@@ -264,7 +316,7 @@ pub(crate) fn plugins_once() -> Result<DesktopPlugins, Message> {
                 read_only_reason: row.read_only_reason,
             })
             .collect(),
-    })
+    }
 }
 
 pub(crate) fn config_rows() -> Result<Vec<ConfigRow>, Message> {
@@ -331,6 +383,15 @@ struct UpstreamBundle {
     enabled: bool,
     removable: bool,
     read_only_reason: Option<String>,
+    /// 这个 bundle 带来的插件行（按 entryId 认领）；旧桥接不带时为空
+    #[serde(default)]
+    rows: Vec<UpstreamBundleRow>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpstreamBundleRow {
+    entry_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -638,6 +699,61 @@ mod tests {
         assert_eq!(rows[0].override_config, serde_json::json!({}));
         assert_eq!(rows[1].inherited, serde_json::json!({}));
         assert_eq!(rows[1].override_config, serde_json::json!({}));
+    }
+
+    fn change(application: &str) -> ChangeOutcome {
+        ChangeOutcome {
+            application: application.to_string(),
+            error_code: None,
+            error_diagnostic: None,
+            pending_builds: Vec::new(),
+        }
+    }
+
+    /// 失败带上游的诊断出去；没见过的 application 不被说成成功
+    #[test]
+    fn maps_every_upstream_application() {
+        assert_eq!(change("applied").application().unwrap(), ChangeApplication::Applied);
+        assert_eq!(change("restart-required").application().unwrap(), ChangeApplication::RestartRequired);
+        assert_eq!(change("overridden").application().unwrap(), ChangeApplication::Overridden);
+        assert_eq!(change("cancelled").application().unwrap(), ChangeApplication::Cancelled);
+
+        let mut failed = change("failed");
+        failed.error_code = Some("E_PNPM".into());
+        failed.error_diagnostic = Some("registry unreachable".into());
+        let err = failed.application().unwrap_err().to_english();
+        assert!(err.contains("registry unreachable"), "{err}");
+
+        assert!(change("something-new").application().is_err());
+    }
+
+    /// 桌面 tab 只给内置部分：用户 bundle 与它们带来的插件行（含桥接自己那一行）都不在，
+    /// 形状按真机 /plugins 的应答构造（bundle.rows 以 entryId 认领插件行）
+    #[test]
+    fn the_desktop_tab_lists_only_builtin_bundles_and_their_rows() {
+        let raw: UpstreamPlugins = serde_json::from_str(
+            r#"{
+                "plugins": [
+                    {"entryId": "include:ui-chat", "moduleName": "@deepseek-ai/dsh-client-ui-chat", "enabled": true, "patchId": "ui-chat"},
+                    {"entryId": "include:dsh-context", "moduleName": "dsh-context", "enabled": true, "patchId": "dsh-context"},
+                    {"entryId": "include:dsh-pro-max-bridge", "moduleName": "@sperictao/dsh-pro-max-bridge", "enabled": true, "patchId": "dsh-pro-max-bridge"}
+                ],
+                "bundles": [
+                    {"name": "@deepseek-ai/dsh-base", "enabled": true, "removable": false,
+                     "rows": [{"rowId": "ui-chat", "entryId": "include:ui-chat"}]},
+                    {"name": "dsh-context", "enabled": true, "removable": true,
+                     "rows": [{"rowId": "dsh-context", "entryId": "include:dsh-context"}]},
+                    {"name": "@sperictao/dsh-pro-max-bridge", "enabled": true, "removable": true,
+                     "rows": [{"rowId": "dsh-pro-max-bridge", "entryId": "include:dsh-pro-max-bridge"}]}
+                ]
+            }"#,
+        )
+        .unwrap();
+        let tab = builtin_only(raw);
+        let rows: Vec<&str> = tab.plugins.iter().map(|row| row.entry_id.as_str()).collect();
+        let bundles: Vec<&str> = tab.bundles.iter().map(|bundle| bundle.name.as_str()).collect();
+        assert_eq!(rows, vec!["include:ui-chat"]);
+        assert_eq!(bundles, vec!["@deepseek-ai/dsh-base"]);
     }
 
     #[test]

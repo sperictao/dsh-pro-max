@@ -219,8 +219,6 @@ function MarketViewInner() {
   const refreshCatalog = useAppStore((s) => s.refreshMarketCatalog);
   const refreshInstalled = useAppStore((s) => s.refreshMarketInstalled);
   const refreshUpdates = useAppStore((s) => s.refreshMarketUpdates);
-  const refreshDesktopInstalled = useAppStore((s) => s.refreshMarketDesktopInstalled);
-  const refreshDesktopUpdates = useAppStore((s) => s.refreshMarketDesktopUpdates);
   const { web: webManaged, desktop: desktopManaged } = useManagedSurfaces();
   const tabs = MARKET_TABS.filter(
     (item) => (item.desktopOnly !== true || desktopManaged) && (item.webOnly !== true || webManaged),
@@ -244,14 +242,14 @@ function MarketViewInner() {
   }, []);
   useEffect(() => {
     if (!webManaged) return;
-    void refreshInstalled();
-    void refreshUpdates();
+    void refreshInstalled("web");
+    void refreshUpdates("web");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webManaged]);
   useEffect(() => {
     if (!desktopManaged) return;
     // 更新检测排在已装之后：已装读不到（桥接没连上）时它也无从查起，store 侧静默跳过
-    void refreshDesktopInstalled().then(() => refreshDesktopUpdates());
+    void refreshInstalled("desktop").then(() => refreshUpdates("desktop"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [desktopManaged]);
 
@@ -299,7 +297,7 @@ function MarketViewInner() {
 /// desktop 档已装事实不可知时的原因与下一步（角标悬浮提示与已装页说明共用一个说法）
 function useDesktopUnknownReason(): string {
   const { t } = useTranslation();
-  const bridge = useAppStore((s) => s.marketDesktopBridge);
+  const bridge = useAppStore((s) => s.desktopBridge);
   return bridge?.state === "app_unavailable"
     ? t("Open DeepSeek Harness to see what is installed there.")
     : t("The bridge plugin is not connected. See the Desktop app tab for the next step.");
@@ -358,7 +356,6 @@ function BrowseCardGrid({ plugins, catalog }: { plugins: MarketPlugin[]; catalog
   const installed = useAppStore((s) => s.marketInstalled);
   const updates = useAppStore((s) => s.marketUpdates);
   const desktopInstalled = useAppStore((s) => s.marketDesktopInstalled);
-  const desktopUpdates = useAppStore((s) => s.marketDesktopUpdates);
   const installPlugin = useAppStore((s) => s.installMarketPlugin);
   const installing = useAppStore((s) => s.marketInstalling);
   const installLog = useAppStore((s) => s.marketInstallLog);
@@ -389,7 +386,7 @@ function BrowseCardGrid({ plugins, catalog }: { plugins: MarketPlugin[]; catalog
               : spec !== null
                 ? protocolInstalledMatch(spec, specifierToCatalogName(spec), installed)
                 : null;
-          rows.push(webRowData(webPlugin, webPlugin ? (updates?.[webPlugin.name] ?? null) : null));
+          rows.push(webRowData(webPlugin, webPlugin ? (updates.web?.[webPlugin.name] ?? null) : null));
         }
         if (desktopManaged) {
           const desktopPlugin =
@@ -398,7 +395,7 @@ function BrowseCardGrid({ plugins, catalog }: { plugins: MarketPlugin[]; catalog
             desktopRowData(
               desktopPlugin,
               desktopInstalled !== null,
-              desktopPlugin ? (desktopUpdates?.[desktopPlugin.name] ?? null) : null,
+              desktopPlugin ? (updates.desktop?.[desktopPlugin.name] ?? null) : null,
             ),
           );
         }
@@ -658,7 +655,7 @@ function FavoritesPane() {
 function InstalledPane() {
   const { t, i18n } = useTranslation();
   const locale = catalogLocale(i18n.language);
-  const { web: webManaged, desktop: desktopManaged } = useManagedSurfaces();
+  const { web: webManaged, desktop: desktopManaged, list: managedSurfaces } = useManagedSurfaces();
   const catalog = useAppStore((s) => s.marketCatalog);
   const installed = useAppStore((s) => s.marketInstalled);
   const installedBusy = useAppStore((s) => s.marketInstalledBusy);
@@ -667,11 +664,8 @@ function InstalledPane() {
   const removePlugin = useAppStore((s) => s.removeMarketPlugin);
   const updates = useAppStore((s) => s.marketUpdates);
   const updatesBusy = useAppStore((s) => s.marketUpdatesBusy);
-  const desktopUpdates = useAppStore((s) => s.marketDesktopUpdates);
-  const desktopUpdatesBusy = useAppStore((s) => s.marketDesktopUpdatesBusy);
+  const refreshInstalled = useAppStore((s) => s.refreshMarketInstalled);
   const refreshUpdates = useAppStore((s) => s.refreshMarketUpdates);
-  const refreshDesktopInstalled = useAppStore((s) => s.refreshMarketDesktopInstalled);
-  const refreshDesktopUpdates = useAppStore((s) => s.refreshMarketDesktopUpdates);
   const updatePlugin = useAppStore((s) => s.updateMarketPlugin);
   const updateAll = useAppStore((s) => s.updateAllMarketPlugins);
   const updateAllPrefetching = useAppStore((s) => s.marketUpdateAllPrefetching);
@@ -710,12 +704,12 @@ function InstalledPane() {
     // 兼容门禁判 false 的更新不进批量计数（单卡按钮已禁用，批量入口同样排除）。
     // 窗口内插件计在内：批量遇之弹知情确认框，确认后钉版本安装、继续下一个
     () =>
-      [...Object.values(updates ?? {}), ...Object.values(desktopUpdates ?? {})].filter(
+      [...Object.values(updates.web ?? {}), ...Object.values(updates.desktop ?? {})].filter(
         (u) => u.updateAvailable && !u.managed && u.compatible !== false,
       ).length,
-    [updates, desktopUpdates],
+    [updates],
   );
-  const checking = updatesBusy || desktopUpdatesBusy;
+  const checking = updatesBusy.web || updatesBusy.desktop;
 
   return (
     <div className="flex-1 overflow-y-auto p-6" id="market-installed">
@@ -729,8 +723,10 @@ function InstalledPane() {
             className={BTN_OUTLINE}
             disabled={checking}
             onClick={() => {
-              if (webManaged) void refreshUpdates();
-              if (desktopManaged) void refreshDesktopInstalled().then(() => refreshDesktopUpdates());
+              // 先重读已装再检测：desktop 档可能刚连上桥接，web 档顺带拿到最新落盘事实
+              for (const surface of managedSurfaces) {
+                void refreshInstalled(surface).then(() => refreshUpdates(surface));
+              }
             }}
             id="btn-updates-check"
           >
@@ -775,8 +771,8 @@ function InstalledPane() {
           const catalogPlugin = byName.get(name) ?? null;
           // 已装页只列装了的那几档：没装的那档在这里没有可做的事（装在发现页）
           const rows: SurfaceRowData[] = [];
-          if (entry.web) rows.push(webRowData(entry.web, updates?.[name] ?? null));
-          if (entry.desktop) rows.push(desktopRowData(entry.desktop, true, desktopUpdates?.[name] ?? null));
+          if (entry.web) rows.push(webRowData(entry.web, updates.web?.[name] ?? null));
+          if (entry.desktop) rows.push(desktopRowData(entry.desktop, true, updates.desktop?.[name] ?? null));
           return (
             <MarketCard
               key={name}
@@ -1682,9 +1678,7 @@ function UpdateNotesDialog() {
   const { t } = useTranslation();
   const pending = useAppStore((s) => s.marketReleaseNotes);
   const updating = useAppStore((s) => s.marketUpdating);
-  const updates = useAppStore((s) =>
-    s.marketReleaseNotes?.target.surface === "desktop" ? s.marketDesktopUpdates : s.marketUpdates,
-  );
+  const updates = useAppStore((s) => (s.marketReleaseNotes ? s.marketUpdates[s.marketReleaseNotes.target.surface] : null));
   const installed = useAppStore((s) =>
     s.marketReleaseNotes?.target.surface === "web"
       ? (s.marketInstalled.find((p) => p.name === s.marketReleaseNotes?.target.name) ?? null)

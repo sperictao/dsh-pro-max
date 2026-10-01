@@ -2,14 +2,12 @@
 // 卡片挂载时检测一次状态。单列居中，页面宽度与 gutter 由 page-layout.css 统一控制。
 // 只渲染被纳管的形态：两档都不纳管不成立（Rust 侧归一化保证至少一档）
 
-import { useAppStore } from "@/shared/store";
+import { useManagedSurfaces } from "@/shared/store";
 import { DesktopCard } from "./DesktopCard";
 import { DshCard } from "./DshCard";
 
 export function IntegrationView() {
-  const surfaces = useAppStore((s) => s.config?.managed_surfaces);
-  const webManaged = surfaces?.includes("web") ?? true;
-  const desktopManaged = surfaces?.includes("desktop") ?? false;
+  const { web: webManaged, desktop: desktopManaged } = useManagedSurfaces();
 
   return (
     <main className="flex-1 overflow-y-auto py-6" id="integration-view">

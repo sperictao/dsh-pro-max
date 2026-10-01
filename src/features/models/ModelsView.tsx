@@ -24,7 +24,7 @@ import {
   ROW_ICON_BUTTON,
   SELECT,
 } from "@/shared/lib/ui";
-import type { BridgeStatus, DshSurface, ModelCatalogFile, ModelConfig, ProviderConfig } from "@/shared/types";
+import type { DshSurface, ModelCatalogFile, ModelConfig, ProviderConfig } from "@/shared/types";
 import { renderMessage, tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
 import { deriveCredentialRef, type CredentialWrite } from "./credentials";
@@ -198,33 +198,24 @@ export function ModelsView() {
 /// 状态的去向（与插件页桌面 tab 同一份说法）——不是空配置，也不是报错
 function DesktopGate({ heading, children }: { heading: ReactNode; children: ReactNode }) {
   const { t } = useTranslation();
-  const toast = useAppStore((state) => state.toast);
-  // undefined = 还在问；null = 问不到
-  const [bridge, setBridge] = useState<BridgeStatus | null | undefined>(undefined);
+  // 桥接状态全应用一份（desktop 切片）：进门时刷新一次，「重新检查」再刷新
+  const bridge = useAppStore((state) => state.desktopBridge);
+  const refreshDesktop = useAppStore((state) => state.refreshDesktop);
+  const [probing, setProbing] = useState(true);
 
   const probe = useCallback(async () => {
-    setBridge(undefined);
-    try {
-      setBridge(await cmd.desktopBridgeStatus());
-    } catch {
-      setBridge(null);
-    }
-  }, []);
+    setProbing(true);
+    await refreshDesktop();
+    setProbing(false);
+  }, [refreshDesktop]);
 
   useEffect(() => {
     void probe();
   }, [probe]);
 
-  if (bridge?.state === "connected") return <>{children}</>;
-
-  const copy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast(t("Address copied"), "info");
-    } catch (e) {
-      toast(t("Failed to copy: {{error}}", { error: String(e) }), "error");
-    }
-  };
+  // 以进门这次探测为准再决定：全应用共享的状态可能是别处留下的旧结论，桥接刚断时先挂上
+  // 编辑器会让它读一次注定失败的配置、弹一条错误
+  if (!probing && bridge?.state === "connected") return <>{children}</>;
 
   return (
     <main className="flex-1 overflow-y-auto p-6" id="models-view">
@@ -233,12 +224,12 @@ function DesktopGate({ heading, children }: { heading: ReactNode; children: Reac
           <h2 className="text-base font-semibold">{t("Model Configuration")}</h2>
           {heading}
         </div>
-        {bridge === undefined ? (
+        {probing ? (
           <p className="text-sm opacity-60">{t("Checking...")}</p>
         ) : (
           <section className={`${PANEL} flex flex-col gap-3 p-4`} id="models-desktop-unavailable">
             {bridge ? (
-              <BridgeNotice bridge={bridge} onCopy={(text) => void copy(text)} />
+              <BridgeNotice bridge={bridge} />
             ) : (
               <p className={MUTED}>{t("Could not reach DeepSeek Harness. Open it, then check again.")}</p>
             )}

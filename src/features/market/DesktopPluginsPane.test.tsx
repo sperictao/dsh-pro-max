@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as cmd from "@/shared/commands";
 import { useAppStore } from "@/shared/store";
-import type { BridgeStatus, ChangeOutcome, DesktopPlugins, DesktopStatus } from "@/shared/types";
+import type { BridgeStatus, DesktopPlugins, DesktopStatus } from "@/shared/types";
 import { DesktopPluginsPane } from "./DesktopPluginsPane";
 
 const INSTALL_SPEC = "@sperictao/dsh-pro-max-bridge@0.1.5";
@@ -26,23 +26,18 @@ const bridge = (over: Partial<BridgeStatus> = {}): BridgeStatus => ({
   ...over,
 });
 
+// desktop_bridge_plugins 的应答：Rust 侧已只留内置部分（用户 bundle 及其插件行归市场，
+// 过滤与它的测试在 bridge.rs），这里按那个形状给
 const catalog: DesktopPlugins = {
   plugins: [
     { entryId: "e1", moduleName: "@deepseek-ai/dsh-host-open-in-app", enabled: true, patchId: "row-1", readOnlyReason: null },
     { entryId: "e2", moduleName: "managed-by-app", enabled: true, patchId: null, readOnlyReason: "management-required" },
   ],
   bundles: [
-    { name: "@sperictao/dsh-pro-max-bridge", version: "0.1.0", description: "bridge", enabled: true, removable: true, readOnlyReason: null },
     { name: "builtin", version: null, description: null, enabled: true, removable: false, readOnlyReason: null },
   ],
 };
 
-const applied: ChangeOutcome = {
-  application: "applied",
-  errorCode: null,
-  errorDiagnostic: null,
-  pendingBuilds: [],
-};
 
 /// 桥接态之后每个用例都要拉一次列表与配置；漏桩会让整条链路走 catch
 function mount(options: { bridge?: BridgeStatus; plugins?: DesktopPlugins } = {}) {
@@ -66,7 +61,8 @@ function mount(options: { bridge?: BridgeStatus; plugins?: DesktopPlugins } = {}
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
-  useAppStore.setState({ toasts: [] });
+  // 桌面状态全应用一份：每个用例从「还没探测过」开始，不吃上一个用例的结论
+  useAppStore.setState({ toasts: [], desktopStatus: null, desktopBridge: null, desktopChecked: false });
 });
 
 describe("DesktopPluginsPane gates", () => {
@@ -95,7 +91,7 @@ describe("DesktopPluginsPane gates", () => {
 describe("DesktopPluginsPane lists", () => {
   it("lets a row the profile can address be toggled", async () => {
     const user = userEvent.setup();
-    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockResolvedValue(applied);
+    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockResolvedValue("applied");
     mount();
 
     const row = await screen.findByRole("checkbox", { name: "@deepseek-ai/dsh-host-open-in-app" });
@@ -113,37 +109,36 @@ describe("DesktopPluginsPane lists", () => {
     expect(screen.getByText("The desktop app manages this itself; it cannot be changed here.")).toBeInTheDocument();
   });
 
-  // 用户装的 bundle 归市场「已安装」页（ADR 0012）：这里再列一份就是第二个事实来源。
-  // 只剩内置 bundle 的开关，也就没有移除入口
-  it("lists only the built-in bundles, leaving the user's own to the Installed tab", async () => {
+  // 用户装的插件归市场（ADR 0012）：这里只有内置 bundle 的开关，没有安装与移除入口；
+  // 模型域的配置行指向模型页
+  it("offers only built-in switches and points model rows to the Models page", async () => {
     mount();
     expect(await screen.findByRole("checkbox", { name: "builtin" })).toBeEnabled();
-    expect(screen.queryByRole("checkbox", { name: "@sperictao/dsh-pro-max-bridge" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
+    expect(screen.getByText(/The default model and AI providers are edited on the Models page\./)).toBeInTheDocument();
   });
 });
 
 describe("DesktopPluginsPane change outcomes", () => {
   it("reports the failure reason instead of treating a returned failure as success", async () => {
     const user = userEvent.setup();
-    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockResolvedValue({
-      ...applied,
-      application: "failed",
-      errorCode: "not-addressable",
-      errorDiagnostic: "supplied by dsh",
+    // 上游折叠进返回值的失败由 Rust 侧解读成 Err（带上游诊断），这里收到的就是那条消息
+    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockRejectedValue({
+      key: "DeepSeek Harness could not apply this change: {{reason}}",
+      args: { reason: "supplied by dsh" },
     });
     mount();
 
     await user.click(await screen.findByRole("checkbox", { name: "builtin" }));
     await waitFor(() =>
-      expect(useAppStore.getState().toasts[0]?.message).toBe("The change failed: supplied by dsh"),
+      expect(useAppStore.getState().toasts[0]?.message).toBe("DeepSeek Harness could not apply this change: supplied by dsh"),
     );
   });
 
   it("says a restart is needed when the app applies it only on next start", async () => {
     const user = userEvent.setup();
-    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockResolvedValue({ ...applied, application: "restart-required" });
+    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockResolvedValue("restart-required");
     mount();
 
     await user.click(await screen.findByRole("checkbox", { name: "builtin" }));
@@ -200,7 +195,7 @@ describe("DesktopPluginsPane partial probe failure", () => {
 describe("DesktopPluginsPane editing safety", () => {
   it("keeps an in-progress config edit when an unrelated action refetches the lists", async () => {
     const user = userEvent.setup();
-    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockResolvedValue(applied);
+    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockResolvedValue("applied");
     mount();
 
     // 展开一行并在里面打字

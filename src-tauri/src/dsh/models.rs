@@ -53,6 +53,12 @@ const MANAGED_MODEL_KEYS: [&str; 6] = [
 const DEFAULT_MODEL_KEY: &str = "agent-default-model";
 const PI_AI_KEY: &str = "llm-pi-ai";
 
+/// 这一行配置归模型域管：模型页是它唯一的编辑入口（桌面 tab 的原始配置编辑据此让出，
+/// 同一行不留第二个修改入口）
+pub(crate) fn owns_config_row(id: &str) -> bool {
+    id == DEFAULT_MODEL_KEY || id == PI_AI_KEY
+}
+
 /// models.dev 全量目录（与 CCursor 同源）。站点显示的是全部 model types（默认端点会
 /// 省略 specialized 模型），因此取 `type=all` 的合并目录：providers 对应服务商页，
 /// models 对应 provider-agnostic 模型页。

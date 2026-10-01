@@ -22,6 +22,7 @@
 
 use super::components::{pnpm_bin, resolve_dsh_bin, web_profile_package_path};
 use super::process::{run_capture_lines, run_capture_lines_env};
+use super::ChangeApplication;
 use crate::config::DshSurface;
 use crate::i18n::{Message, MessageArg};
 use crate::version::{is_newer, parse_version, satisfies_range};
@@ -2661,20 +2662,38 @@ fn emit_install_line(
     }
 }
 
-/// 安装一键候选（specifier 为 npm 包名/版本或 github:owner/repo 形态，由
-/// 目录 install 命令串解析而来）；长操作（pnpm 下载依赖），UI 显示 busy。
-/// 成功返回落盘回执（无法唯一定位落点时为 None）；被 pnpm 拦截构建脚本时
-/// 返回 NeedsApproval（被拦包名 + 待写 yaml 路径），由前端弹窗征得用户
-/// 审批后再经 market_approve_builds 放行。写入审计台账
+/// 安装到目标形态（ADR 0012：两档同一个入口，按形态分派一次）。specifier 为 npm 包名/
+/// 版本或 github:owner/repo 形态，由目录 install 命令串解析而来；长操作（pnpm 下载依赖），
+/// UI 显示 busy。成功返回落盘回执（无法唯一定位落点时为 None）；被 pnpm 拦截构建脚本时
+/// 返回 NeedsApproval（被拦包名 + web 档待写 yaml 路径），由前端弹窗征得用户审批后带着
+/// approved_builds 再调一次放行。写入审计台账。
+/// approved_builds 的键来自前端回传（最初由 launcher 或桌面应用从 pnpm 输出解析，registry
+/// 包为包名、git 包为完整键），IPC 层不可信，逐个过 allowBuilds 键白名单
 #[tauri::command]
 pub async fn market_install(
     app: tauri::AppHandle,
+    surface: DshSurface,
     specifier: String,
+    approved_builds: Option<Vec<String>>,
 ) -> Result<InstallOutcome, Message> {
-    super::ipc_blocking(move || with_plugin_operation(|| install_once(&app, &specifier))).await
+    if !valid_identifier(&specifier)
+        || approved_builds
+            .as_ref()
+            .is_some_and(|keys| keys.is_empty() || keys.iter().any(|key| !valid_allow_key(key)))
+    {
+        return Err(Message::key("Invalid plugin identifier"));
+    }
+    super::ipc_blocking(move || match (surface, approved_builds) {
+        (DshSurface::Web, None) => with_plugin_operation(|| install_once(&app, &specifier)),
+        (DshSurface::Web, Some(packages)) => {
+            with_plugin_operation(|| approve_builds_once(&app, &specifier, packages))
+        }
+        (DshSurface::Desktop, approved) => super::market_desktop::install_once(&app, &specifier, approved),
+    })
+    .await
 }
 
-/// 用户审批放行构建脚本后的执行体（market_approve_builds 的阻塞部分）：
+/// 用户审批放行构建脚本后的执行体（web 档）：
 /// 写 allowBuilds → 重跑安装 → 过安装护栏（与市场安装同一预检/回滚路径），
 /// 成功带回执与护栏事实
 fn approve_builds_once(
@@ -2721,36 +2740,14 @@ fn approve_builds_once(
     }
 }
 
-/// 用户审批放行构建脚本后执行：合并写入 profile 的 pnpm-workspace.yaml →
-/// 重跑安装。键来自前端回传（最初由 launcher 从 pnpm 输出解析，registry 包
-/// 为包名、git 包为完整键），IPC 层不可信，逐个过 allowBuilds 键白名单
-#[tauri::command]
-pub async fn market_approve_builds(
-    app: tauri::AppHandle,
-    specifier: String,
-    packages: Vec<String>,
-) -> Result<InstallOutcome, Message> {
-    if !valid_identifier(&specifier)
-        || packages.is_empty()
-        || packages.iter().any(|p| !valid_allow_key(p))
-    {
-        return Err(Message::key("Invalid plugin identifier"));
-    }
-    super::ipc_blocking(move || {
-        with_plugin_operation(|| approve_builds_once(&app, &specifier, packages))
-    })
-    .await
-}
-
-/// 启停执行体（market_set_plugin_enabled 的阻塞部分）：判定核在前，写盘
-/// 与审计在本壳。内容未变化（重复启停）免写盘、不记台账——空操作如实
-/// 也记一行 noop（结果区分 changed/noop），台账才说得出「有人点了但
-/// 无事发生」
+/// web 档的启停执行体：判定核在前，写盘与审计在本壳。写的是下次启动才认读的覆盖行，
+/// 所以结果是 RestartRequired；内容未变化（重复启停）免写盘，结果是 Unchanged——空操作
+/// 如实也记一行 noop（结果区分 changed/noop），台账才说得出「有人点了但无事发生」
 fn set_plugin_enabled_once(
     app: &tauri::AppHandle,
     name: &str,
     enabled: bool,
-) -> Result<InstalledPlugin, Message> {
+) -> Result<ChangeApplication, Message> {
     let list = installed_plugins()?;
     if list.iter().all(|p| p.name != name) {
         return Err(Message::localized("Plugin not installed: {{name}}",
@@ -2782,6 +2779,7 @@ fn set_plugin_enabled_once(
                 &format!("{name} enabled={enabled} changed"),
                 None,
             );
+            Ok(ChangeApplication::RestartRequired)
         }
         None => {
             append_audit(
@@ -2790,33 +2788,27 @@ fn set_plugin_enabled_once(
                 &format!("{name} enabled={enabled} noop"),
                 None,
             );
+            Ok(ChangeApplication::Unchanged)
         }
     }
-    // 回执 = 重读 profile 后的落盘事实，与已装列表同源
-    installed_plugins()?
-        .into_iter()
-        .find(|p| p.name == name)
-        .ok_or_else(|| {
-            Message::localized("Plugin not installed: {{name}}",
-                &[("name", name.to_string())],
-            )
-        })
 }
 
-/// 翻转插件的下次启动启用状态：写 profile cordis.patch.yml 的 disabled 覆盖
-/// 行（dsh loader 启动时认读），对运行中的 dsh 无影响。受管授权插件不经此
-/// 通道（由修复/卸载流程管理）。写入审计台账
+/// 翻转插件的启用状态。web 档写 profile cordis.patch.yml 的 disabled 覆盖行（dsh loader
+/// 启动时认读），对运行中的 dsh 无影响；受管授权插件不经此通道（由修复/卸载流程管理）。
+/// desktop 档由桌面应用自己翻转。写入审计台账
 #[tauri::command]
 pub async fn market_set_plugin_enabled(
     app: tauri::AppHandle,
+    surface: DshSurface,
     name: String,
     enabled: bool,
-) -> Result<InstalledPlugin, Message> {
+) -> Result<ChangeApplication, Message> {
     if !valid_identifier(&name) {
         return Err(Message::key("Invalid plugin identifier"));
     }
-    super::ipc_blocking(move || {
-        with_plugin_operation(|| set_plugin_enabled_once(&app, &name, enabled))
+    super::ipc_blocking(move || match surface {
+        DshSurface::Web => with_plugin_operation(|| set_plugin_enabled_once(&app, &name, enabled)),
+        DshSurface::Desktop => super::market_desktop::set_enabled_once(&app, &name, enabled),
     })
     .await
 }
@@ -2861,18 +2853,32 @@ fn remove_once(app: &tauri::AppHandle, name: &str) -> Result<(), Message> {
 }
 
 #[tauri::command]
-pub async fn market_remove(app: tauri::AppHandle, name: String) -> Result<(), Message> {
-    super::ipc_blocking(move || with_plugin_operation(|| remove_once(&app, &name))).await
+pub async fn market_remove(
+    app: tauri::AppHandle,
+    surface: DshSurface,
+    name: String,
+) -> Result<ChangeApplication, Message> {
+    if !valid_identifier(&name) {
+        return Err(Message::key("Invalid plugin identifier"));
+    }
+    super::ipc_blocking(move || match surface {
+        DshSurface::Web => with_plugin_operation(|| remove_once(&app, &name)).map(|()| ChangeApplication::Applied),
+        DshSurface::Desktop => super::market_desktop::remove_once(&app, &name),
+    })
+    .await
 }
 
-/// 更新检测：npm 形态已装插件比对 registry latest（进入市场页自动跑，
-/// 已安装页可手动重跑）。更新本身不在此处——前端正常以 name@latest 重装；
-/// latest 落在 pnpm minimumReleaseAge 窗口内（latest_in_release_age_window）
-/// 时先弹供应链确认框，用户确认后才钉版本 name@latestVersion 重装，
-/// 与安装同一 dsh 闸门、审计与审批路径
+/// 更新检测（进入市场页自动跑，已安装页可手动重跑）。web 档：npm 形态比对 registry
+/// latest，有上游仓库的比远端默认分支；更新本身不在此处——前端正常以 name@latest 重装，
+/// latest 落在 pnpm minimumReleaseAge 窗口内（latest_in_release_age_window）时先弹供应链
+/// 确认框，用户确认后才钉版本重装。desktop 档只按包名查 registry，更新一律钉精确版本
 #[tauri::command]
-pub async fn market_check_updates() -> Result<Vec<PluginUpdateInfo>, Message> {
-    super::ipc_blocking(check_updates_once).await
+pub async fn market_check_updates(surface: DshSurface) -> Result<Vec<PluginUpdateInfo>, Message> {
+    super::ipc_blocking(move || match surface {
+        DshSurface::Web => check_updates_once(),
+        DshSurface::Desktop => super::market_desktop::check_updates_once(),
+    })
+    .await
 }
 
 // ============ 更新预下载（store 预热）============

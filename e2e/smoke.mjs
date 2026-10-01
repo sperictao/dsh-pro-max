@@ -229,11 +229,11 @@ function installMocks({ config, dshStatus, desktopStatus, bridgeStatus, marketCa
       if (bridgeStatus.state !== "connected") throw new Error("bridge not connected");
       return structuredClone(desktopInstalled);
     },
-    market_desktop_check_updates: () => [],
-    market_desktop_install: ({ specifier }) => {
+    // 两档同一条安装命令，按 surface 分派；装进 desktop 档的下一次已装列表就读得到
+    market_install: ({ surface, specifier }) => {
       const name = specifier.replace(/^npm:/, "").replace(/@[^@/]*$/, "");
-      desktopInstalled.push({ name, version: "1.0.0", enabled: true, managed: false });
-      return { status: "installed", receipt: { name, spec: "1.0.0" }, notices: [] };
+      if (surface === "desktop") desktopInstalled.push({ name, version: "1.0.0", enabled: true, managed: false });
+      return { status: "installed", receipt: { name, spec: surface === "desktop" ? "1.0.0" : specifier }, notices: [] };
     },
     model_config_load: () => modelConfig,
     // 记下形态：两档共用一个记录器，断言按 surface 区分写到了哪
@@ -717,10 +717,13 @@ async function main() {
       await card.getByRole("button", { name: "Install DSH-better-sidebar (Desktop)" }).click();
       await card.getByRole("button", { name: "Confirm" }).click();
       await expectVisible(card.locator('[data-surface="desktop"]'));
-      const installs = await bothCalls("market_desktop_install");
+      const installs = await bothCalls("market_install");
       assert.equal(installs.length, 1);
-      assert.equal(installs[0].args.specifier, "npm:dsh-better-sidebar@latest");
-      assert.equal((await bothCalls("market_install")).length, 0, "desktop install must not touch the web profile");
+      assert.deepEqual(
+        { surface: installs[0].args.surface, specifier: installs[0].args.specifier },
+        { surface: "desktop", specifier: "npm:dsh-better-sidebar@latest" },
+        "desktop install must not touch the web profile",
+      );
     });
 
     await step("both surfaces: the installed tab merges the desktop app's plugins", async () => {

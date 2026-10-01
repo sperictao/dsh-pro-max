@@ -1711,6 +1711,15 @@ use super::models::{
     ReasoningEfforts,
 };
 
+/// 模型域的两行由模型页独占编辑：桌面 tab 的原始配置编辑据此让出，同一行不留第二个入口
+#[test]
+fn model_domain_owns_its_two_config_rows() {
+    assert!(super::models::owns_config_row("agent-default-model"));
+    assert!(super::models::owns_config_row("llm-pi-ai"));
+    assert!(!super::models::owns_config_row("llm-deepseek"));
+    assert!(!super::models::owns_config_row("session-title-llm"));
+}
+
 /// 桥接配置行夹具：current 是生效值（有覆盖即覆盖，无覆盖即继承）
 fn config_row(id: &str, inherited: serde_json::Value, over: serde_json::Value) -> super::bridge::ConfigRow {
     let empty = over.as_object().is_some_and(|o| o.is_empty());

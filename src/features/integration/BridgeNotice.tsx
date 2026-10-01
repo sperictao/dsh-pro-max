@@ -1,20 +1,26 @@
-// 桥接未就绪时的去向说明。首页桌面卡片与插件页的桌面 tab 共用同一份——同一件事只有
-// 一个说法，改文案不会只改一半。
+// 桥接未就绪时的去向说明。首页桌面卡片、插件页的桌面 tab、模型页的桌面档共用同一份——
+// 同一件事只有一个说法，改文案不会只改一半；复制包规格也在这里，不让每个调用方各写一遍。
 //
 // 已连接时什么都不渲染：那是调用方展示内容的前提，不是一条需要说的状态。
 
 import { useTranslation } from "react-i18next";
+import { useAppStore } from "@/shared/store";
 import { BTN_SM, MUTED } from "@/shared/lib/ui";
 import type { BridgeStatus } from "@/shared/types";
 
-export function BridgeNotice({
-  bridge,
-  onCopy,
-}: {
-  bridge: BridgeStatus;
-  onCopy: (text: string) => void;
-}) {
+export function BridgeNotice({ bridge }: { bridge: BridgeStatus }) {
   const { t } = useTranslation();
+  const toast = useAppStore((s) => s.toast);
+
+  // 包规格是要粘进另一个应用的一次性步骤，粘错一个字就白跑一趟
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(bridge.installSpec);
+      toast(t("Package spec copied"), "info");
+    } catch (e) {
+      toast(t("Failed to copy: {{error}}", { error: String(e) }), "error");
+    }
+  };
 
   if (bridge.state === "connected") return null;
 
@@ -44,7 +50,7 @@ export function BridgeNotice({
       <p className={MUTED}>{reason}</p>
       <div className="flex items-center gap-2">
         <code className="min-w-0 flex-1 truncate font-mono text-xs opacity-80">{bridge.installSpec}</code>
-        <button className={BTN_SM} onClick={() => void onCopy(bridge.installSpec)}>
+        <button className={BTN_SM} onClick={() => void copy()}>
           {t("Copy")}
         </button>
       </div>

@@ -41,7 +41,7 @@ function mockBridge(status: BridgeStatus = bridge()) {
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
-  useAppStore.setState({ toasts: [] });
+  useAppStore.setState({ toasts: [], desktopStatus: null, desktopBridge: null, desktopChecked: false });
   mockBridge();
 });
 

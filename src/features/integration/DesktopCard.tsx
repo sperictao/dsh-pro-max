@@ -5,14 +5,14 @@
 // 只在「纳管了桌面形态」时挂载（未纳管的形态不进 UI）；不提供安装：官方应用的安装归用户，
 // 本应用只做检测与管理。
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { useAppStore } from "@/shared/store";
 import { renderMessage } from "@/shared/i18n/error";
 import * as cmd from "@/shared/commands";
 import { BTN_OUTLINE, BTN_PRIMARY, MUTED, PANEL } from "@/shared/lib/ui";
-import type { BridgeStatus, DesktopStatus, DesktopUpdate } from "@/shared/types";
+import type { DesktopUpdate } from "@/shared/types";
 import { BridgeNotice } from "./BridgeNotice";
 
 /// 动作后应用还要若干秒才起停完毕，晚一点复检；端口探测是权威状态，
@@ -22,25 +22,12 @@ const RECHECK_DELAY_MS = 1500;
 export function DesktopCard() {
   const { t } = useTranslation();
   const toast = useAppStore((s) => s.toast);
-  const [status, setStatus] = useState<DesktopStatus | null>(null);
-  const [bridge, setBridge] = useState<BridgeStatus | null>(null);
+  // 应用与桥接的状态全应用一份（desktop 切片）：卡片挂载时刷新一次，动作后再复检
+  const status = useAppStore((s) => s.desktopStatus);
+  const bridge = useAppStore((s) => s.desktopBridge);
+  const detect = useAppStore((s) => s.refreshDesktop);
   const [busy, setBusy] = useState(false);
   const [update, setUpdate] = useState<DesktopUpdate | null>(null);
-
-  const detect = useCallback(async () => {
-    try {
-      setStatus(await cmd.desktopDetect());
-    } catch (e) {
-      toast(renderMessage(e), "error");
-    }
-    // 桥接探测失败只让那一行缺席：它是这张卡片的一部分，不是卡片的前提
-    // （两者都是本机查询，无公网请求，串行多花的这点开销无关紧要）
-    try {
-      setBridge(await cmd.desktopBridgeStatus());
-    } catch {
-      setBridge(null);
-    }
-  }, [toast]);
 
   useEffect(() => {
     void detect();
@@ -77,16 +64,6 @@ export function DesktopCard() {
       await openUrl(await cmd.desktopLogDir());
     } catch (e) {
       toast(renderMessage(e), "error");
-    }
-  };
-
-  // 地址是要粘进另一个应用的一次性步骤，粘错一个字就白跑一趟
-  const copyAddress = async (address: string) => {
-    try {
-      await navigator.clipboard.writeText(address);
-      toast(t("Address copied"), "info");
-    } catch (e) {
-      toast(t("Failed to copy: {{error}}", { error: String(e) }), "error");
     }
   };
 
@@ -164,7 +141,7 @@ export function DesktopCard() {
       {/* 未就绪各态的说明由共用组件给（插件页的桌面 tab 用的是同一份） */}
       {installed && bridge && (
         <>
-          <BridgeNotice bridge={bridge} onCopy={copyAddress} />
+          <BridgeNotice bridge={bridge} />
           {bridge.state === "connected" && <p className={MUTED}>{t("Bridge connected")}</p>}
         </>
       )}
