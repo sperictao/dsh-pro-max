@@ -26,12 +26,12 @@ import { restartDshWeb, startDshWeb, stopDshWeb } from "./features/integration/d
 import { MarketView } from "./features/market/MarketView";
 import { ModelsView } from "./features/models/ModelsView";
 
-// webOnly：模型配置编辑的是 web profile 的补丁层，纳管 web 关了它就没有对象了。
-// 插件页不标——它同时承载桌面档的插件与配置，只在页内按档位 gate 各自的 tab
-const NAV_ITEMS: { view: View; labelKey: string; webOnly?: boolean }[] = [
+// 插件页与模型页按目标形态参数化（ADR 0012），任一档纳管就有对象，所以导航项本身恒在；
+// 页内各自按纳管形态 gate 只属于某一档的部分
+const NAV_ITEMS: { view: View; labelKey: string }[] = [
   { view: "integration", labelKey: "Home" },
   { view: "market", labelKey: "Plugins" },
-  { view: "models", labelKey: "Models", webOnly: true },
+  { view: "models", labelKey: "Models" },
   { view: "settings", labelKey: "Settings" },
 ];
 
@@ -39,12 +39,6 @@ export function App() {
   const { t } = useTranslation();
   const activeView = useAppStore((s) => s.activeView);
   const navigate = useAppStore((s) => s.navigate);
-  const webManaged = useAppStore((s) => s.config?.managed_surfaces.includes("web") ?? true);
-  const navItems = NAV_ITEMS.filter((item) => item.webOnly !== true || webManaged);
-  // 派生实际视图：让「停在不可用视图上」无法表示（与市场 tab 同一手法：派生值，不要 effect）。
-  // 当前界面到不了这个状态——改纳管形态必须先回设置页，而设置页本身恒可用——所以这条是
-  // 让渲染对所有状态成立，不是补界面流程的漏；别当死代码删
-  const view = navItems.some((item) => item.view === activeView) ? activeView : "integration";
 
   // 事件桥 + 初始化
   useEffect(() => {
@@ -148,8 +142,8 @@ export function App() {
           <UpdateBadge />
         </div>
         <nav className={APP_NAV}>
-          {navItems.map((item) => {
-            const active = view === item.view;
+          {NAV_ITEMS.map((item) => {
+            const active = activeView === item.view;
             return (
               <button
                 key={item.view}
@@ -166,10 +160,10 @@ export function App() {
         </nav>
       </header>
 
-      {view === "settings" && <SettingsView />}
-      {view === "integration" && <IntegrationView />}
-      {view === "market" && <MarketView />}
-      {view === "models" && <ModelsView />}
+      {activeView === "settings" && <SettingsView />}
+      {activeView === "integration" && <IntegrationView />}
+      {activeView === "market" && <MarketView />}
+      {activeView === "models" && <ModelsView />}
       <Toaster />
     </>
   );

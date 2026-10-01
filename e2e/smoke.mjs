@@ -90,8 +90,7 @@ const MOCK = {
     state: "not_installed",
     protocol: null,
     expectedProtocol: 1,
-    installUrl:
-      "https://github.com/sperictao/dsh-pro-max-bridge/releases/latest/download/dsh-pro-max-bridge.tgz",
+    installSpec: "@sperictao/dsh-pro-max-bridge@0.1.5",
   },
   dshStatus: {
     nodeAvailable: false,
@@ -153,6 +152,9 @@ const MOCK = {
   marketInstalled: [
     { name: "@dsh-external/dsh-auth-tailscale", spec: "file:/x.tgz", managed: true },
   ],
+  desktopInstalled: [
+    { name: "@sperictao/dsh-pro-max-bridge", version: "0.1.5", enabled: true, managed: true },
+  ],
   modelConfig: {
     defaultProvider: "spero-ai",
     defaultModel: "glm-5.2",
@@ -179,6 +181,120 @@ const MOCK = {
   },
 };
 
+// IPC 替身（addInitScript 注入，在页面上下文里跑，只能用传进来的可序列化数据）。命令清单
+// 必须与 src/shared/commands.ts 对齐；出现未 mock 命令即失败
+function installMocks({ config, dshStatus, desktopStatus, bridgeStatus, marketCatalog, marketInstalled, desktopInstalled, modelConfig, modelCatalog }) {
+  // 结构对齐 @tauri-apps/api/mocks.js 的 mockInternals：
+  // 事件解绑路径依赖 __TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener 与回调注册表
+  let nextId = 1;
+  const callbacks = new Map();
+  window.__e2eSavedConfigs = [];
+  window.__e2eSavedSettings = [];
+  const handlers = {
+    get_resolved_language: () => "en",
+    load_config: () => config,
+    autostart_is_enabled: () => false,
+    // 设置保存有自己的记录器：__e2eSavedConfigs 是模型配置专用的，
+    // 共用会让「test/fetch/catalog 不得偷偷存模型配置」那条断言数错
+    update_settings: ({ config: next }) => {
+      window.__e2eSavedSettings.push(structuredClone(next));
+      return null;
+    },
+    get_updater_config_health: () => ({ configured: true, message: "ready" }),
+    check_update: () => ({
+      currentVersion: "0.4.0",
+      availableVersion: null,
+      hasUpdate: false,
+      releaseNotes: null,
+      message: null,
+    }),
+    dsh_detect: () => dshStatus,
+    desktop_detect: () => desktopStatus,
+    desktop_bridge_status: () => bridgeStatus,
+    desktop_check_latest: () => ({ kind: "available", version: "0.1.7-rc.9" }),
+    desktop_bridge_plugins: () => ({ plugins: [], bundles: [] }),
+    desktop_bridge_config: () => [],
+    dsh_step_schema: ({ remote } = {}) =>
+      (remote
+        ? ["node","install","plugins","tailscale","magicdns","start","serve","verify"]
+        : ["node","install","start","ready"]).map((id, index) => ({
+        index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}`,
+      })),
+    market_fetch: () => marketCatalog,
+    market_snapshot: () => null,
+    market_installed: () => marketInstalled,
+    market_check_updates: () => [],
+    // desktop 档（经桥接）：已装列表是有状态的——装进去的下一次就读得到，角标才会跟着变
+    market_desktop_installed: () => {
+      if (bridgeStatus.state !== "connected") throw new Error("bridge not connected");
+      return structuredClone(desktopInstalled);
+    },
+    market_desktop_check_updates: () => [],
+    market_desktop_install: ({ specifier }) => {
+      const name = specifier.replace(/^npm:/, "").replace(/@[^@/]*$/, "");
+      desktopInstalled.push({ name, version: "1.0.0", enabled: true, managed: false });
+      return { status: "installed", receipt: { name, spec: "1.0.0" }, notices: [] };
+    },
+    model_config_load: () => modelConfig,
+    // 记下形态：两档共用一个记录器，断言按 surface 区分写到了哪
+    model_config_save: ({ surface, config }) => {
+      window.__e2eSavedConfigs.push({ surface, ...structuredClone(config) });
+      return null;
+    },
+    model_catalog_load: () => modelCatalog,
+    model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
+    model_credential_describe: ({ names }) => Object.fromEntries(
+      names.map((name) => [name, { configured: true, source: "file", writable: true }]),
+    ),
+    model_credential_set: () => ({ configured: true, source: "file", writable: true }),
+    model_credential_unset: () => ({ configured: false, source: null, writable: true }),
+    model_remote_cache_get: () => null,
+    model_test_connection: () => null,
+    model_remote_list_with_headers: ({ baseUrl }) =>
+      baseUrl.includes("e2e.example.com")
+        ? Array.from({ length: 75 }, (_, index) => `e2e-model-${String(index).padStart(3, "0")}`)
+        : ["glm-5.2", "glm-5.2-fast"],
+    model_config_import_scan: () => [
+      { source: "claude-code", entries: [] },
+      { source: "codex", entries: [] },
+      { source: "opencode", entries: [] },
+      { source: "pi", entries: [] },
+      { source: "cc-switch", entries: [] },
+    ],
+    model_config_import_run: () => ({ imported: 0, skipped: 0, failed: 0, literal: 0 }),
+    "plugin:app|version": () => "0.4.0",
+    "plugin:notification|is_permission_granted": () => true,
+  };
+  window.__e2eInvoked = [];
+  window.__e2eCalls = [];
+  window.__TAURI_INTERNALS__ = {
+    metadata: {
+      currentWindow: { label: "main" },
+      currentWebview: { label: "main", windowLabel: "main" },
+    },
+    transformCallback: (cb) => {
+      const id = nextId++;
+      callbacks.set(id, cb);
+      return id;
+    },
+    unregisterCallback: (id) => callbacks.delete(id),
+    runCallback: (id, data) => callbacks.get(id)?.(data),
+    callbacks,
+    invoke: (cmd, args) => {
+      window.__e2eInvoked.push(cmd);
+      window.__e2eCalls.push({ cmd, args: args == null ? null : structuredClone(args) });
+      if (cmd === "plugin:event|listen") return Promise.resolve(nextId++);
+      if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
+      const h = handlers[cmd];
+      if (!h) return Promise.reject(new Error(`e2e-mock: unhandled command "${cmd}"`));
+      return Promise.resolve(h(args));
+    },
+  };
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+    unregisterListener: (_event, id) => callbacks.delete(id),
+  };
+}
+
 async function main() {
   const server = await startVite();
   const browser = await launchBrowser();
@@ -187,105 +303,7 @@ async function main() {
     const page = await browser.newPage();
     page.on("pageerror", (e) => failures.push(`pageerror: ${e.message}`));
 
-    await page.addInitScript(({ config, dshStatus, desktopStatus, bridgeStatus, marketCatalog, marketInstalled, modelConfig, modelCatalog }) => {
-      // 结构对齐 @tauri-apps/api/mocks.js 的 mockInternals：
-      // 事件解绑路径依赖 __TAURI_EVENT_PLUGIN_INTERNALS__.unregisterListener 与回调注册表
-      let nextId = 1;
-      const callbacks = new Map();
-      window.__e2eSavedConfigs = [];
-      window.__e2eSavedSettings = [];
-      const handlers = {
-        get_resolved_language: () => "en",
-        load_config: () => config,
-        autostart_is_enabled: () => false,
-        // 设置保存有自己的记录器：__e2eSavedConfigs 是模型配置专用的，
-        // 共用会让「test/fetch/catalog 不得偷偷存模型配置」那条断言数错
-        update_settings: ({ config: next }) => {
-          window.__e2eSavedSettings.push(structuredClone(next));
-          return null;
-        },
-        get_updater_config_health: () => ({ configured: true, message: "ready" }),
-        check_update: () => ({
-          currentVersion: "0.4.0",
-          availableVersion: null,
-          hasUpdate: false,
-          releaseNotes: null,
-          message: null,
-        }),
-        dsh_detect: () => dshStatus,
-        desktop_detect: () => desktopStatus,
-        desktop_bridge_status: () => bridgeStatus,
-        desktop_check_latest: () => ({ kind: "available", version: "0.1.7-rc.9" }),
-        desktop_bridge_plugins: () => ({ plugins: [], bundles: [] }),
-        desktop_bridge_config: () => [],
-        dsh_step_schema: ({ remote } = {}) =>
-          (remote
-            ? ["node","install","plugins","tailscale","magicdns","start","serve","verify"]
-            : ["node","install","start","ready"]).map((id, index) => ({
-            index, id, state: "pending", detail: [], problem: null, solution: null, titleKey: `step.${id}`,
-          })),
-        market_fetch: () => marketCatalog,
-        market_snapshot: () => null,
-        market_installed: () => marketInstalled,
-        market_check_updates: () => [],
-        model_config_load: () => modelConfig,
-        model_config_save: ({ config }) => {
-          window.__e2eSavedConfigs.push(structuredClone(config));
-          return null;
-        },
-        model_catalog_load: () => modelCatalog,
-        model_catalog_refresh: () => ({ ...modelCatalog, fetchedAt: Math.floor(Date.now() / 1000) }),
-        model_credential_describe: ({ names }) => Object.fromEntries(
-          names.map((name) => [name, { configured: true, source: "file", writable: true }]),
-        ),
-        model_credential_set: () => ({ configured: true, source: "file", writable: true }),
-        model_credential_unset: () => ({ configured: false, source: null, writable: true }),
-        model_remote_cache_get: () => null,
-        model_test_connection: () => null,
-        model_remote_list_with_headers: ({ baseUrl }) =>
-          baseUrl.includes("e2e.example.com")
-            ? Array.from({ length: 75 }, (_, index) => `e2e-model-${String(index).padStart(3, "0")}`)
-            : ["glm-5.2", "glm-5.2-fast"],
-        model_config_import_scan: () => [
-          { source: "claude-code", entries: [] },
-          { source: "codex", entries: [] },
-          { source: "opencode", entries: [] },
-          { source: "pi", entries: [] },
-          { source: "cc-switch", entries: [] },
-        ],
-        model_config_import_run: () => ({ imported: 0, skipped: 0, failed: 0, literal: 0 }),
-        "plugin:app|version": () => "0.4.0",
-        "plugin:notification|is_permission_granted": () => true,
-      };
-      window.__e2eInvoked = [];
-      window.__e2eCalls = [];
-      window.__TAURI_INTERNALS__ = {
-        metadata: {
-          currentWindow: { label: "main" },
-          currentWebview: { label: "main", windowLabel: "main" },
-        },
-        transformCallback: (cb) => {
-          const id = nextId++;
-          callbacks.set(id, cb);
-          return id;
-        },
-        unregisterCallback: (id) => callbacks.delete(id),
-        runCallback: (id, data) => callbacks.get(id)?.(data),
-        callbacks,
-        invoke: (cmd, args) => {
-          window.__e2eInvoked.push(cmd);
-          window.__e2eCalls.push({ cmd, args: args == null ? null : structuredClone(args) });
-          if (cmd === "plugin:event|listen") return Promise.resolve(nextId++);
-          if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
-          const h = handlers[cmd];
-          if (!h) return Promise.reject(new Error(`e2e-mock: unhandled command "${cmd}"`));
-          return Promise.resolve(h(args));
-        },
-      };
-      window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
-        unregisterListener: (_event, id) => callbacks.delete(id),
-      };
-    }, MOCK);
+    await page.addInitScript(installMocks, MOCK);
 
     const step = async (name, fn) => {
       await fn();
@@ -574,9 +592,9 @@ async function main() {
       await expectVisible(page.getByRole("button", { name: "Check for Updates" }));
       await page.getByRole("button", { name: "Check for Updates" }).click();
       await expectVisible(page.getByText("New version available: v0.1.7-rc.9"));
-      // 桥接未装时给的是那一条可粘贴的地址，不是「失败」
+      // 桥接未装时给的是那一条可粘贴的包规格，不是「失败」
       await expectVisible(page.getByText("The bridge plugin is not installed in DeepSeek Harness."));
-      await expectVisible(page.getByText(/releases\/latest\/download\/dsh-pro-max-bridge\.tgz/));
+      await expectVisible(page.getByText("@sperictao/dsh-pro-max-bridge@0.1.5"));
 
       await page.getByRole("button", { name: "Plugins" }).click();
       const desktopTab = page.locator("#market-tab-desktop");
@@ -586,14 +604,12 @@ async function main() {
       await expectVisible(page.locator("#desktop-plugins-pane"));
       await waitForCommandCount("desktop_bridge_status", 2);
 
-      // 收成仅桌面：web 卡、web 的市场四页、模型页都该走——它们碰的都是 web profile
-      // 「未纳管的形态不进 UI、不被触碰」
+      // 收成仅桌面：只属于 web 的部分都该走——web 卡、诊断页、设置页的 dsh 三节
+      // 「未纳管的形态不进 UI、不被触碰」。市场与模型页按目标形态参数化（ADR 0012），
+      // 桌面这一档还在，它们就留下
       await page.getByRole("button", { name: "Settings" }).click();
       await webToggle.click();
-      // 关掉 web：模型页那一格随之消失（它编辑的是 web profile 的补丁层）
-      assert.equal(await page.locator("#models-view").count(), 0, "models view must leave with web");
-      // 改纳管形态必须回设置页，所以此刻人在设置页上；这里断言的是模型页那一格没了
-      assert.equal(await page.getByRole("button", { name: "Models" }).count(), 0, "models nav must leave with web");
+      await expectVisible(page.getByRole("button", { name: "Models" }));
       // dsh 的那三节管的都是 web：版本、开机自启（会注册开机拉起 dsh web 的服务）、远程授权
       for (const name of ["dsh Version", "Boot Auto-start", "Remote authorization"]) {
         assert.equal(await page.getByRole("button", { name, exact: true }).count(), 0, `${name} must leave with web`);
@@ -611,9 +627,10 @@ async function main() {
 
       await page.getByRole("button", { name: "Plugins" }).click();
       await expectVisible(page.locator("#market-tab-desktop"));
-      // 市场四页在 web 不纳管时不在；插件视图本身仍可达，因为它承载着桌面 tab
-      for (const id of ["discover", "favorites", "installed", "diagnostics"]) {
-        assert.equal(await page.locator(`#market-tab-${id}`).count(), 0, `market tab ${id} must leave with web`);
+      // 诊断页诊断的是 web profile 的组合，随 web 走；发现/收藏/已安装服务桌面这一档，留下
+      assert.equal(await page.locator("#market-tab-diagnostics").count(), 0, "diagnostics must leave with web");
+      for (const id of ["discover", "favorites", "installed"]) {
+        await expectVisible(page.locator(`#market-tab-${id}`));
       }
       await page.locator("#market-tab-desktop").click();
       await expectVisible(page.locator("#desktop-plugins-pane"));
@@ -675,6 +692,58 @@ async function main() {
       }
       assert.equal(await savedConfigCount(), 4, "test/fetch/catalog actions must not add hidden model-config saves");
       assert.equal(await page.locator("#toast-container .toast.error").count(), 0, "error toast appeared");
+    });
+
+    // —— 两档都纳管（ADR 0012）：市场与模型页按目标形态参数化 ——
+    // 新开一页、换一份启动配置：纳管 web + desktop，桥接已连接
+    const both = await browser.newPage();
+    both.on("pageerror", (e) => failures.push(`pageerror (both surfaces): ${e.message}`));
+    await both.addInitScript(installMocks, {
+      ...MOCK,
+      config: { ...MOCK.config, managed_surfaces: ["web", "desktop"] },
+      bridgeStatus: { state: "connected", protocol: 1, expectedProtocol: 1, installSpec: "@sperictao/dsh-pro-max-bridge@0.1.5" },
+    });
+    const bothCalls = (name) =>
+      both.evaluate((command) => window.__e2eCalls.filter((call) => call.cmd === command), name);
+
+    await step("both surfaces: a catalog card has a row per surface and installs into the desktop app", async () => {
+      await both.goto(BASE, { waitUntil: "domcontentloaded" });
+      await both.getByRole("button", { name: "Plugins" }).click();
+      const card = both.locator("article", { hasText: "DSH-better-sidebar" });
+      await expectVisible(card.locator('[data-surface-row="web"]'));
+      await expectVisible(card.locator('[data-surface-row="desktop"]'));
+      assert.equal(await card.locator('[data-surface="desktop"]').count(), 0, "no desktop badge before install");
+
+      await card.getByRole("button", { name: "Install DSH-better-sidebar (Desktop)" }).click();
+      await card.getByRole("button", { name: "Confirm" }).click();
+      await expectVisible(card.locator('[data-surface="desktop"]'));
+      const installs = await bothCalls("market_desktop_install");
+      assert.equal(installs.length, 1);
+      assert.equal(installs[0].args.specifier, "npm:dsh-better-sidebar@latest");
+      assert.equal((await bothCalls("market_install")).length, 0, "desktop install must not touch the web profile");
+    });
+
+    await step("both surfaces: the installed tab merges the desktop app's plugins", async () => {
+      await both.getByRole("tab", { name: "Installed" }).click();
+      await expectVisible(both.locator("#market-installed"));
+      const bridge = both.locator("article", { hasText: "@sperictao/dsh-pro-max-bridge" });
+      await expectVisible(bridge.getByText("managed by launcher"));
+      assert.equal(await bridge.getByRole("button", { name: /Remove/ }).count(), 0, "the bridge is not removable");
+    });
+
+    await step("both surfaces: models switch to the desktop app and save there", async () => {
+      await both.getByRole("button", { name: "Models" }).click();
+      await expectVisible(both.locator("#models-surface"));
+      await both.locator("#models-surface").getByRole("button", { name: "Desktop" }).click();
+      await both.waitForFunction(() =>
+        window.__e2eCalls.some((call) => call.cmd === "model_config_load" && call.args?.surface === "desktop"),
+      );
+      await both.getByLabel("Reasoning Effort").selectOption("medium");
+      await both.waitForFunction(() => window.__e2eSavedConfigs.length >= 1);
+      const saved = await both.evaluate(() => window.__e2eSavedConfigs.at(-1));
+      assert.equal(saved.surface, "desktop");
+      assert.equal(saved.defaultReasoningEffort, "medium");
+      assert.equal(await both.locator("#toast-container .toast.error").count(), 0, "error toast appeared");
     });
 
     if (failures.length) throw new Error(failures.join("\n"));

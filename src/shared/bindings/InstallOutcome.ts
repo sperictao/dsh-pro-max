@@ -8,4 +8,4 @@ import type { InstallReceipt } from "./InstallReceipt";
  * 创建（store 漂移）时转自动修复信号（执行体内部消化，IPC 不可达）。
  * 审批是用户决策点：安装脚本以用户身份执行任意代码，launcher 不静默放行
  */
-export type InstallOutcome = { "status": "installed", receipt: InstallReceipt | null, notices: Array<InstallNotice>, } | { "status": "needsApproval", packages: Array<string>, workspaceYaml: string, } | { "status": "needsStoreRepair" };
+export type InstallOutcome = { "status": "installed", receipt: InstallReceipt | null, notices: Array<InstallNotice>, } | { "status": "needsApproval", packages: Array<string>, workspaceYaml: string | null, } | { "status": "needsStoreRepair" };

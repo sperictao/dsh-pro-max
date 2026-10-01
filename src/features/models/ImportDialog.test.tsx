@@ -62,8 +62,19 @@ beforeEach(() => {
 });
 
 describe("ImportDialog", () => {
+  // 导入写进页面当前选中的形态（ADR 0012）：desktop 档的导入不能悄悄落进 web 档
+  it("imports into the surface the page is showing", async () => {
+    const user = userEvent.setup();
+    render(createElement(ImportDialog, { surface: "desktop", onClose: vi.fn(), onImported: vi.fn() }));
+    const dialog = await screen.findByRole("dialog", { name: "Import provider configuration" });
+    await user.click(await within(dialog).findByRole("button", { name: "Import selected (2)" }));
+    await waitFor(() => expect(cmd.modelConfigImportRun).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(cmd.modelConfigImportRun).mock.calls[0][0]).toBe("desktop");
+    expect(vi.mocked(cmd.modelConfigImportRun).mock.calls[0][1]).toHaveLength(2);
+  });
+
   it("preselects only entries that do not depend on literal secrets and hides empty sources", async () => {
-    render(createElement(ImportDialog, { onClose: vi.fn(), onImported: vi.fn() }));
+    render(createElement(ImportDialog, { surface: "web", onClose: vi.fn(), onImported: vi.fn() }));
     const dialog = await screen.findByRole("dialog", { name: "Import provider configuration" });
 
     await waitFor(() =>
@@ -78,7 +89,7 @@ describe("ImportDialog", () => {
 
   it("still lets the user explicitly include a literal-key entry and surfaces the consequence", async () => {
     const user = userEvent.setup();
-    render(createElement(ImportDialog, { onClose: vi.fn(), onImported: vi.fn() }));
+    render(createElement(ImportDialog, { surface: "web", onClose: vi.fn(), onImported: vi.fn() }));
     const dialog = await screen.findByRole("dialog", { name: "Import provider configuration" });
     const literal = await within(dialog).findByRole("checkbox", { name: "codex:openai" });
 
@@ -90,7 +101,7 @@ describe("ImportDialog", () => {
 
   it("reports the filtered provider count instead of the unfiltered total", async () => {
     const user = userEvent.setup();
-    render(createElement(ImportDialog, { onClose: vi.fn(), onImported: vi.fn() }));
+    render(createElement(ImportDialog, { surface: "web", onClose: vi.fn(), onImported: vi.fn() }));
     const dialog = await screen.findByRole("dialog", { name: "Import provider configuration" });
     await within(dialog).findByText("Providers found: 3");
 

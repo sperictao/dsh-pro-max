@@ -1,13 +1,17 @@
-// 模型配置工作台：编辑 web profile 补丁里的模型域两行（agent-default-model +
-// llm-pi-ai.providers）。交互参考 PI-Desktop Provider Studio，但保持 dsh 自身
-// 配置语义：默认模型/推理档与服务增删改均按动作即时落盘，补丁文件热重载后
-// 立即生效（0.1.7 起设置的真身是 profile 的 cordis.patch.yml）；密钥仍只保存
-// 环境变量名。主页面只展示摘要、状态和快捷操作，
+// 模型配置工作台：按目标形态编辑模型域两行（agent-default-model +
+// llm-pi-ai.providers）——web 档写自己 profile 的补丁，desktop 档经桥接写桌面应用
+// 自己的 Config Editor（ADR 0012）。一份界面，形态只决定读写后端；两档都纳管时页头
+// 出形态切换，切换即以该档重新挂载编辑器（编辑状态不跨档串）。交互参考 PI-Desktop
+// Provider Studio，但保持 dsh 自身配置语义：默认模型/推理档与服务增删改均按动作即时
+// 落盘，热重载后立即生效（0.1.7 起设置的真身是 profile 的 cordis.patch.yml）；密钥
+// 仍只保存环境变量名（凭据两档共用一份）。主页面只展示摘要、状态和快捷操作，
 // 详细服务与模型配置进入 ProviderDialog 渐进披露。
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useAppStore } from "@/shared/store";
+import { useAppStore, useManagedSurfaces } from "@/shared/store";
+import { SurfaceSwitch, useSurfaceLabel } from "@/shared/components/Surface";
+import { BridgeNotice } from "@/features/integration/BridgeNotice";
 import * as cmd from "@/shared/commands";
 import {
   BTN,
@@ -20,7 +24,7 @@ import {
   ROW_ICON_BUTTON,
   SELECT,
 } from "@/shared/lib/ui";
-import type { ModelCatalogFile, ModelConfig, ProviderConfig } from "@/shared/types";
+import type { BridgeStatus, DshSurface, ModelCatalogFile, ModelConfig, ProviderConfig } from "@/shared/types";
 import { renderMessage, tErr } from "@/shared/i18n/error";
 import { ProviderDialog, type ProviderDialogState } from "./ProviderDialog";
 import { deriveCredentialRef, type CredentialWrite } from "./credentials";
@@ -168,6 +172,89 @@ function removeProviderFromConfig(
 }
 
 export function ModelsView() {
+  const { list } = useManagedSurfaces();
+  const label = useSurfaceLabel();
+  const [picked, setPicked] = useState<DshSurface>(list[0] ?? "web");
+  // 派生实际形态：纳管形态改了之后停在已不纳管的那档上无法表示（与市场 tab 同一手法）
+  const surface = list.includes(picked) ? picked : (list[0] ?? "web");
+  const heading =
+    list.length > 1 ? (
+      <SurfaceSwitch id="models-surface" surfaces={list} value={surface} onChange={setPicked} />
+    ) : (
+      <p className="text-xs opacity-60" data-surface={surface}>
+        {label(surface)}
+      </p>
+    );
+  return surface === "desktop" ? (
+    <DesktopGate key="desktop" heading={heading}>
+      <ModelsEditor surface="desktop" heading={heading} />
+    </DesktopGate>
+  ) : (
+    <ModelsEditor key="web" surface="web" heading={heading} />
+  );
+}
+
+/// desktop 档的前提：桥接连着才有可读写的对象。没连上时整个编辑器不出现，换成桥接
+/// 状态的去向（与插件页桌面 tab 同一份说法）——不是空配置，也不是报错
+function DesktopGate({ heading, children }: { heading: ReactNode; children: ReactNode }) {
+  const { t } = useTranslation();
+  const toast = useAppStore((state) => state.toast);
+  // undefined = 还在问；null = 问不到
+  const [bridge, setBridge] = useState<BridgeStatus | null | undefined>(undefined);
+
+  const probe = useCallback(async () => {
+    setBridge(undefined);
+    try {
+      setBridge(await cmd.desktopBridgeStatus());
+    } catch {
+      setBridge(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void probe();
+  }, [probe]);
+
+  if (bridge?.state === "connected") return <>{children}</>;
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(t("Address copied"), "info");
+    } catch (e) {
+      toast(t("Failed to copy: {{error}}", { error: String(e) }), "error");
+    }
+  };
+
+  return (
+    <main className="flex-1 overflow-y-auto p-6" id="models-view">
+      <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
+        <div className="flex min-w-0 flex-col gap-2">
+          <h2 className="text-base font-semibold">{t("Model Configuration")}</h2>
+          {heading}
+        </div>
+        {bridge === undefined ? (
+          <p className="text-sm opacity-60">{t("Checking...")}</p>
+        ) : (
+          <section className={`${PANEL} flex flex-col gap-3 p-4`} id="models-desktop-unavailable">
+            {bridge ? (
+              <BridgeNotice bridge={bridge} onCopy={(text) => void copy(text)} />
+            ) : (
+              <p className={MUTED}>{t("Could not reach DeepSeek Harness. Open it, then check again.")}</p>
+            )}
+            <div>
+              <button className={BTN} onClick={() => void probe()}>
+                {t("Check again")}
+              </button>
+            </div>
+          </section>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function ModelsEditor({ surface, heading }: { surface: DshSurface; heading: ReactNode }) {
   const { t } = useTranslation();
   const toast = useAppStore((state) => state.toast);
   const loadModelConfig = useAppStore((state) => state.loadModelConfig);
@@ -196,7 +283,7 @@ export function ModelsView() {
     let disposed = false;
     void (async () => {
       try {
-        const loaded = await loadModelConfig();
+        const loaded = await loadModelConfig(surface);
         let status: Record<string, boolean> = {};
         try {
           status = await resolveProviderCredentialStatus(loaded.providers);
@@ -321,7 +408,7 @@ export function ModelsView() {
     if (route) setBusyRoute(route);
     else setBusyGlobal(true);
     try {
-      await cmd.modelConfigSave(next);
+      await cmd.modelConfigSave(surface, next);
       let status: Record<string, boolean> = {};
       try {
         status = await resolveProviderCredentialStatus(next.providers);
@@ -532,9 +619,16 @@ export function ModelsView() {
   const openImport = () => setImportOpen(true);
 
   if (loading) {
+    // 加载中也留着标题与形态切换：切档时控件不该闪没，用户也能在慢加载时切回去
     return (
       <main className="flex-1 overflow-y-auto p-6" id="models-view">
-        <p className="text-sm opacity-60">{t("Detecting…")}</p>
+        <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
+          <div className="flex min-w-0 flex-col gap-2">
+            <h2 className="text-base font-semibold">{t("Model Configuration")}</h2>
+            {heading}
+          </div>
+          <p className="text-sm opacity-60">{t("Detecting…")}</p>
+        </div>
       </main>
     );
   }
@@ -572,8 +666,9 @@ export function ModelsView() {
     <main className="flex-1 overflow-y-auto p-6" id="models-view">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
         <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
+          <div className="flex min-w-0 flex-col gap-2">
             <h2 className="text-base font-semibold">{t("Model Configuration")}</h2>
+            {heading}
           </div>
           <button className={BTN} id="btn-import-models" onClick={openImport} disabled={busyGlobal}>
             {t("Import configuration")}
@@ -947,11 +1042,12 @@ export function ModelsView() {
       )}
       {importOpen && (
         <ImportDialog
+          surface={surface}
           onClose={() => setImportOpen(false)}
           onImported={(result) => {
             void (async () => {
               try {
-                const fresh = await loadModelConfig();
+                const fresh = await loadModelConfig(surface);
                 let status: Record<string, boolean> = {};
                 try {
                   status = await resolveProviderCredentialStatus(fresh.providers);

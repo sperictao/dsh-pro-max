@@ -22,6 +22,7 @@
 
 use super::components::{pnpm_bin, resolve_dsh_bin, web_profile_package_path};
 use super::process::{run_capture_lines, run_capture_lines_env};
+use crate::config::DshSurface;
 use crate::i18n::{Message, MessageArg};
 use crate::version::{is_newer, parse_version, satisfies_range};
 use serde::{Deserialize, Serialize};
@@ -143,10 +144,12 @@ pub enum InstallOutcome {
         receipt: Option<InstallReceipt>,
         notices: Vec<InstallNotice>,
     },
+    /// workspace_yaml 是放行要写入的文件：web 档由 Launcher 写自己 profile 的那份；
+    /// desktop 档由桌面应用自己记录放行，没有 Launcher 要写的文件，为 None
     #[serde(rename_all = "camelCase")]
     NeedsApproval {
         packages: Vec<String>,
-        workspace_yaml: String,
+        workspace_yaml: Option<String>,
     },
     /// pnpm 大版本升级导致 store 漂移（ERR_PNPM_UNEXPECTED_STORE / hoist
     /// pattern diff）：pnpm 拒绝在旧链接的 node_modules 上继续操作，修复是
@@ -456,8 +459,8 @@ pub(crate) fn installed_plugins() -> Result<Vec<InstalledPlugin>, Message> {
 #[ts(export, export_to = "../../src/shared/bindings/")]
 pub struct PluginUpdateInfo {
     pub name: String,
-    /// 落盘 spec 原文（file:/github: 等形态如实展示）
-    pub spec: String,
+    /// 落盘 spec 原文（file:/github: 等形态如实展示）；desktop 档拿不到安装 spec，为 None
+    pub spec: Option<String>,
     pub managed: bool,
     /// 实际安装版本：磁盘事实（node_modules/<name>/package.json）优先，
     /// spec 精确版本次之；npm 形态按此，GitHub 仓库形态只有磁盘事实一途，
@@ -859,29 +862,58 @@ struct Resolved {
 /// 部分包查询失败不放大为整体失败（如实无 latest、不出更新按钮）；全部
 /// 可检包都失败才报错——那是网络问题的信号
 fn check_updates_once() -> Result<Vec<PluginUpdateInfo>, Message> {
-    let list = installed_plugins()?;
-    let mut infos: Vec<PluginUpdateInfo> = Vec::with_capacity(list.len());
-    // 上游仓库与已装事实同源（InstalledPlugin），随下标保留供并发查询用
-    let mut upstreams: Vec<Option<String>> = Vec::with_capacity(list.len());
-    for p in list {
-        upstreams.push(p.upstream_repo);
-        infos.push(PluginUpdateInfo {
+    let candidates = installed_plugins()?
+        .into_iter()
+        .map(|p| UpdateCandidate {
+            name: p.name,
+            spec: Some(p.spec),
+            managed: p.managed,
             installed_version: p.version,
+            upstream_repo: p.upstream_repo,
+        })
+        .collect();
+    // 窗口判定的事实源：策略（profile yaml + 内置默认）读一次；宿主 dsh 版本探测
+    // 一次，供兼容门禁判定
+    check_updates_with(candidates, release_age_policy(), super::components::dsh_version())
+}
+
+/// 更新检测的一个候选。两档共用同一检测核，差别只在事实从哪来：web 档读自己的
+/// profile 落盘，desktop 档读桥接给的 bundle 列表（见 market_desktop）
+pub(crate) struct UpdateCandidate {
+    pub(crate) name: String,
+    pub(crate) spec: Option<String>,
+    pub(crate) managed: bool,
+    pub(crate) installed_version: Option<String>,
+    /// 有值查远端仓库默认分支 manifest，无值查 registry latest
+    pub(crate) upstream_repo: Option<String>,
+}
+
+/// 更新检测核：age_policy 是 (minimumReleaseAge 分钟数, 豁免列表)，dsh_host 是该
+/// 形态自己的 dsh 版本（兼容门禁用）。发布时间只对确有更新的包多付一次 HTTP
+pub(crate) fn check_updates_with(
+    candidates: Vec<UpdateCandidate>,
+    age_policy: (u64, Vec<String>),
+    dsh_host: Option<String>,
+) -> Result<Vec<PluginUpdateInfo>, Message> {
+    let mut infos: Vec<PluginUpdateInfo> = Vec::with_capacity(candidates.len());
+    // 上游仓库随下标保留供并发查询用
+    let mut upstreams: Vec<Option<String>> = Vec::with_capacity(candidates.len());
+    for c in candidates {
+        upstreams.push(c.upstream_repo);
+        infos.push(PluginUpdateInfo {
+            installed_version: c.installed_version,
             update_available: false,
             latest_version: None,
             latest_in_release_age_window: false,
             latest_publish_time: None,
             requires_dsh: None,
             compatible: None,
-            name: p.name,
-            spec: p.spec,
-            managed: p.managed,
+            name: c.name,
+            spec: c.spec,
+            managed: c.managed,
         });
     }
-    // 窗口判定的事实源：策略（profile yaml + 内置默认）读一次，发布时间只对
-    // 确有更新的包多付一次 HTTP；宿主 dsh 版本探测一次，供兼容门禁判定
-    let (age_minutes, age_excludes) = release_age_policy();
-    let dsh_host = super::components::dsh_version();
+    let (age_minutes, age_excludes) = age_policy;
     let now = time::OffsetDateTime::now_utc();
     let client = update_http_client()?;
     // 可检项下标（未受管且已装版本可得；无上游仓库的协议形态在
@@ -1173,7 +1205,7 @@ fn load_policy_entries() -> Result<Option<Vec<String>>, Message> {
 }
 
 /// 安装前的策略闸门：拒绝时说明命中了哪条约束与策略文件在哪
-fn enforce_install_policy(identifier: &str) -> Result<(), Message> {
+pub(crate) fn enforce_install_policy(identifier: &str) -> Result<(), Message> {
     let Some(entries) = load_policy_entries()? else {
         return Ok(());
     };
@@ -1913,6 +1945,11 @@ pub enum InstallNotice {
     /// dsh.profile.bundles，已把该条目剥回去（防下次启动重复挂载失败）
     #[serde(rename_all = "camelCase")]
     StrippedDuplicateBundle { name: String },
+    /// 桌面应用说这次变更要重启它才生效。只就近提示、不给重启入口：macOS 的退出要过
+    /// 应用自己的确认框，Windows 没有第三方退出入口（CONTEXT.md）
+    DesktopRestartRequired,
+    /// 桌面应用说这次变更被更高优先级的层盖住、没有生效（落盘了但不起作用）
+    DesktopOverridden,
 }
 
 /// 护栏的层快照：dependencies（键 → 落盘 spec 原文）、`dsh.profile.bundles`、
@@ -2290,10 +2327,13 @@ fn post_install_guard(
 
 // ============ 审计台账 ============
 
-/// 台账行（JSONL 单行）：ts/action/identifier/result/error/两个版本号。
+/// 台账行（JSONL 单行）：ts/surface/action/identifier/result/error/两个版本号。
 /// error 记本地化前的原始错误（子进程输出或内部原因），不随界面语言漂移——
-/// 台账是"可复述"的最低形态：排错日志 2MB 轮转即删，装了什么必须另有所在
+/// 台账是"可复述"的最低形态：排错日志 2MB 轮转即删，装了什么必须另有所在。
+/// surface 记这次操作落在哪个形态（两档共用一本台账，见 ADR 0012）；dsh_version
+/// 是那个形态自己的 dsh 版本
 pub(crate) fn audit_line(
+    surface: DshSurface,
     action: &str,
     identifier: &str,
     dsh_version: Option<String>,
@@ -2301,6 +2341,7 @@ pub(crate) fn audit_line(
 ) -> String {
     serde_json::json!({
         "ts": rfc3339_now(),
+        "surface": surface,
         "action": action,
         "identifier": identifier,
         "result": if error.is_none() { "ok" } else { "failed" },
@@ -2317,9 +2358,15 @@ fn rfc3339_now() -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
-/// 追加一条审计记录。尽力而为：写失败只落排错日志，不回滚已完成的操作、
-/// 不改变返回值——台账服务于"事后说清"，不是操作的组成步骤
+/// 追加一条 web 档的审计记录（dsh 版本取 web 档用的 CLI）
 fn append_audit(app: &tauri::AppHandle, action: &str, identifier: &str, error: Option<&str>) {
+    let line = audit_line(DshSurface::Web, action, identifier, super::components::dsh_version(), error);
+    write_audit(app, &line);
+}
+
+/// 把一行台账追加进文件。尽力而为：写失败只落排错日志，不回滚已完成的操作、
+/// 不改变返回值——台账服务于"事后说清"，不是操作的组成步骤
+pub(crate) fn write_audit(app: &tauri::AppHandle, line: &str) {
     use std::io::Write;
     use tauri::Manager;
     let Ok(path) = app
@@ -2329,7 +2376,6 @@ fn append_audit(app: &tauri::AppHandle, action: &str, identifier: &str, error: O
     else {
         return;
     };
-    let line = audit_line(action, identifier, super::components::dsh_version(), error);
     match std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -2509,7 +2555,7 @@ pub(crate) fn install_decision(
                 })?;
                 return Ok(InstallOutcome::NeedsApproval {
                     packages,
-                    workspace_yaml,
+                    workspace_yaml: Some(workspace_yaml),
                 });
             }
             Err((raw, display))

@@ -19,7 +19,7 @@ const BRIDGE_PREFIX: &str = "/dsh-pro-max-bridge";
 /// 桥接改了路由形状或字段语义时会 +1，那时这里同步跟上并按需改调用方。
 const BRIDGE_PROTOCOL: u32 = 1;
 /// 桥接插件的 npm 包名
-const BRIDGE_PACKAGE: &str = "@sperictao/dsh-pro-max-bridge";
+pub(crate) const BRIDGE_PACKAGE: &str = "@sperictao/dsh-pro-max-bridge";
 /// 本应用测过、协议代次对得上的那一版桥接。必须是**精确版本**，原因有两条，都已用
 /// 桌面应用内嵌的 pnpm 11.7.0 实测：
 /// - 走 registry 而不是 tarball 地址：tarball 地址的包已在本机 store 时，它复用缓存
@@ -149,6 +149,14 @@ pub struct ConfigRow {
     /// ts(type) 会整个覆盖 Option，所以 `| null` 要自己写上，否则生成出来的类型会撒谎
     #[ts(type = "import(\"./serde_json/JsonValue\").JsonValue | null")]
     pub current: Option<serde_json::Value>,
+    /// 继承层（bundle 层组合出的值）。补丁层 config 对它是整份替换、不合并，所以
+    /// 「撤掉覆盖」就是回写它——ConfigEditor 见到与继承值深相等即删掉覆盖
+    #[ts(type = "import(\"./serde_json/JsonValue\").JsonValue")]
+    pub inherited: serde_json::Value,
+    /// 补丁层里这一行写着的 config（没有覆盖行时为空对象）
+    #[serde(rename = "override")]
+    #[ts(rename = "override", type = "import(\"./serde_json/JsonValue\").JsonValue")]
+    pub override_config: serde_json::Value,
 }
 
 #[tauri::command]
@@ -156,25 +164,25 @@ pub async fn desktop_bridge_plugins() -> Result<DesktopPlugins, Message> {
     super::ipc_blocking(plugins_once).await
 }
 
-#[tauri::command]
-pub async fn desktop_bridge_install(
-    spec: String,
-    approved_builds: Option<Vec<String>>,
-) -> Result<ChangeOutcome, Message> {
-    super::ipc_blocking(move || {
-        let mut body = serde_json::json!({ "spec": spec });
-        // 只在有值时才带：上游按「给了就得是当前仍待批的包」校验，空数组会被拒
-        if let Some(builds) = approved_builds {
-            body["approvedBuilds"] = serde_json::json!(builds);
-        }
-        change_once("/plugins/install", body)
-    })
-    .await
+/// 经应用自己的 Plugin Manager 安装一个包。调用方是市场域（策略、审计、回执都在那边，
+/// 见 market_desktop），这里只管通道
+pub(crate) fn install(spec: &str, approved_builds: Option<&[String]>) -> Result<ChangeOutcome, Message> {
+    let mut body = serde_json::json!({ "spec": spec });
+    // 只在有值时才带：上游按「给了就得是当前仍待批的包」校验，空数组会被拒
+    if let Some(builds) = approved_builds {
+        body["approvedBuilds"] = serde_json::json!(builds);
+    }
+    change_once("/plugins/install", body)
 }
 
-#[tauri::command]
-pub async fn desktop_bridge_remove(name: String) -> Result<ChangeOutcome, Message> {
-    super::ipc_blocking(move || change_once("/plugins/remove", serde_json::json!({ "name": name }))).await
+/// 经应用自己的 Plugin Manager 卸载一个 bundle（调用方同 install）
+pub(crate) fn remove(name: &str) -> Result<ChangeOutcome, Message> {
+    change_once("/plugins/remove", serde_json::json!({ "name": name }))
+}
+
+/// 翻转一个 bundle 的启用状态（调用方同 install）
+pub(crate) fn set_bundle_enabled(name: &str, enabled: bool) -> Result<ChangeOutcome, Message> {
+    change_once("/plugins/enable", enable_body(None, Some(name.to_string()), enabled)?)
 }
 
 /// 翻转启用状态：插件行按 entryId、bundle 按包名，上游是两套开关所以这里也分两个参数
@@ -189,22 +197,21 @@ pub async fn desktop_bridge_set_enabled(
 
 #[tauri::command]
 pub async fn desktop_bridge_config() -> Result<Vec<ConfigRow>, Message> {
-    super::ipc_blocking(config_once).await
+    super::ipc_blocking(config_rows).await
 }
 
 /// 写入一行的绝对 config。整份替换（不是合并）：上游的 edit 收到的就是下一份原始 config
 #[tauri::command]
 pub async fn desktop_bridge_config_edit(id: String, config: serde_json::Value) -> Result<(), Message> {
-    super::ipc_blocking(move || {
-        // 经 required_with 而不是裸 request：后者把「桥接不在」（连不上 / 404）返回成
-        // Ok(None)，那是「这一步还没做」而不是成功——折叠掉它会让写失败静默报成功
-        required_with::<serde_json::Value>(
-            "/config/edit",
-            serde_json::json!({ "id": id, "config": config }),
-        )
+    super::ipc_blocking(move || config_edit(&id, config)).await
+}
+
+/// 写一行配置（桌面 tab 的原文编辑与模型域共用这一个入口）
+pub(crate) fn config_edit(id: &str, config: serde_json::Value) -> Result<(), Message> {
+    // 经 required_with 而不是裸 request：后者把「桥接不在」（连不上 / 404）返回成
+    // Ok(None)，那是「这一步还没做」而不是成功——折叠掉它会让写失败静默报成功
+    required_with::<serde_json::Value>("/config/edit", serde_json::json!({ "id": id, "config": config }))
         .map(|_| ())
-    })
-    .await
 }
 
 /// 翻转启用状态的请求体。插件行按 entryId、bundle 按包名——上游是两套开关，
@@ -221,7 +228,7 @@ fn enable_body(
     }
 }
 
-fn plugins_once() -> Result<DesktopPlugins, Message> {
+pub(crate) fn plugins_once() -> Result<DesktopPlugins, Message> {
     let raw: UpstreamPlugins = required("/plugins")?;
     Ok(DesktopPlugins {
         plugins: raw
@@ -250,7 +257,7 @@ fn plugins_once() -> Result<DesktopPlugins, Message> {
     })
 }
 
-fn config_once() -> Result<Vec<ConfigRow>, Message> {
+pub(crate) fn config_rows() -> Result<Vec<ConfigRow>, Message> {
     let rows: Vec<UpstreamConfigRow> = required("/config")?;
     Ok(rows
         .into_iter()
@@ -258,6 +265,8 @@ fn config_once() -> Result<Vec<ConfigRow>, Message> {
             id: row.id,
             name: row.name,
             current: row.current,
+            inherited: row.inherited,
+            override_config: row.override_config,
         })
         .collect())
 }
@@ -335,6 +344,15 @@ struct UpstreamConfigRow {
     id: String,
     name: String,
     current: Option<serde_json::Value>,
+    /// 旧桥接不带这两项时按空对象处理，与上游「没有就是 {}」同一口径
+    #[serde(default = "empty_object")]
+    inherited: serde_json::Value,
+    #[serde(rename = "override", default = "empty_object")]
+    override_config: serde_json::Value,
+}
+
+fn empty_object() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
 }
 
 
@@ -592,7 +610,7 @@ mod tests {
             "桥接不在运行档的 bundle 列表里"
         );
 
-        let config = config_once().unwrap();
+        let config = config_rows().unwrap();
         println!("运行档配置 {} 行", config.len());
         for row in config.iter().take(8) {
             println!("  {} <{}>", row.id, row.name);
@@ -603,6 +621,25 @@ mod tests {
     // 下面的样本按桌面应用内嵌 API 目录（typert 契约）里 PluginInventoryEntry /
     // BundleInfo / ChangeResult / PluginInfo 的声明逐字构造。这些测试的意义是：上游改
     // 字段名时在这里就断，而不是等到真机上一个字段静默变 None。
+
+    /// 配置行的三层值按上游 configuration() 的形状读：没有覆盖行时 override 是空对象，
+    /// 不是缺席——旧桥接整个不带这两项时也按空对象处理
+    #[test]
+    fn maps_the_layers_of_a_config_row() {
+        let rows: Vec<UpstreamConfigRow> = serde_json::from_str(
+            r#"[
+                {"id": "agent-default-model", "name": "@deepseek-ai/dsh-agent-default-model",
+                 "current": {"provider": "p", "model": "m"},
+                 "inherited": {"provider": "p", "model": "m"}, "override": {}},
+                {"id": "old", "name": "x", "current": null}
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(rows[0].inherited["provider"], "p");
+        assert_eq!(rows[0].override_config, serde_json::json!({}));
+        assert_eq!(rows[1].inherited, serde_json::json!({}));
+        assert_eq!(rows[1].override_config, serde_json::json!({}));
+    }
 
     #[test]
     fn maps_a_plugin_row_that_can_be_toggled() {

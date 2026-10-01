@@ -131,7 +131,7 @@ describe("ModelsView provider studio", () => {
     await user.click(within(listbox).getByRole("option", { name: /Spero AI · kimi-for-coding/ }));
 
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
-    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
+    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][1];
     expect(saved.defaultProvider).toBe("spero-ai");
     expect(saved.defaultModel).toBe("kimi-for-coding");
     expect(saved.defaultReasoningEffort).toBeNull();
@@ -161,7 +161,7 @@ describe("ModelsView provider studio", () => {
 
     await user.selectOptions(screen.getByLabelText("Reasoning Effort"), "medium");
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
-    expect(vi.mocked(cmd.modelConfigSave).mock.calls[0][0].defaultReasoningEffort).toBe("medium");
+    expect(vi.mocked(cmd.modelConfigSave).mock.calls[0][1].defaultReasoningEffort).toBe("medium");
   });
 
   it("adds a preset provider through the progressive composer and saves immediately", async () => {
@@ -196,12 +196,12 @@ describe("ModelsView provider studio", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(cmd.modelCredentialSet).toHaveBeenCalledWith("DEEPSEEK_API_KEY", "sk-deepseek-test");
     expect(cmd.modelConfigSave).toHaveBeenCalledTimes(2);
-    const firstSaved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
+    const firstSaved = vi.mocked(cmd.modelConfigSave).mock.calls[0][1];
     expect(firstSaved.providers).toHaveLength(1);
     expect(firstSaved.providers[0].apiKeyEnv).toBe("DEEPSEEK_API_KEY");
     expect(JSON.stringify(firstSaved)).not.toContain("sk-deepseek-test");
     expect(firstSaved.defaultProvider).toBeNull();
-    const saved = vi.mocked(cmd.modelConfigSave).mock.calls.at(-1)![0];
+    const saved = vi.mocked(cmd.modelConfigSave).mock.calls.at(-1)![1];
     expect(saved.providers[0].route).toMatch(/deepseek/i);
     expect(saved.defaultProvider).toBe(saved.providers[0].route);
     expect(saved.defaultModel).toBe("deepseek-v4-pro");
@@ -370,7 +370,7 @@ describe("ModelsView provider studio", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
 
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
-    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
+    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][1];
     expect(saved.providers[0].displayName).toBe("Spero Gateway");
     expect(saved.providers[0].extra).toEqual({ retryPolicy: { mode: "normal" } });
     expect(saved.providers[0].models[1].extra).toEqual({ compat: { supportsStore: true } });
@@ -435,7 +435,7 @@ describe("ModelsView provider studio", () => {
     expect(vi.mocked(cmd.modelCredentialUnset).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(cmd.modelConfigSave).mock.invocationCallOrder[0],
     );
-    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
+    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][1];
     expect(saved.providers.map((provider) => provider.route)).toEqual(["empty-ai", "second-ai"]);
     expect(saved.defaultProvider).toBe("second-ai");
     expect(saved.defaultModel).toBe("m2");

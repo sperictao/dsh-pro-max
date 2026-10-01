@@ -12,4 +12,13 @@ id: string, name: string,
  * 这一行现在生效的配置（该行没写 config 时为 None）。
  * ts(type) 会整个覆盖 Option，所以 `| null` 要自己写上，否则生成出来的类型会撒谎
  */
-current: import("./serde_json/JsonValue").JsonValue | null, };
+current: import("./serde_json/JsonValue").JsonValue | null, 
+/**
+ * 继承层（bundle 层组合出的值）。补丁层 config 对它是整份替换、不合并，所以
+ * 「撤掉覆盖」就是回写它——ConfigEditor 见到与继承值深相等即删掉覆盖
+ */
+inherited: import("./serde_json/JsonValue").JsonValue, 
+/**
+ * 补丁层里这一行写着的 config（没有覆盖行时为空对象）
+ */
+override: import("./serde_json/JsonValue").JsonValue, };

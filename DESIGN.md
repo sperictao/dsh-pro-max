@@ -19,6 +19,7 @@ max-w-3xl 单列居中。本文件描述该次美化后的现状。）
 ## Color & Components
 
 - 按钮（`src/shared/lib/ui.ts` 共享配方）：`BTN_PRIMARY`（实心主色，禁用落 muted 灰）、`BTN_DANGER`（实心 destructive，危险按钮唯一配方，禁用同 BTN_PRIMARY）、`BTN_OUTLINE`/`BTN`/`BTN_SM`（描边次操作，小档统一 `text-xs`）、`BTN_DANGER_SM`（小描边危险）、`ROW_ICON_BUTTON`（行内图标方钮，危险悬停色在使用处追加）。
+- 形态角标（`src/shared/components/Surface.tsx` 的 `SurfaceBadges`）：市场卡片右上角紧随安装事实胶囊，装在哪几档就并列哪几个（语义绿细描边小标签）；不可知的那档是虚线描边的「Desktop ?」，悬浮给出原因。两档都纳管时卡片底部按形态分行，行首标出形态；只有一档时不出行首标签。模型页的形态切换复用顶栏 `APP_NAV*` segmented（`SurfaceSwitch`）。
 - 状态徽章 `.status-badge`：dot 变体 running/failed/starting/stopping + `ok` 变体（语义绿，市场页安装/启用事实共用），`StateBadge`（市场卡）是其薄包装。
 - Toggle：原生 checkbox + `TOGGLE`（设置侧）与 `TOGGLE_LABELED`（带状态文字胶囊，市场启停）配方，同一 `ui.ts` 事实来源。
 - 卡片：区块卡 `rounded-xl border border-border bg-card p-4`（`ui.ts` 的 `PANEL`）；行内盒 `rounded-lg border`；胶囊 `rounded-full border px-2.5 py-0.5 text-xs`；地址芯片 `rounded-full bg-primary/15 font-mono text-xs text-primary`。

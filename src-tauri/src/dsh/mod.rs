@@ -39,6 +39,7 @@ mod components;
 mod desktop;
 mod detect;
 mod market;
+mod market_desktop;
 mod model_import;
 mod models;
 mod probe;
@@ -75,8 +76,6 @@ reexport_commands! {
     desktop::desktop_detect,
     bridge::desktop_bridge_status,
     bridge::desktop_bridge_plugins,
-    bridge::desktop_bridge_install,
-    bridge::desktop_bridge_remove,
     bridge::desktop_bridge_set_enabled,
     bridge::desktop_bridge_config,
     bridge::desktop_bridge_config_edit,
@@ -106,6 +105,11 @@ reexport_commands! {
     market::market_discovery_compat,
     market::market_release_notes,
     market::market_diagnostics,
+    market_desktop::market_desktop_installed,
+    market_desktop::market_desktop_install,
+    market_desktop::market_desktop_remove,
+    market_desktop::market_desktop_set_enabled,
+    market_desktop::market_desktop_check_updates,
     models::model_config_load,
     models::model_config_save,
     models::model_catalog_load,

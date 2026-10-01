@@ -12,6 +12,7 @@ import { createMarketSlice, type MarketSlice } from "./store/slices/market";
 import { createModelSlice, type ModelSlice } from "./store/slices/models";
 
 export type { View, SettingsSection, ToastType, ToastItem } from "./store/slices/ui";
+import type { DshSurface } from "./types";
 export { isConfigDirty } from "./store/slices/config";
 
 export interface AppStore
@@ -32,3 +33,14 @@ export const useAppStore = create<AppStore>()((set, get, store) => ({
   ...createMarketSlice(set, get, store),
   ...createModelSlice(set, get, store),
 }));
+
+/// 本应用纳管的形态（设置页「纳管形态」的事实）。配置未加载时按仅 web 走——与首页、
+/// 插件页同一约定。两个布尔各自订阅，避免每次渲染造新数组触发重渲染
+export function useManagedSurfaces(): { web: boolean; desktop: boolean; list: DshSurface[] } {
+  const web = useAppStore((s) => s.config?.managed_surfaces.includes("web") ?? true);
+  const desktop = useAppStore((s) => s.config?.managed_surfaces.includes("desktop") ?? false);
+  const list: DshSurface[] = [];
+  if (web) list.push("web");
+  if (desktop) list.push("desktop");
+  return { web, desktop, list };
+}

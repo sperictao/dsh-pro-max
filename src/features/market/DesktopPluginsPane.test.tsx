@@ -52,7 +52,13 @@ function mount(options: { bridge?: BridgeStatus; plugins?: DesktopPlugins } = {}
   // 每次返回新对象：桥接是真的 HTTP，重拉拿回的是新 JSON。给同一个引用会让 React 跳过
   // 重渲染，从而掩盖「重拉把编辑中的内容冲掉」这类问题
   vi.spyOn(cmd, "desktopBridgeConfig").mockImplementation(async () => [
-    { id: "agent-default-model", name: "@deepseek-ai/dsh-agent-default-model", current: { model: "x" } },
+    {
+      id: "agent-default-model",
+      name: "@deepseek-ai/dsh-agent-default-model",
+      current: { model: "x" },
+      inherited: { model: "x" },
+      override: {},
+    },
   ]);
   return render(createElement(DesktopPluginsPane));
 }
@@ -107,59 +113,29 @@ describe("DesktopPluginsPane lists", () => {
     expect(screen.getByText("The desktop app manages this itself; it cannot be changed here.")).toBeInTheDocument();
   });
 
-  it("only offers removal for a bundle the profile owns", async () => {
+  // 用户装的 bundle 归市场「已安装」页（ADR 0012）：这里再列一份就是第二个事实来源。
+  // 只剩内置 bundle 的开关，也就没有移除入口
+  it("lists only the built-in bundles, leaving the user's own to the Installed tab", async () => {
     mount();
-    const remove = await screen.findAllByRole("button", { name: "Remove" });
-    expect(remove).toHaveLength(2);
-    expect(remove[0]).toBeEnabled();
-    expect(remove[1]).toBeDisabled();
-    expect(screen.getByText("Ships with dsh; it cannot be removed.")).toBeInTheDocument();
+    expect(await screen.findByRole("checkbox", { name: "builtin" })).toBeEnabled();
+    expect(screen.queryByRole("checkbox", { name: "@sperictao/dsh-pro-max-bridge" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
   });
 });
 
-describe("DesktopPluginsPane install", () => {
-  it("installs the pasted spec", async () => {
-    const user = userEvent.setup();
-    vi.spyOn(cmd, "desktopBridgeInstall").mockResolvedValue(applied);
-    mount();
-
-    await user.type(await screen.findByPlaceholderText(/@scope\/plugin/), "github:owner/repo");
-    await user.click(screen.getByRole("button", { name: "Install" }));
-
-    // 没有待批构建脚本时不带 approvedBuilds（上游按「必须仍待批」校验，空数组会被拒）
-    expect(cmd.desktopBridgeInstall).toHaveBeenCalledWith("github:owner/repo", undefined);
-  });
-
-  it("turns a pending-builds answer into an explicit approval that is passed back", async () => {
-    const user = userEvent.setup();
-    vi.spyOn(cmd, "desktopBridgeInstall")
-      .mockResolvedValueOnce({ ...applied, application: "failed", pendingBuilds: ["sharp"] })
-      .mockResolvedValueOnce(applied);
-    mount();
-
-    await user.type(await screen.findByPlaceholderText(/@scope\/plugin/), "sharp-plugin");
-    await user.click(screen.getByRole("button", { name: "Install" }));
-
-    const approve = await screen.findByRole("button", { name: "Approve build scripts and install" });
-    expect(
-      screen.getByText("These packages want to run install scripts: sharp. Approving lets them run for the desktop profile."),
-    ).toBeInTheDocument();
-
-    await user.click(approve);
-    expect(cmd.desktopBridgeInstall).toHaveBeenLastCalledWith("sharp-plugin", ["sharp"]);
-  });
-
+describe("DesktopPluginsPane change outcomes", () => {
   it("reports the failure reason instead of treating a returned failure as success", async () => {
     const user = userEvent.setup();
-    vi.spyOn(cmd, "desktopBridgeRemove").mockResolvedValue({
+    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockResolvedValue({
       ...applied,
       application: "failed",
-      errorCode: "not-removable",
+      errorCode: "not-addressable",
       errorDiagnostic: "supplied by dsh",
     });
     mount();
 
-    await user.click((await screen.findAllByRole("button", { name: "Remove" }))[0]);
+    await user.click(await screen.findByRole("checkbox", { name: "builtin" }));
     await waitFor(() =>
       expect(useAppStore.getState().toasts[0]?.message).toBe("The change failed: supplied by dsh"),
     );
@@ -167,10 +143,11 @@ describe("DesktopPluginsPane install", () => {
 
   it("says a restart is needed when the app applies it only on next start", async () => {
     const user = userEvent.setup();
-    vi.spyOn(cmd, "desktopBridgeRemove").mockResolvedValue({ ...applied, application: "restart-required" });
+    vi.spyOn(cmd, "desktopBridgeSetEnabled").mockResolvedValue({ ...applied, application: "restart-required" });
     mount();
 
-    await user.click((await screen.findAllByRole("button", { name: "Remove" }))[0]);
+    await user.click(await screen.findByRole("checkbox", { name: "builtin" }));
+    expect(cmd.desktopBridgeSetEnabled).toHaveBeenCalledWith({ bundleName: "builtin" }, false);
     await waitFor(() =>
       expect(useAppStore.getState().toasts[0]?.message).toBe("Restart DeepSeek Harness to apply this change."),
     );
@@ -240,27 +217,5 @@ describe("DesktopPluginsPane editing safety", () => {
     expect((screen.getByRole("textbox", { name: "agent-default-model" }) as HTMLTextAreaElement).value).toBe(
       '{"model":"half-typed"',
     );
-  });
-});
-
-describe("DesktopPluginsPane approval binding", () => {
-  it("forgets the pending approvals once the spec changes", async () => {
-    const user = userEvent.setup();
-    vi.spyOn(cmd, "desktopBridgeInstall").mockResolvedValue({
-      ...applied,
-      application: "failed",
-      pendingBuilds: ["sharp"],
-    });
-    mount();
-
-    const box = await screen.findByPlaceholderText(/@scope\/plugin/);
-    await user.type(box, "sharp-plugin");
-    await user.click(screen.getByRole("button", { name: "Install" }));
-    expect(await screen.findByRole("button", { name: "Approve build scripts and install" })).toBeInTheDocument();
-
-    // 改了规格：那批批准属于上一个规格，留着会让「放行并安装」把新规格连旧批准发出去
-    await user.type(box, "-other");
-    expect(screen.getByRole("button", { name: "Install" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Approve build scripts and install" })).not.toBeInTheDocument();
   });
 });

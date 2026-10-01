@@ -112,6 +112,11 @@ beforeEach(() => {
     marketUpdatesBusy: false,
     marketUpdating: null,
     marketUpdateAllQueue: null,
+    marketUpdateAllQueueSurfaces: null,
+    marketDesktopInstalled: null,
+    marketDesktopBridge: null,
+    marketDesktopUpdates: null,
+    marketDesktopUpdatesBusy: false,
     marketUpdateAllOk: 0,
     marketUpdateAllFailed: 0,
     marketUpdateAllPrefetching: false,
@@ -340,12 +345,12 @@ describe("market operation serialization", () => {
       },
     });
 
-    const update = useAppStore.getState().updateMarketPlugin("dsh-existing");
+    const update = useAppStore.getState().updateMarketPlugin({ surface: "web", name: "dsh-existing" });
     await waitFor(() => expect(installSpy).toHaveBeenCalledWith("dsh-existing@latest"));
 
     // A second write would race the same web profile. The store gate must
     // leave the active update untouched and reject this install request.
-    await useAppStore.getState().installMarketPlugin("dsh-other@latest", "dsh-other");
+    await useAppStore.getState().installMarketPlugin("dsh-other@latest", "dsh-other", ["web"]);
     expect(installSpy).toHaveBeenCalledTimes(1);
 
     resolveUpdate({
@@ -1261,12 +1266,14 @@ describe("MarketView", () => {
       .mockResolvedValue({ status: "installed", receipt: { name: "dsh-better-sidebar", spec: "dsh-better-sidebar@1.2.3" }, notices: [] });
     useAppStore.setState({
       marketPendingApproval: {
+        surface: "web",
         specifier: "dsh-better-sidebar@latest",
         label: "DSH-better-sidebar",
         packages: ["node-pty"],
         workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
         operation: "install",
         silent: false,
+        remaining: [],
       },
     });
     const user = userEvent.setup();
@@ -1318,12 +1325,14 @@ describe("MarketView", () => {
         },
       },
       marketPendingApproval: {
+        surface: "web",
         specifier: "dsh-better-sidebar@latest",
         label: "dsh-better-sidebar",
         packages: ["node-pty"],
         workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
         operation: "update",
         silent: false,
+        remaining: [],
       },
     });
 
@@ -1355,14 +1364,20 @@ describe("MarketView", () => {
         { name: "next", spec: "next@1.0.0", version: "1.0.0", upstreamRepo: null, managed: false, enabled: true },
       ],
       marketUpdates: { blocked: update("blocked"), next: update("next") },
-      marketUpdateAllQueue: ["blocked", "next"],
+      marketUpdateAllQueue: [
+        { surface: "web", name: "blocked" },
+        { surface: "web", name: "next" },
+      ],
+      marketUpdateAllQueueSurfaces: ["web"],
       marketPendingApproval: {
+        surface: "web",
         specifier: "blocked@latest",
         label: "blocked",
         packages: ["native-build"],
         workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
         operation: "update",
         silent: true,
+        remaining: [],
       },
     });
     const installSpy = vi.spyOn(cmd, "marketInstall").mockResolvedValue({
@@ -1382,12 +1397,14 @@ describe("MarketView", () => {
   it("dismissing clears the pending approval and explains the manual path", async () => {
     useAppStore.setState({
       marketPendingApproval: {
+        surface: "web",
         specifier: "dsh-better-sidebar@latest",
         label: "DSH-better-sidebar",
         packages: ["node-pty"],
         workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
         operation: "install",
         silent: false,
+        remaining: [],
       },
     });
     const user = userEvent.setup();
@@ -1402,12 +1419,14 @@ describe("MarketView", () => {
   it("Escape dismisses the build approval dialog and cancel is the focused default", async () => {
     useAppStore.setState({
       marketPendingApproval: {
+        surface: "web",
         specifier: "dsh-better-sidebar@latest",
         label: "DSH-better-sidebar",
         packages: ["node-pty"],
         workspaceYaml: "~/.dsh/profiles/web/pnpm-workspace.yaml",
         operation: "install",
         silent: false,
+        remaining: [],
       },
     });
     const user = userEvent.setup();
@@ -1830,7 +1849,7 @@ describe("install cancel (G2)", () => {
     // （必须覆盖 mock——挂载刷新会用夹具重新填充）
     vi.spyOn(cmd, "marketInstalled").mockResolvedValue([]);
     useAppStore.setState({
-      marketInstalling: "dsh-better-sidebar@latest",
+      marketInstalling: { surface: "web", specifier: "dsh-better-sidebar@latest" },
       marketInstallLog: { specifier: "dsh-better-sidebar@latest", lines: ["$ dsh plugin --profile web add dsh-better-sidebar@latest"] },
     });
     const user = userEvent.setup();
@@ -1851,7 +1870,7 @@ describe("install cancel (G2)", () => {
     const cancelSpy = vi.spyOn(cmd, "marketCancel").mockResolvedValue(true);
     // 移除态由 store 的 marketRemoving 驱动（按包名锚定卡片）；后端 remove
     // 挂起期间 token 注册在全局槽，market_cancel 置位即杀
-    useAppStore.setState({ marketRemoving: "dsh-better-sidebar" });
+    useAppStore.setState({ marketRemoving: { surface: "web", name: "dsh-better-sidebar" } });
     const user = userEvent.setup();
     render(createElement(MarketView));
     await waitFor(() => expect(screen.getByText("DSH-better-sidebar")).toBeInTheDocument());
@@ -2134,6 +2153,8 @@ describe("market fetches follow the managed surfaces", () => {
       refreshMarketCatalog: vi.fn(),
       refreshMarketInstalled: vi.fn(),
       refreshMarketUpdates: vi.fn(),
+      refreshMarketDesktopInstalled: vi.fn(async () => {}),
+      refreshMarketDesktopUpdates: vi.fn(),
     };
     useAppStore.setState(spies);
     return spies;
@@ -2152,13 +2173,16 @@ describe("market fetches follow the managed surfaces", () => {
     render(createElement(MarketView));
     await waitFor(() => expect(document.getElementById("market-tab-desktop")).not.toBeNull());
 
-    // 这三条都读 web profile 的落盘状态、并按包发 HTTP 查询——未纳管 web 时一次都不该跑
-    expect(spies.refreshMarketCatalog).not.toHaveBeenCalled();
+    // 这两条读 web profile 的落盘状态、并按包发 HTTP 查询——未纳管 web 时一次都不该跑。
+    // 目录两档共用（桌面档同样从目录装插件），照拉
     expect(spies.refreshMarketInstalled).not.toHaveBeenCalled();
     expect(spies.refreshMarketUpdates).not.toHaveBeenCalled();
+    expect(spies.refreshMarketCatalog).toHaveBeenCalled();
+    await waitFor(() => expect(spies.refreshMarketDesktopUpdates).toHaveBeenCalled());
+    expect(spies.refreshMarketDesktopInstalled).toHaveBeenCalled();
   });
 
-  it("fetches them once web is managed", () => {
+  it("fetches them once web is managed, and leaves the desktop app alone", () => {
     const spies = spyRefreshes();
     useAppStore.setState({ config: configWith(["web"]) });
     render(createElement(MarketView));
@@ -2166,5 +2190,8 @@ describe("market fetches follow the managed surfaces", () => {
     expect(spies.refreshMarketCatalog).toHaveBeenCalled();
     expect(spies.refreshMarketInstalled).toHaveBeenCalled();
     expect(spies.refreshMarketUpdates).toHaveBeenCalled();
+    // 未纳管的形态不被触碰：桥接一次都不问
+    expect(spies.refreshMarketDesktopInstalled).not.toHaveBeenCalled();
+    expect(spies.refreshMarketDesktopUpdates).not.toHaveBeenCalled();
   });
 });

@@ -12,6 +12,8 @@ export type { ChangeOutcome } from "./bindings/ChangeOutcome";
 export type { DesktopUpdate } from "./bindings/DesktopUpdate";
 export type { ConfigRow } from "./bindings/ConfigRow";
 export type { DesktopPlugins } from "./bindings/DesktopPlugins";
+export type { DesktopInstalledPlugin } from "./bindings/DesktopInstalledPlugin";
+export type { DesktopApplication } from "./bindings/DesktopApplication";
 export type { RemoteUrlAccess } from "./bindings/RemoteUrlAccess";
 export type { DshDistTag } from "./bindings/DshDistTag";
 export type { DshLatestInfo } from "./bindings/DshLatestInfo";

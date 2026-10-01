@@ -1,11 +1,13 @@
-// 插件市场视图：二级导航拆"发现 / 收藏 / 已安装 / 诊断"四页，发现（目录浏览）
-// 为默认页。安装走 dsh plugin --profile web add（长操作），风险确认内联在卡片
-// 上完成；渲染崩溃由 MarketErrorBoundary 兜成恢复面板（G3）。
+// 插件市场视图：二级导航拆"发现 / 收藏 / 已安装 / 诊断 / 桌面应用"几页，发现（目录
+// 浏览）为默认页。安装按目标形态走（ADR 0012）：web 档 dsh plugin --profile web add，
+// desktop 档经桥接走桌面应用自己的 Plugin Manager（长操作），风险确认内联在卡片上
+// 完成；渲染崩溃由 MarketErrorBoundary 兜成恢复面板（G3）。
 
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useAppStore } from "@/shared/store";
-import { updateSpecifierFor } from "@/shared/store/slices/market";
+import { useAppStore, useManagedSurfaces } from "@/shared/store";
+import { desktopUpdateSpecifierFor, updateSpecifierFor, type MarketTarget } from "@/shared/store/slices/market";
+import { SurfaceBadges, useSurfaceLabel } from "@/shared/components/Surface";
 import * as cmd from "@/shared/commands";
 import { renderMessage, tErr } from "@/shared/i18n/error";
 import {
@@ -29,7 +31,9 @@ import {
 } from "@/shared/lib/ui";
 import { githubRepoId } from "@/shared/lib/specifier";
 import type {
+  DesktopInstalledPlugin,
   DiscoveryCompat,
+  DshSurface,
   InstalledPlugin,
   MarketCatalog,
   MarketDiagnostics,
@@ -131,6 +135,14 @@ export function protocolInstalledMatch(
   return hits.length === 1 ? hits[0] : null;
 }
 
+/// desktop 档已装匹配的键：桌面档只有 bundle 名（即包名，npm 包名恒小写）可比，没有安装
+/// spec。npm 形态（含 `npm:` 前缀）取包名；其余协议形态没有可预知的包名，退到目录名。
+/// 一律小写比较：目录名保留作者原样大小写（DSH-better-sidebar ↔ dsh-better-sidebar）
+export function desktopMatchKey(specifier: string | null, catalogName: string): string {
+  const pkg = specifier !== null ? packageNameFromSpecifier(specifier.replace(/^npm:/, "")) : null;
+  return (pkg ?? catalogName).toLowerCase();
+}
+
 /// 目录分类表的语言键：目录只供应 en/zh 两语，界面语言映射到其一
 function catalogLocale(language: string): "en" | "zh" {
   return language.startsWith("zh") ? "zh" : "en";
@@ -180,15 +192,15 @@ export function looksTerminal(name: string, description: string | null): boolean
 
 type MarketTab = "discover" | "favorites" | "installed" | "diagnostics" | "desktop";
 
-// webOnly：这四页都在往 web profile 装插件、读它的落盘状态。纳管 web 关了它们就得走——
-// 「未纳管的形态不进 UI、不被触碰」（CONTEXT.md）。视图本身仍可达，因为它同时承载桌面 tab
+// 发现/收藏/已安装三页按目标形态参数化（ADR 0012）：任一档纳管就在，卡片上按纳管的
+// 形态分行。诊断页诊断的是 web profile 的组合（dsh --dump-config），只属于 web 档；
+// 桌面应用 tab 承载桥接状态、内置 bundle 与原始配置行，只属于 desktop 档。
+// 「未纳管的形态不进 UI、不被触碰」（CONTEXT.md）
 const MARKET_TABS: { id: MarketTab; labelKey: string; desktopOnly?: boolean; webOnly?: boolean }[] = [
-  { id: "discover", labelKey: "Discover", webOnly: true },
-  { id: "favorites", labelKey: "Favorites", webOnly: true },
-  { id: "installed", labelKey: "Installed", webOnly: true },
+  { id: "discover", labelKey: "Discover" },
+  { id: "favorites", labelKey: "Favorites" },
+  { id: "installed", labelKey: "Installed" },
   { id: "diagnostics", labelKey: "Diagnostics", webOnly: true },
-  // 桌面应用档的插件与配置走桥接插件，不是市场那套 profile 落盘读取——所以它是一
-  // 个独立 tab，而不是市场内的一层切换（见 ADR 0011）
   { id: "desktop", labelKey: "Desktop app", desktopOnly: true },
 ];
 
@@ -207,10 +219,9 @@ function MarketViewInner() {
   const refreshCatalog = useAppStore((s) => s.refreshMarketCatalog);
   const refreshInstalled = useAppStore((s) => s.refreshMarketInstalled);
   const refreshUpdates = useAppStore((s) => s.refreshMarketUpdates);
-  const surfaces = useAppStore((s) => s.config?.managed_surfaces);
-  const desktopManaged = surfaces?.includes("desktop") ?? false;
-  // 配置未加载时按仅 web 走（与 IntegrationView 同一约定）
-  const webManaged = surfaces?.includes("web") ?? true;
+  const refreshDesktopInstalled = useAppStore((s) => s.refreshMarketDesktopInstalled);
+  const refreshDesktopUpdates = useAppStore((s) => s.refreshMarketDesktopUpdates);
+  const { web: webManaged, desktop: desktopManaged } = useManagedSurfaces();
   const tabs = MARKET_TABS.filter(
     (item) => (item.desktopOnly !== true || desktopManaged) && (item.webOnly !== true || webManaged),
   );
@@ -222,18 +233,27 @@ function MarketViewInner() {
   // 对所有状态成立，不是补界面流程的漏
   const activeTab = tabs.find((item) => item.id === tab)?.id ?? tabs[0].id;
 
-  // 四页的数据进入市场页时一次拉齐（更新检测是自动检测的一部分，挂载即跑，已安装页可
+  // 数据进入市场页时一次拉齐（更新检测是自动检测的一部分，挂载即跑，已安装页可
   // 手动重跑）；tab 间切换不重拉（数据驻留 store）。
-  // webManaged 进依赖而不是在 effect 里早退：这三条都读 web profile 的落盘状态、并按包发
-  // HTTP 查询，未纳管 web 时一次都不该跑（「不被触碰」），重新纳管时要能重新拉齐——
-  // store 里各有 `if (get().marketCatalog) return` 式的缓存守卫，重跑很便宜
+  // 纳管形态进依赖而不是在 effect 里早退：每档的已装与更新检测只读那一档的事实，未纳管
+  // 的那档一次都不该碰（「不被触碰」），重新纳管时要能重新拉齐——store 里各有缓存守卫，
+  // 重跑很便宜。目录两档共用，任一档纳管就要
+  useEffect(() => {
+    void refreshCatalog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (!webManaged) return;
-    void refreshCatalog();
     void refreshInstalled();
     void refreshUpdates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webManaged]);
+  useEffect(() => {
+    if (!desktopManaged) return;
+    // 更新检测排在已装之后：已装读不到（桥接没连上）时它也无从查起，store 侧静默跳过
+    void refreshDesktopInstalled().then(() => refreshDesktopUpdates());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desktopManaged]);
 
   return (
     <main className="flex min-h-0 flex-1 flex-col" id="market-view">
@@ -276,16 +296,69 @@ function MarketViewInner() {
   );
 }
 
+/// desktop 档已装事实不可知时的原因与下一步（角标悬浮提示与已装页说明共用一个说法）
+function useDesktopUnknownReason(): string {
+  const { t } = useTranslation();
+  const bridge = useAppStore((s) => s.marketDesktopBridge);
+  return bridge?.state === "app_unavailable"
+    ? t("Open DeepSeek Harness to see what is installed there.")
+    : t("The bridge plugin is not connected. See the Desktop app tab for the next step.");
+}
+
+/// 一个形态上的已装事实：两档的落盘记录归一成卡片要显示的那几项
+type RowInstalled = { name: string; version: string | null; enabled: boolean; managed: boolean };
+
+/// 卡片上的一行 = 一个纳管形态
+type SurfaceRowData = {
+  surface: DshSurface;
+  /** 已装事实；未装为 null */
+  installed: RowInstalled | null;
+  /** false = 该档事实不可知（desktop 档桥接未连接）：既不是已装也不是未装 */
+  known: boolean;
+  /** 该档的更新检测结果，未检测为 null */
+  info: PluginUpdateInfo | null;
+  /** web 档的落盘记录：更新标识要它的上游仓库，meta 行要它的 spec；desktop 档恒为 null */
+  webRecord: InstalledPlugin | null;
+};
+
+function webRowData(record: InstalledPlugin | null, info: PluginUpdateInfo | null): SurfaceRowData {
+  return {
+    surface: "web",
+    installed: record && { name: record.name, version: record.version, enabled: record.enabled, managed: record.managed },
+    known: true,
+    info,
+    webRecord: record,
+  };
+}
+
+function desktopRowData(
+  record: DesktopInstalledPlugin | null,
+  known: boolean,
+  info: PluginUpdateInfo | null,
+): SurfaceRowData {
+  return {
+    surface: "desktop",
+    installed: record && { name: record.name, version: record.version, enabled: record.enabled, managed: record.managed },
+    known,
+    info,
+    webRecord: null,
+  };
+}
+
 /// 发现/收藏页共用的目录卡网格：两页的卡片能力完全一致——浏览 + 星标 + 安装，
-/// 已装匹配卡只读呈现启停状态与安装事实（无更新/移除/启停入口，那些归已装页）。
+/// 已装匹配行只读呈现启停状态与安装事实（无更新/移除/启停入口，那些归已装页）。
 /// 两页差异只在插件清单来源：发现页 = 筛选后的目录切片，收藏页 = 收藏 ∩ 目录
-/// （收藏页条目必然在收藏清单里，favorited 表达式两页同源恒真）。已装匹配
-/// 双路径：npm 形态按包名精确对表，协议形态按仓库标识唯一命中
+/// （收藏页条目必然在收藏清单里，favorited 表达式两页同源恒真）。web 档已装匹配
+/// 双路径：npm 形态按包名精确对表，协议形态按仓库标识唯一命中；desktop 档没有
+/// 安装 spec 可比，按包名（协议形态退到目录名）对桥接给的 bundle 名
 function BrowseCardGrid({ plugins, catalog }: { plugins: MarketPlugin[]; catalog: MarketCatalog | null }) {
   const { i18n } = useTranslation();
   const locale = catalogLocale(i18n.language);
+  const { web: webManaged, desktop: desktopManaged } = useManagedSurfaces();
   const installed = useAppStore((s) => s.marketInstalled);
   const updates = useAppStore((s) => s.marketUpdates);
+  const desktopInstalled = useAppStore((s) => s.marketDesktopInstalled);
+  const desktopUpdates = useAppStore((s) => s.marketDesktopUpdates);
   const installPlugin = useAppStore((s) => s.installMarketPlugin);
   const installing = useAppStore((s) => s.marketInstalling);
   const installLog = useAppStore((s) => s.marketInstallLog);
@@ -295,36 +368,56 @@ function BrowseCardGrid({ plugins, catalog }: { plugins: MarketPlugin[]; catalog
   // 发现期兼容性（G4）与用户取消（G2）：两页共用同一份事实与同一取消通道
   const marketCompat = useAppStore((s) => s.marketCompat);
   const cancelInstall = useAppStore((s) => s.cancelMarketInstall);
+  const unknownReason = useDesktopUnknownReason();
 
   const installedByName = useMemo(() => new Map(installed.map((p) => [p.name, p])), [installed]);
+  const desktopByName = useMemo(
+    () => new Map((desktopInstalled ?? []).map((p) => [p.name.toLowerCase(), p])),
+    [desktopInstalled],
+  );
 
   return (
     <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
       {plugins.map((p) => {
         const spec = p.installSpecifier ?? null;
         const pkg = spec !== null ? packageNameFromSpecifier(spec) : null;
-        const installedPlugin =
-          pkg !== null
-            ? (installedByName.get(pkg) ?? null)
-            : spec !== null
-              ? protocolInstalledMatch(spec, specifierToCatalogName(spec), installed)
-              : null;
+        const rows: SurfaceRowData[] = [];
+        if (webManaged) {
+          const webPlugin =
+            pkg !== null
+              ? (installedByName.get(pkg) ?? null)
+              : spec !== null
+                ? protocolInstalledMatch(spec, specifierToCatalogName(spec), installed)
+                : null;
+          rows.push(webRowData(webPlugin, webPlugin ? (updates?.[webPlugin.name] ?? null) : null));
+        }
+        if (desktopManaged) {
+          const desktopPlugin =
+            desktopInstalled === null ? null : (desktopByName.get(desktopMatchKey(spec, p.name)) ?? null);
+          rows.push(
+            desktopRowData(
+              desktopPlugin,
+              desktopInstalled !== null,
+              desktopPlugin ? (desktopUpdates?.[desktopPlugin.name] ?? null) : null,
+            ),
+          );
+        }
         return (
           <MarketCard
             key={p.fullName}
             plugin={p}
-            installed={installedPlugin}
-            info={installedPlugin ? (updates?.[installedPlugin.name] ?? null) : null}
+            rows={rows}
             catalog={catalog}
             locale={locale}
             installing={installing}
             installLog={installLog}
             installError={installError}
             compat={pkg && marketCompat[pkg] ? marketCompat[pkg] : null}
+            unknownReason={unknownReason}
             onCancelInstall={cancelInstall}
             favorited={favorites.includes(p.fullName)}
             onToggleFavorite={() => toggleFavorite(p.fullName)}
-            onInstall={() => void installPlugin(p.installSpecifier!, p.name)}
+            onInstall={(surfaces) => void installPlugin(p.installSpecifier!, p.name, surfaces)}
           />
         );
       })}
@@ -344,9 +437,11 @@ function DiscoverPane() {
   const dshStopBusy = useAppStore((s) => s.dshStopBusy);
   const dshRestartBusy = useAppStore((s) => s.dshRestartBusy);
   const dshRecheckBusy = useAppStore((s) => s.dshRecheckBusy);
+  const { web: webManaged } = useManagedSurfaces();
 
   // 发现期兼容性（G4）：可见卡片的 npm 包名按需批量查询；"仅看兼容"过滤
-  // 只隐藏确认不兼容的条目（未声明/未查询保持可见，避免误判）
+  // 只隐藏确认不兼容的条目（未声明/未查询保持可见，避免误判）。兼容按 web 档的
+  // dsh 版本算（查询要问 web 档用的 CLI），未纳管 web 时一次都不问
   const marketCompat = useAppStore((s) => s.marketCompat);
   const fetchMarketCompat = useAppStore((s) => s.fetchMarketCompat);
   const [compatibleOnly, setCompatibleOnly] = useState(false);
@@ -405,9 +500,10 @@ function DiscoverPane() {
     [filtered, visible],
   );
   useEffect(() => {
+    if (!webManaged) return;
     const missing = visibleNames.filter((n) => !(n in marketCompat));
     if (missing.length > 0) void fetchMarketCompat(missing);
-  }, [visibleNames, marketCompat, fetchMarketCompat]);
+  }, [visibleNames, marketCompat, fetchMarketCompat, webManaged]);
 
   // 滚动到底自动加载下一批
   useEffect(() => {
@@ -444,14 +540,16 @@ function DiscoverPane() {
           </button>
           {/* 装完/启停后重启生效的就近入口，与已装页同一按钮：复用 Shell 域
               一键重启（先关后启 + 启动时间线 + busy 守卫都在 dshActions） */}
-          <button
-            className={BTN}
-            disabled={dshStartBusy || dshStopBusy || dshRestartBusy || dshRecheckBusy}
-            onClick={() => void restartDshWeb()}
-            id="btn-market-restart-dsh"
-          >
-            {dshRestartBusy ? t("Restarting...") : t("Restart dsh web")}
-          </button>
+          {webManaged && (
+            <button
+              className={BTN}
+              disabled={dshStartBusy || dshStopBusy || dshRestartBusy || dshRecheckBusy}
+              onClick={() => void restartDshWeb()}
+              id="btn-market-restart-dsh"
+            >
+              {dshRestartBusy ? t("Restarting...") : t("Restart dsh web")}
+            </button>
+          )}
         </div>
       </div>
       {/* 快照数据（首屏直读或断网降级）如实标注来源与时点；刷新进行中不标注，
@@ -552,21 +650,28 @@ function FavoritesPane() {
   );
 }
 
-/// 已安装页：与发现页同一卡片观感，可检插件自动比对上游最新版（registry
-/// 形态比 registry latest，有 GitHub 上游的比远端默认分支 manifest，见
-/// installed/upstreamRepo），有更新出 Update 按钮，可一键全部更新；受管插件
-/// 只读，其余可移除
+/// 已安装页：与发现页同一卡片观感，两档的已装合并成一插件一卡、卡内按形态分行
+/// （两档的版本与启停可能不同，各行各管各的）。可检插件自动比对上游最新版（web 档
+/// registry 形态比 registry latest，有 GitHub 上游的比远端默认分支 manifest，见
+/// installed/upstreamRepo；desktop 档只按包名比 registry），有更新出 Update 按钮，
+/// 可一键全部更新；受管插件只读，其余可移除
 function InstalledPane() {
   const { t, i18n } = useTranslation();
   const locale = catalogLocale(i18n.language);
+  const { web: webManaged, desktop: desktopManaged } = useManagedSurfaces();
   const catalog = useAppStore((s) => s.marketCatalog);
   const installed = useAppStore((s) => s.marketInstalled);
   const installedBusy = useAppStore((s) => s.marketInstalledBusy);
+  const desktopInstalled = useAppStore((s) => s.marketDesktopInstalled);
   const removing = useAppStore((s) => s.marketRemoving);
   const removePlugin = useAppStore((s) => s.removeMarketPlugin);
   const updates = useAppStore((s) => s.marketUpdates);
   const updatesBusy = useAppStore((s) => s.marketUpdatesBusy);
+  const desktopUpdates = useAppStore((s) => s.marketDesktopUpdates);
+  const desktopUpdatesBusy = useAppStore((s) => s.marketDesktopUpdatesBusy);
   const refreshUpdates = useAppStore((s) => s.refreshMarketUpdates);
+  const refreshDesktopInstalled = useAppStore((s) => s.refreshMarketDesktopInstalled);
+  const refreshDesktopUpdates = useAppStore((s) => s.refreshMarketDesktopUpdates);
   const updatePlugin = useAppStore((s) => s.updateMarketPlugin);
   const updateAll = useAppStore((s) => s.updateAllMarketPlugins);
   const updateAllPrefetching = useAppStore((s) => s.marketUpdateAllPrefetching);
@@ -584,80 +689,115 @@ function InstalledPane() {
   const toggleFavorite = useAppStore((s) => s.toggleMarketFavorite);
   const cancelInstall = useAppStore((s) => s.cancelMarketInstall);
   const openNotes = useAppStore((s) => s.openMarketReleaseNotes);
+  const unknownReason = useDesktopUnknownReason();
 
   // 目录匹配表：给已装卡片补全描述/分类/星标/链接（目录没有的如实留白）
   const byName = useMemo(() => new Map((catalog?.plugins ?? []).map((p) => [p.name, p])), [catalog]);
+  // 两档合并：同名即同一个插件，一卡两行；顺序先 web 后 desktop 独有
+  const entries = useMemo(() => {
+    const merged = new Map<string, { web: InstalledPlugin | null; desktop: DesktopInstalledPlugin | null }>();
+    if (webManaged) for (const p of installed) merged.set(p.name, { web: p, desktop: null });
+    if (desktopManaged) {
+      for (const p of desktopInstalled ?? []) {
+        const entry = merged.get(p.name);
+        if (entry) entry.desktop = p;
+        else merged.set(p.name, { web: null, desktop: p });
+      }
+    }
+    return [...merged.entries()];
+  }, [installed, desktopInstalled, webManaged, desktopManaged]);
   const pendingCount = useMemo(
     // 兼容门禁判 false 的更新不进批量计数（单卡按钮已禁用，批量入口同样排除）。
     // 窗口内插件计在内：批量遇之弹知情确认框，确认后钉版本安装、继续下一个
     () =>
-      Object.values(updates ?? {}).filter(
+      [...Object.values(updates ?? {}), ...Object.values(desktopUpdates ?? {})].filter(
         (u) => u.updateAvailable && !u.managed && u.compatible !== false,
       ).length,
-    [updates],
+    [updates, desktopUpdates],
   );
+  const checking = updatesBusy || desktopUpdatesBusy;
 
   return (
     <div className="flex-1 overflow-y-auto p-6" id="market-installed">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold">{t("Installed Plugins (web profile)")}</h2>
-          <p className="text-xs opacity-60">{t("{{count}} plugins", { count: installed.length })}</p>
+          <h2 className="text-base font-semibold">{t("Installed Plugins")}</h2>
+          <p className="text-xs opacity-60">{t("{{count}} plugins", { count: entries.length })}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button className={BTN_OUTLINE} disabled={updatesBusy} onClick={() => void refreshUpdates()} id="btn-updates-check">
-            {updatesBusy ? t("Working…") : t("Check updates")}
+          <button
+            className={BTN_OUTLINE}
+            disabled={checking}
+            onClick={() => {
+              if (webManaged) void refreshUpdates();
+              if (desktopManaged) void refreshDesktopInstalled().then(() => refreshDesktopUpdates());
+            }}
+            id="btn-updates-check"
+          >
+            {checking ? t("Working…") : t("Check updates")}
           </button>
           {pendingCount > 0 && (
             <button
               className={BTN_PRIMARY}
-              disabled={updating !== null || updatesBusy || updateAllPrefetching}
+              disabled={updating !== null || checking || updateAllPrefetching}
               onClick={() => void updateAll()}
               id="btn-updates-all"
             >
               {updating !== null || updateAllPrefetching ? t("Working…") : t("Update all ({{count}})", { count: pendingCount })}
             </button>
           )}
-          {/* 启停/更新落盘后重启生效的就近入口；启停开关的「重启后生效」
+          {/* 启停/更新落盘后重启生效的就近入口；web 档启停开关的「重启后生效」
               提示即指向这里。流程复用 Shell 域一键重启（先关后启 + 启动时间线） */}
-          <button
-            className={BTN_OUTLINE}
-            disabled={dshStartBusy || dshStopBusy || dshRestartBusy || dshRecheckBusy}
-            onClick={() => void restartDshWeb()}
-            id="btn-market-restart-dsh"
-          >
-            {dshRestartBusy ? t("Restarting...") : t("Restart dsh web")}
-          </button>
+          {webManaged && (
+            <button
+              className={BTN_OUTLINE}
+              disabled={dshStartBusy || dshStopBusy || dshRestartBusy || dshRecheckBusy}
+              onClick={() => void restartDshWeb()}
+              id="btn-market-restart-dsh"
+            >
+              {dshRestartBusy ? t("Restarting...") : t("Restart dsh web")}
+            </button>
+          )}
         </div>
       </div>
 
+      {/* desktop 档不可知：如实说出来，不让列表里「没有桌面角标」被读成「桌面没装」 */}
+      {desktopManaged && desktopInstalled === null && (
+        <p className={`mb-4 rounded-lg border border-dashed border-border px-3 py-2 ${MUTED_STRONG}`} id="market-desktop-unknown">
+          {t("Plugins installed in DeepSeek Harness are unknown right now.")} {unknownReason}
+        </p>
+      )}
       {installedBusy && <p className="text-sm opacity-60">{t("Working…")}</p>}
-      {!installedBusy && installed.length === 0 && <p className="text-sm opacity-60">{t("No plugins installed yet.")}</p>}
+      {!installedBusy && entries.length === 0 && <p className="text-sm opacity-60">{t("No plugins installed yet.")}</p>}
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        {installed.map((p) => {
-          const catalogPlugin = byName.get(p.name) ?? null;
+        {entries.map(([name, entry]) => {
+          const catalogPlugin = byName.get(name) ?? null;
+          // 已装页只列装了的那几档：没装的那档在这里没有可做的事（装在发现页）
+          const rows: SurfaceRowData[] = [];
+          if (entry.web) rows.push(webRowData(entry.web, updates?.[name] ?? null));
+          if (entry.desktop) rows.push(desktopRowData(entry.desktop, true, desktopUpdates?.[name] ?? null));
           return (
             <MarketCard
-              key={p.name}
+              key={name}
               plugin={catalogPlugin}
-              installed={p}
-              info={updates?.[p.name] ?? null}
+              rows={rows}
               catalog={catalog}
               locale={locale}
               updating={updating}
               removing={removing}
               installLog={installLog}
               installError={installError}
+              unknownReason={unknownReason}
               favorited={catalogPlugin !== null && favorites.includes(catalogPlugin.fullName)}
               onToggleFavorite={() => {
                 if (catalogPlugin) toggleFavorite(catalogPlugin.fullName);
               }}
-              onUpdate={() => void updatePlugin(p.name)}
-              onNotes={() => void openNotes(p.name)}
+              onUpdate={(surface) => void updatePlugin({ surface, name })}
+              onNotes={(surface) => void openNotes({ surface, name })}
               onCancelInstall={cancelInstall}
-              onRemove={() => void removePlugin(p.name)}
-              onSetEnabled={p.managed ? undefined : (enabled) => void setPluginEnabled(p.name, enabled)}
+              onRemove={(surface) => void removePlugin({ surface, name })}
+              onSetEnabled={(surface, enabled) => void setPluginEnabled({ surface, name }, enabled)}
             />
           );
         })}
@@ -667,21 +807,22 @@ function InstalledPane() {
 }
 
 /// 市场卡片：发现/收藏/已安装三页唯一实现。数据进、状态机出——目录条目
-/// plugin 与落盘条目 installed 推导出唯一卡片状态；页面能力差异由回调决定，
+/// plugin 与每个纳管形态的一行（rows）推导出每行唯一状态；页面能力差异由回调决定，
 /// 未接回调的操作不渲染：
-///   发现/收藏（BrowseCardGrid 接线）——浏览 + 星标 + 安装；已装匹配卡只读
+///   发现/收藏（BrowseCardGrid 接线）——浏览 + 星标 + 安装；已装匹配行只读
 ///   （启停状态以只读胶囊呈现，无更新/移除/启停开关）；
 ///   已安装（InstalledPane 接线）——更新/重装/移除/启停开关（重启入口在页头）。
-/// 布局分区（三页一致）：右上角 = 安装事实胶囊（Installed/Not installed）+
-/// 收藏星标；左下角 = 启停状态条（开关即状态，无开关入口回退只读胶囊）+
-/// 版本 + 兼容门禁；右下角 = 该状态的操作按钮。目录缺位（已装但目录没有）
-/// 时如实只展示落盘事实
+/// 布局分区（三页一致）：右上角 = 安装事实胶囊（Installed/Not installed）+ 形态角标 +
+/// 收藏星标；底部 = 每个形态一行状态条：左侧启停状态（开关即状态，无开关入口回退只读
+/// 胶囊）+ 版本 + 兼容门禁，右侧该行状态的操作按钮。两档都纳管时行首标出形态。
+/// 目录缺位（已装但目录没有）时如实只展示落盘事实
 type CardState =
   | "managed"
   | "removing"
   | "updating"
   | "outdated"
   | "installed"
+  | "unknown"
   | "installing"
   | "installFailed"
   | "manual"
@@ -724,10 +865,47 @@ function StateBadge({ tone, label }: { tone: "ok" | "muted"; label: string }) {
   );
 }
 
+/// 一行的安装身份：未装行是目录安装标识；已装行是更新重装标识（与 updateMarketPlugin
+/// 共用同一规则——specifier 是 installError/installLog 锚回本行的键，两处必须一致）
+function rowSpecifier(row: SurfaceRowData, plugin: MarketPlugin | null): string | null {
+  if (!row.installed) return plugin?.installSpecifier ?? null;
+  return row.surface === "web"
+    ? updateSpecifierFor(row.installed.name, row.webRecord, row.info)
+    : desktopUpdateSpecifierFor(row.installed.name, row.info);
+}
+
+/// 行状态推导（自上而下首个命中）：受管 > 移除中 > 更新中 > 安装失败 > 已装
+/// （比对更新）> 不可知 > 安装中 > 仅手动 > 确认中 > 可装。失败优先于已装/未装：
+/// 错误是最新事实，且失败=未落盘，已装页不会有无主失败卡。进行中的操作都带形态，
+/// 只有同一形态的那一行认领
+function rowState(
+  row: SurfaceRowData,
+  plugin: MarketPlugin | null,
+  ops: {
+    installing: { surface: DshSurface; specifier: string } | null;
+    updating: MarketTarget | null;
+    removing: MarketTarget | null;
+    installError: { surface: DshSurface; specifier: string } | null;
+  },
+  confirming: boolean,
+): CardState {
+  const { installed, surface } = row;
+  const mine = <T extends { surface: DshSurface }>(target: T | null): target is T => target?.surface === surface;
+  if (installed?.managed) return "managed";
+  if (mine(ops.removing) && ops.removing.name === installed?.name) return "removing";
+  if (mine(ops.updating) && ops.updating.name === installed?.name) return "updating";
+  if (mine(ops.installError) && ops.installError.specifier === rowSpecifier(row, plugin)) return "installFailed";
+  if (installed) return row.info?.updateAvailable ? "outdated" : "installed";
+  if (!row.known) return "unknown";
+  if (mine(ops.installing) && ops.installing.specifier === plugin?.installSpecifier) return "installing";
+  if (!plugin?.installSpecifier) return "manual";
+  if (confirming) return "confirm";
+  return "idle";
+}
+
 function MarketCard({
   plugin,
-  installed,
-  info = null,
+  rows,
   catalog = null,
   locale,
   installing = null,
@@ -736,6 +914,7 @@ function MarketCard({
   installLog = null,
   installError = null,
   compat = null,
+  unknownReason,
   favorited,
   onToggleFavorite,
   onInstall,
@@ -747,293 +926,318 @@ function MarketCard({
 }: {
   /** 目录条目；已装但目录没有（如 file: 手动装）为 null */
   plugin: MarketPlugin | null;
-  /** 落盘条目；未安装为 null */
-  installed: InstalledPlugin | null;
-  /** 更新检测结果（按已装 name 键），未检测为 null */
-  info?: PluginUpdateInfo | null;
+  /** 每个纳管形态一行（已装页只给装了的那几档） */
+  rows: SurfaceRowData[];
   catalog?: MarketCatalog | null;
   locale: "en" | "zh";
-  installing?: string | null;
-  updating?: string | null;
-  removing?: string | null;
-  /** 单飞安装的流式输出（安装中/更新中/失败明细共用） */
+  installing?: { surface: DshSurface; specifier: string } | null;
+  updating?: MarketTarget | null;
+  removing?: MarketTarget | null;
+  /** 单飞安装的流式输出（web 档的安装中/更新中/失败明细共用） */
   installLog?: { specifier: string; lines: string[] } | null;
-  /** 最近一次安装失败（specifier 锚定卡片；重试/关闭时清除） */
-  installError?: { specifier: string; message: string } | null;
-  /** 发现期兼容性事实（G4，npm 包名键）：确认不兼容时红字明示要求 */
+  /** 最近一次安装失败（形态 + specifier 锚定行；重试/关闭时清除） */
+  installError?: { surface: DshSurface; specifier: string; message: string } | null;
+  /** 发现期兼容性事实（G4，npm 包名键，按 web 档的 dsh 版本算）：确认不兼容时红字明示要求 */
   compat?: DiscoveryCompat | null;
+  /** desktop 档不可知时的原因与下一步 */
+  unknownReason: string;
   favorited: boolean;
   onToggleFavorite: () => void;
-  onInstall?: () => void;
-  /** 重装（无更新态）：重跑安装——registry 形态 name@latest（latest 在 pnpm
-      minimumReleaseAge 窗口内时先弹供应链确认框、确认后钉版本），有 GitHub
-      上游的按该仓库重装到默认分支 HEAD（见 updateSpecifierFor）；同一命令
-      通道。已装页必传，发现/收藏页不传（永不渲染对应分支） */
-  onUpdate?: () => void;
+  /** 安装到给定的形态（按顺序逐档装，各自报结果） */
+  onInstall?: (surfaces: DshSurface[]) => void;
+  /** 重装（无更新态）/ 更新：重跑安装——web 档 registry 形态 name@latest（latest 在
+      pnpm minimumReleaseAge 窗口内时先弹供应链确认框、确认后钉版本），有 GitHub
+      上游的按该仓库重装到默认分支 HEAD（见 updateSpecifierFor）；desktop 档钉检测到
+      的精确版本。已装页必传，发现/收藏页不传（永不渲染对应分支） */
+  onUpdate?: (surface: DshSurface) => void;
   /** 更新（有更新态）：先弹更新说明对话框（G5），确认后走既有更新管线。
       缺省时 Update 回退 onUpdate（不弹说明） */
-  onNotes?: () => void;
-  /** 取消当前安装/更新（G2）：后端置位取消令牌杀子进程，幂等。已装/
-      更新中的长操作按钮旁渲染 */
+  onNotes?: (surface: DshSurface) => void;
+  /** 取消当前安装/更新（G2）：后端置位取消令牌杀子进程，幂等。只对 web 档有效——
+      desktop 档的安装在桌面应用进程里，本应用够不着 */
   onCancelInstall?: () => void;
-  onRemove?: () => void;
-  /** 翻转下次启动启用状态（disabled 覆盖行，重启生效）。已装页对非受管
-      插件传入；受管插件由修复流程管理，不出开关 */
-  onSetEnabled?: (enabled: boolean) => void;
+  onRemove?: (surface: DshSurface) => void;
+  /** 翻转启用状态。web 档写 disabled 覆盖行、重启 dsh web 生效；desktop 档由应用自己
+      翻转。已装页对非受管插件传入；受管插件由修复流程管理，不出开关 */
+  onSetEnabled?: (surface: DshSurface, enabled: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const [confirming, setConfirming] = useState(false);
+  const surfaceLabel = useSurfaceLabel();
+  // 确认态是哪一行的（同一时刻一张卡只确认一件事）
+  const [confirming, setConfirming] = useState<DshSurface | null>(null);
   const dismissMarketInstallError = useAppStore((s) => s.dismissMarketInstallError);
   const toast = useAppStore((s) => s.toast);
-  const name = plugin?.name ?? installed?.name ?? "";
+  const name = plugin?.name ?? rows.find((row) => row.installed)?.installed?.name ?? "";
   const url = plugin?.url ?? null;
   const description = plugin?.description ? localizedDescription(plugin.description, locale) : null;
-  // 版本号读已装列表的磁盘事实（installed.version），更新成功后随
-  // refreshMarketInstalled 即时正确；info（registry 比对）只负责更新判定，
-  // 不再是版本号的来源
-  const current = installed?.version ?? null;
-  const latest = info?.latestVersion ?? null;
-  // 卡片的安装身份：未装卡片是目录安装标识；已装卡片是更新重装标识
-  // （与 updateMarketPlugin 共用 updateSpecifierFor——specifier 是
-  // installError/installLog 锚回本卡的键，两处必须一致）
-  const ownSpecifier = installed
-    ? updateSpecifierFor(installed.name, installed, info)
-    : (plugin?.installSpecifier ?? null);
+  const ops = { installing, updating, removing, installError };
+  const states = rows.map((row) => rowState(row, plugin, ops, confirming === row.surface));
+  const anyInstalled = rows.some((row) => row.installed !== null);
+  const webRecord = rows.find((row) => row.surface === "web")?.webRecord ?? null;
+  // 两档都在卡上时行首标出形态；只有一档时角标已经说明了
+  const labelled = rows.length > 1;
 
-  // 状态推导（自上而下首个命中）：受管 > 移除中 > 更新中 > 安装失败 > 已装
-  // （比对更新）> 安装中 > 仅手动 > 确认中 > 可装。失败优先于已装/未装：
-  // 错误是最新事实，且失败=未落盘，已装页不会有无主失败卡
-  let state: CardState;
-  if (installed?.managed) state = "managed";
-  else if (removing !== null && installed?.name === removing) state = "removing";
-  else if (updating !== null && installed?.name === updating) state = "updating";
-  else if (installError !== null && installError.specifier === ownSpecifier) state = "installFailed";
-  else if (installed) state = info?.updateAvailable ? "outdated" : "installed";
-  else if (installing !== null && plugin?.installSpecifier === installing) state = "installing";
-  else if (!plugin?.installSpecifier) state = "manual";
-  else if (confirming) state = "confirm";
-  else state = "idle";
-
-  const outdated = state === "outdated";
   // 分类用目录本地化名（与筛选下拉同一事实），目录没有该分类时如实透传原 key
   const categoryLabel = plugin?.category
     ? (catalog?.categories?.[plugin.category]?.[locale] ?? plugin.category)
     : null;
-  // meta 行尾部：装前关心谁家的仓库（owner），装后关心落盘 spec
-  const metaTail = installed ? installed.spec : (plugin?.fullName.split("/")[0] ?? null);
+  // meta 行尾部：装前关心谁家的仓库（owner），装后关心落盘 spec（只有 web 档有）
+  const metaTail = webRecord ? webRecord.spec : anyInstalled ? null : (plugin?.fullName.split("/")[0] ?? null);
   // 终端/CLI 类插件警示（G6）：确认态如实告知风险，不拦截安装
   const terminalWarning = plugin !== null && looksTerminal(name, description);
+  // 安装过程明细只属于 web 档那一行（desktop 档没有流式输出）：安装中/更新中实时流式
+  // 输出；失败留存供排查（重试/关闭清除）。状态推导已保证只会命中发起操作的那张卡
+  const webIndex = rows.findIndex((row) => row.surface === "web");
+  const webState = webIndex >= 0 ? states[webIndex] : null;
+  const showLog = webState === "installing" || webState === "updating" || webState === "installFailed";
 
-  const removeBtn = onRemove && (
-    <button
-      className={BTN_DANGER}
-      disabled={state === "removing" || updating !== null}
-      onClick={onRemove}
-      aria-label={`${t("Remove")} ${name}`}
-    >
-      {state === "removing" ? t("Removing…") : t("Remove")}
-    </button>
-  );
+  const renderRow = (row: SurfaceRowData, state: CardState) => {
+    const { surface, installed, info } = row;
+    const current = installed?.version ?? null;
+    const latest = info?.latestVersion ?? null;
+    const outdated = state === "outdated";
+    // 两档都在卡上时按钮的无障碍名带上形态，否则读屏念出两个一样的「移除 x」
+    const accessibleName = labelled ? `${name} (${surfaceLabel(surface)})` : name;
+    const cancel = surface === "web" ? onCancelInstall : undefined;
+    // 「两档都装」：另一档也正处在可装态时，确认里多给一个一次装两档的入口（按卡上的
+    // 形态顺序逐档装）
+    const targets = rows
+      .filter((other, i) => other.surface === surface || states[i] === "idle")
+      .map((other) => other.surface);
+    const bothTargets = onInstall && targets.length > 1 ? targets : null;
 
-  // 启停开关（带状态文字的胶囊开关 TOGGLE_LABELED，与设置页 TOGGLE 同一
-  // 配方文件）：写入是本地文件操作（瞬时，无 busy 态；重复点击幂等——
-  // 判定核内容未变化即免写盘）。移除中禁用——翻转启停与移除后的孤儿行
-  // 清理写同一 patch 文件，二者并发会互相覆盖。开关置于状态条左下角、
-  // 胶囊文字即启停状态（Enabled/Disabled）；安装/更新/移除等操作在右下
-  // 角操作区
-  const toggleEnabledBtn = onSetEnabled && installed && !installed.managed && (
-    <input
-      type="checkbox"
-      className={TOGGLE_LABELED}
-      role="switch"
-      data-state-text={installed.enabled ? t("Enabled") : t("Disabled")}
-      checked={installed.enabled}
-      disabled={state === "removing"}
-      onChange={() => onSetEnabled(!installed.enabled)}
-      aria-checked={installed.enabled}
-      aria-label={`${installed.enabled ? t("Disable") : t("Enable")} ${name}`}
-      title={t("Takes effect after dsh web restarts.")}
-    />
-  );
-
-  const statusLeft: ReactNode =
-    state === "managed" ? (
-      <span className={`rounded bg-muted px-1.5 py-0.5 ${MUTED}`}>{t("managed by launcher")}</span>
-    ) : state === "manual" ? (
-      <span className={MUTED}>{t("Manual install only")}</span>
-    ) : state === "confirm" ? (
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-xs opacity-70">{t("Install this plugin?")}</span>
-        {terminalWarning && (
-          <span className="text-xs text-(--status-warn)">
-            {t("Looks like a terminal/CLI plugin — it will run shell commands in your environment.")}
-          </span>
-        )}
-      </span>
-    ) : state === "installing" ? (
-      <span className="text-xs">{t("Installing…")}</span>
-    ) : state === "installFailed" ? (
-      <span
-        className="min-w-0 flex-1 truncate text-xs text-destructive"
-        title={installError?.message}
+    const removeBtn = onRemove && (
+      <button
+        className={BTN_DANGER}
+        disabled={state === "removing" || updating !== null}
+        onClick={() => onRemove(surface)}
+        aria-label={`${t("Remove")} ${accessibleName}`}
       >
-        {t("Install failed: {{error}}", { error: installError?.message ?? "" })}
-      </span>
-    ) : installed ? (
-      // 左下角启停状态条：有开关入口（已安装页）时开关即状态呈现；发现/
-      // 收藏页的已装匹配卡无开关入口，回退只读状态胶囊。安装事实胶囊在
-      // 右上角。更新目标声明了更高 dsh 最低版本（engines.dsh 门禁判 false）
-      // 时红字明示要求，更新按钮同时禁用
-      <span className="flex min-w-0 items-center gap-1.5 text-xs">
-        {toggleEnabledBtn ?? (
-          <StateBadge tone={installed.enabled ? "ok" : "muted"} label={t(installed.enabled ? "Enabled" : "Disabled")} />
-        )}
-        {current && (
-          <span className="font-mono">
-            v{current}
-            {outdated && <span className="ml-1 text-(--status-ok)">→ v{latest}</span>}
-          </span>
-        )}
-        {outdated && info?.compatible === false && info?.requiresDsh && (
-          <span className="shrink-0 text-destructive">
-            {t("dsh {{version}} required", { version: info.requiresDsh })}
-          </span>
-        )}
-      </span>
-    ) : compat?.compatible === false && compat.requiresDsh ? (
-      // 发现期兼容门禁（G4）：目录卡片在安装前就明示 dsh 版本要求（安装/更新
-      // 期的 fail-closed 门禁另有判定，这里只是把"点了才发现"提前）
-      <span className="shrink-0 text-xs text-destructive">
-        {t("dsh {{version}} required", { version: compat.requiresDsh })}
-      </span>
-    ) : null;
-
-  const actions: ReactNode =
-    state === "idle" ? (
-      <button className={BTN_PRIMARY} onClick={() => setConfirming(true)}>
-        {t("Install")}
+        {state === "removing" ? t("Removing…") : t("Remove")}
       </button>
-    ) : state === "confirm" ? (
-      <>
-        <button
-          className={BTN_PRIMARY}
-          disabled={installing !== null}
-          onClick={() => {
-            setConfirming(false);
-            onInstall?.();
-          }}
-        >
-          {installing !== null ? t("Working…") : t("Confirm")}
+    );
+
+    // 启停开关（带状态文字的胶囊开关 TOGGLE_LABELED，与设置页 TOGGLE 同一
+    // 配方文件）：web 档写入是本地文件操作（瞬时，无 busy 态；重复点击幂等——
+    // 判定核内容未变化即免写盘），重启 dsh web 后生效；desktop 档由应用自己翻转。
+    // 移除中禁用——web 档翻转启停与移除后的孤儿行清理写同一 patch 文件，二者并发
+    // 会互相覆盖。开关置于状态条左侧、胶囊文字即启停状态（Enabled/Disabled）
+    const toggleEnabledBtn = onSetEnabled && installed && !installed.managed && (
+      <input
+        type="checkbox"
+        className={TOGGLE_LABELED}
+        role="switch"
+        data-state-text={installed.enabled ? t("Enabled") : t("Disabled")}
+        checked={installed.enabled}
+        disabled={state === "removing"}
+        onChange={() => onSetEnabled(surface, !installed.enabled)}
+        aria-checked={installed.enabled}
+        aria-label={`${installed.enabled ? t("Disable") : t("Enable")} ${accessibleName}`}
+        title={surface === "web" ? t("Takes effect after dsh web restarts.") : undefined}
+      />
+    );
+
+    const statusLeft: ReactNode =
+      state === "managed" ? (
+        <span className={`rounded bg-muted px-1.5 py-0.5 ${MUTED}`}>{t("managed by launcher")}</span>
+      ) : state === "unknown" ? (
+        <span className={`min-w-0 truncate ${MUTED}`} title={unknownReason}>
+          {t("Unknown — DeepSeek Harness is not connected")}
+        </span>
+      ) : state === "manual" ? (
+        <span className={MUTED}>{t("Manual install only")}</span>
+      ) : state === "confirm" ? (
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-xs opacity-70">{t("Install this plugin?")}</span>
+          {terminalWarning && (
+            <span className="text-xs text-(--status-warn)">
+              {t("Looks like a terminal/CLI plugin — it will run shell commands in your environment.")}
+            </span>
+          )}
+        </span>
+      ) : state === "installing" ? (
+        <span className="text-xs">{t("Installing…")}</span>
+      ) : state === "installFailed" ? (
+        <span className="min-w-0 flex-1 truncate text-xs text-destructive" title={installError?.message}>
+          {t("Install failed: {{error}}", { error: installError?.message ?? "" })}
+        </span>
+      ) : installed ? (
+        // 启停状态条：有开关入口（已安装页）时开关即状态呈现；发现/收藏页的已装匹配
+        // 行无开关入口，回退只读状态胶囊。安装事实胶囊在右上角。更新目标声明了更高
+        // dsh 最低版本（engines.dsh 门禁判 false）时红字明示要求，更新按钮同时禁用
+        <span className="flex min-w-0 items-center gap-1.5 text-xs">
+          {toggleEnabledBtn || (
+            <StateBadge tone={installed.enabled ? "ok" : "muted"} label={t(installed.enabled ? "Enabled" : "Disabled")} />
+          )}
+          {current && (
+            <span className="font-mono">
+              v{current}
+              {outdated && <span className="ml-1 text-(--status-ok)">→ v{latest}</span>}
+            </span>
+          )}
+          {outdated && info?.compatible === false && info?.requiresDsh && (
+            <span className="shrink-0 text-destructive">
+              {t("dsh {{version}} required", { version: info.requiresDsh })}
+            </span>
+          )}
+        </span>
+      ) : surface === "web" && compat?.compatible === false && compat.requiresDsh ? (
+        // 发现期兼容门禁（G4）：目录卡片在安装前就明示 dsh 版本要求（安装/更新
+        // 期的 fail-closed 门禁另有判定，这里只是把"点了才发现"提前）。按 web 档的
+        // dsh 版本算，所以只挂在 web 那一行
+        <span className="shrink-0 text-xs text-destructive">
+          {t("dsh {{version}} required", { version: compat.requiresDsh })}
+        </span>
+      ) : null;
+
+    const actions: ReactNode =
+      state === "idle" ? (
+        <button className={BTN_PRIMARY} onClick={() => setConfirming(surface)} aria-label={labelled ? `${t("Install")} ${accessibleName}` : undefined}>
+          {t("Install")}
         </button>
-        <button className={BTN_SM} onClick={() => setConfirming(false)}>
-          {t("Cancel")}
-        </button>
-      </>
-    ) : state === "installing" ? (
-      <>
-        <button className={BTN_PRIMARY} disabled>
-          {t("Installing…")}
-        </button>
-        {/* 用户取消（G2）：后端置位取消令牌杀子进程，取消走失败路径（幂等） */}
-        {onCancelInstall && (
-          <button className={BTN_SM} onClick={onCancelInstall}>
-            {t("Cancel")}
-          </button>
-        )}
-      </>
-    ) : state === "installFailed" ? (
-      <>
-        <button className={BTN_PRIMARY} onClick={onInstall ?? onUpdate}>
-          {t("Retry")}
-        </button>
-        {/* 复制修复上下文：把目标/错误/输出组装成自包含文本贴给任意 agent；
-            状态机保证此分支 installError 非空，守卫只为类型收窄 */}
-        <button
-          className={BTN_SM}
-          onClick={() => installError && void copyInstallContext(installError, installLog, toast)}
-        >
-          {t("Copy error")}
-        </button>
-        <button className={BTN_SM} onClick={dismissMarketInstallError}>
-          {t("Dismiss")}
-        </button>
-      </>
-    ) : state === "manual" ? (
-      url && (
-        <button
-          className={BTN_SM}
-          onClick={() => void openUrl(url).catch(() => {})}
-          aria-label={`${t("README ↗")} ${name}`}
-        >
-          {t("README ↗")}
-        </button>
-      )
-    ) : outdated || state === "updating" ? (
-      <>
-        {(onNotes ?? onUpdate) && (
+      ) : state === "confirm" ? (
+        <>
           <button
             className={BTN_PRIMARY}
-            disabled={updating !== null || info?.compatible === false}
-            onClick={onNotes ?? onUpdate}
-            aria-label={`${t("Update")} ${name}`}
-            title={
-              info?.compatible === false && info?.requiresDsh
-                ? t("Requires dsh {{version}} or newer.", { version: info.requiresDsh })
-                : undefined
-            }
+            disabled={installing !== null}
+            onClick={() => {
+              setConfirming(null);
+              onInstall?.([surface]);
+            }}
           >
-            {state === "updating" ? t("Working…") : t("Update")}
+            {installing !== null ? t("Working…") : t("Confirm")}
           </button>
-        )}
-        {/* 更新中的用户取消（G2）：与安装共用同一取消通道 */}
-        {state === "updating" && onCancelInstall && (
-          <button className={BTN_SM} onClick={onCancelInstall}>
+          {bothTargets && (
+            <button
+              className={BTN_OUTLINE}
+              disabled={installing !== null}
+              onClick={() => {
+                setConfirming(null);
+                onInstall?.(bothTargets);
+              }}
+            >
+              {t("Install to both")}
+            </button>
+          )}
+          <button className={BTN_SM} onClick={() => setConfirming(null)}>
             {t("Cancel")}
           </button>
-        )}
-        {removeBtn}
-      </>
-    ) : state === "removing" ? (
-      <>
-        {removeBtn}
-        {/* 移除中的用户取消（G2）：与安装/更新共用同一取消通道 */}
-        {onCancelInstall && (
-          <button className={BTN_SM} onClick={onCancelInstall}>
-            {t("Cancel")}
+        </>
+      ) : state === "installing" ? (
+        <>
+          <button className={BTN_PRIMARY} disabled>
+            {t("Installing…")}
           </button>
-        )}
-      </>
-    ) : state === "installed" ? (
-      <>
-        {current && latest !== null && <span className={MUTED}>{t("Up to date")}</span>}
-        {/* 无更新时提供重装：与 Update 同一回调（onUpdate 重跑安装：registry
-            形态 name@latest、有 GitHub 上游的原仓重装到 HEAD，见
-            updateSpecifierFor），覆盖终端手动 add 被拦构建脚本留下的半成品
-            （依赖已写入但构建未跑）；与 Update 所在 outdated 分支互斥，永不共存 */}
-        {state === "installed" && onUpdate && (
+          {/* 用户取消（G2）：后端置位取消令牌杀子进程，取消走失败路径（幂等） */}
+          {cancel && (
+            <button className={BTN_SM} onClick={cancel}>
+              {t("Cancel")}
+            </button>
+          )}
+        </>
+      ) : state === "installFailed" ? (
+        <>
+          <button className={BTN_PRIMARY} onClick={() => (onInstall ? onInstall([surface]) : onUpdate?.(surface))}>
+            {t("Retry")}
+          </button>
+          {/* 复制修复上下文：把目标/错误/输出组装成自包含文本贴给任意 agent；
+              状态机保证此分支 installError 非空，守卫只为类型收窄 */}
           <button
-            className={BTN_OUTLINE}
-            disabled={updating !== null}
-            onClick={onUpdate}
-            aria-label={`${t("Reinstall")} ${name}`}
+            className={BTN_SM}
+            onClick={() => installError && void copyInstallContext(installError, installLog, toast)}
           >
-            {t("Reinstall")}
+            {t("Copy error")}
           </button>
-        )}
-        {removeBtn}
-      </>
-    ) : null;
+          <button className={BTN_SM} onClick={dismissMarketInstallError}>
+            {t("Dismiss")}
+          </button>
+        </>
+      ) : state === "manual" ? (
+        url && (
+          <button
+            className={BTN_SM}
+            onClick={() => void openUrl(url).catch(() => {})}
+            aria-label={`${t("README ↗")} ${name}`}
+          >
+            {t("README ↗")}
+          </button>
+        )
+      ) : outdated || state === "updating" ? (
+        <>
+          {(onNotes ?? onUpdate) && (
+            <button
+              className={BTN_PRIMARY}
+              disabled={updating !== null || info?.compatible === false}
+              onClick={() => (onNotes ?? onUpdate)?.(surface)}
+              aria-label={`${t("Update")} ${accessibleName}`}
+              title={
+                info?.compatible === false && info?.requiresDsh
+                  ? t("Requires dsh {{version}} or newer.", { version: info.requiresDsh })
+                  : undefined
+              }
+            >
+              {state === "updating" ? t("Working…") : t("Update")}
+            </button>
+          )}
+          {/* 更新中的用户取消（G2）：与安装共用同一取消通道 */}
+          {state === "updating" && cancel && (
+            <button className={BTN_SM} onClick={cancel}>
+              {t("Cancel")}
+            </button>
+          )}
+          {removeBtn}
+        </>
+      ) : state === "removing" ? (
+        <>
+          {removeBtn}
+          {/* 移除中的用户取消（G2）：与安装/更新共用同一取消通道 */}
+          {cancel && (
+            <button className={BTN_SM} onClick={cancel}>
+              {t("Cancel")}
+            </button>
+          )}
+        </>
+      ) : state === "installed" ? (
+        <>
+          {current && latest !== null && <span className={MUTED}>{t("Up to date")}</span>}
+          {/* 无更新时提供重装（web 档）：与 Update 同一回调（onUpdate 重跑安装：registry
+              形态 name@latest、有 GitHub 上游的原仓重装到 HEAD，见
+              updateSpecifierFor），覆盖终端手动 add 被拦构建脚本留下的半成品
+              （依赖已写入但构建未跑）；与 Update 所在 outdated 分支互斥，永不共存。
+              desktop 档没有这类半成品（安装在应用里一步完成），也没有可钉的版本，不出 */}
+          {surface === "web" && onUpdate && (
+            <button
+              className={BTN_OUTLINE}
+              disabled={updating !== null}
+              onClick={() => onUpdate(surface)}
+              aria-label={`${t("Reinstall")} ${accessibleName}`}
+            >
+              {t("Reinstall")}
+            </button>
+          )}
+          {removeBtn}
+        </>
+      ) : null;
+
+    return (
+      <div key={surface} className="flex items-center gap-2 pt-2.5" data-surface-row={surface}>
+        {labelled && <span className={`w-14 shrink-0 ${MUTED_STRONG}`}>{surfaceLabel(surface)}</span>}
+        {statusLeft}
+        <div className="ml-auto flex items-center gap-1.5">{actions}</div>
+      </div>
+    );
+  };
 
   // meta 行：本地化分类 · owner/落盘spec · ★计数，缺位的部分不占位
   const metaParts: ReactNode[] = [];
   if (categoryLabel) metaParts.push(<span key="cat">{categoryLabel}</span>);
-  if (metaTail) metaParts.push(<span key="tail" className={installed ? "font-mono" : undefined}>{metaTail}</span>);
+  if (metaTail) metaParts.push(<span key="tail" className={webRecord ? "font-mono" : undefined}>{metaTail}</span>);
   if (plugin?.stars != null) metaParts.push(<span key="stars">★ {plugin.stars.toLocaleString()}</span>);
 
   return (
     // group 供收藏星标悬浮显隐；已装卡以语义绿描边与未装区分（同卡面，仅边框色覆盖）
     <article
-      className={`group flex flex-col gap-1.5 p-4 ${installed ? `${PANEL} border-(--status-ok)/35` : PANEL}`}
+      className={`group flex flex-col gap-1.5 p-4 ${anyInstalled ? `${PANEL} border-(--status-ok)/35` : PANEL}`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
@@ -1055,9 +1259,9 @@ function MarketCard({
           )}
         </div>
         {/* 右上角：收藏星标 + 安装事实胶囊（绿 Installed / 灰 Not installed，
-            与状态条的启停状态分家）。星标未悬浮时藏起，胶囊恒显；
-            内层 span 以 favorited 为 key，切换时重挂载重播 pop 动画，按钮本体
-            不重挂载、焦点保留。纯落盘卡片（目录缺位）无星标 */}
+            与状态条的启停状态分家）+ 形态角标（装在哪几档；不可知的那档带「?」）。
+            星标未悬浮时藏起，胶囊恒显；内层 span 以 favorited 为 key，切换时重挂载
+            重播 pop 动画，按钮本体不重挂载、焦点保留。纯落盘卡片（目录缺位）无星标 */}
         <div className="flex shrink-0 items-center gap-1.5">
           {plugin && (
             <button
@@ -1083,7 +1287,11 @@ function MarketCard({
               </span>
             </button>
           )}
-          {installed ? <StateBadge tone="ok" label={t("Installed")} /> : <StateBadge tone="muted" label={t("Not installed")} />}
+          {anyInstalled ? <StateBadge tone="ok" label={t("Installed")} /> : <StateBadge tone="muted" label={t("Not installed")} />}
+          <SurfaceBadges
+            facts={rows.map((row) => ({ surface: row.surface, installed: row.known ? row.installed !== null : null }))}
+            unknownReason={unknownReason}
+          />
         </div>
       </div>
       {metaParts.length > 0 && (
@@ -1106,18 +1314,13 @@ function MarketCard({
           )}
         </div>
       )}
-      {/* 安装过程明细：安装中/更新中实时流式输出；失败留存供排查（重试/关闭清除）。
-          状态推导已保证此区间只会命中发起操作的那张卡 */}
-      {(state === "installing" || state === "updating" || state === "installFailed") && installLog && (
-        <InstallLogView log={installLog} failed={state === "installFailed"} />
-      )}
-      {/* 状态条：mt-auto + 上边线，grid 拉伸行内所有卡片状态条底对齐。
-          操作区用 ml-auto 而非容器 justify-between：未装卡的状态条左侧为空
+      {showLog && installLog && <InstallLogView log={installLog} failed={webState === "installFailed"} />}
+      {/* 状态条：mt-auto + 上边线，grid 拉伸行内所有卡片状态条底对齐。每个形态一行；
+          操作区用 ml-auto 而非容器 justify-between：未装行的状态条左侧可能为空
           （安装事实胶囊在右上角），justify-between 会让仅剩的操作区落到
           左端——安装按钮必须恒在右下角 */}
-      <div className="mt-auto flex items-center gap-2 border-t border-border pt-2.5">
-        {statusLeft}
-        <div className="ml-auto flex items-center gap-1.5">{actions}</div>
+      <div className="mt-auto flex flex-col border-t border-border">
+        {rows.map((row, i) => renderRow(row, states[i]))}
       </div>
     </article>
   );
@@ -1155,7 +1358,8 @@ function InstallLogView({ log, failed }: { log: { specifier: string; lines: stri
 /// 当前用户身份执行任意代码——这是用户决策点，launcher 不静默代劳。焦点
 /// 默认取消（安全默认），Esc 等价取消；放行重试期间（busy，失败保留挂起
 /// 可重试）禁撤。取消的去向（依赖已下载、脚本未跑、可后补放行）在框内
-/// 预告知，具体命令与路径由取消后的 toast 给出
+/// 预告知，具体命令与路径由取消后的 toast 给出。web 档的放行写 Launcher 自己 profile
+/// 的 pnpm-workspace.yaml；desktop 档的放行交给桌面应用自己记录（没有 Launcher 要写的文件）
 function BuildApprovalDialog() {
   const { t } = useTranslation();
   const pending = useAppStore((s) => s.marketPendingApproval);
@@ -1163,7 +1367,7 @@ function BuildApprovalDialog() {
   const approve = useAppStore((s) => s.approveMarketBuilds);
   const dismiss = useAppStore((s) => s.dismissMarketApproval);
   if (!pending) return null;
-  const busy = installing === pending.specifier;
+  const busy = installing?.surface === pending.surface && installing.specifier === pending.specifier;
 
   return (
     <div
@@ -1186,13 +1390,19 @@ function BuildApprovalDialog() {
           ))}
         </ul>
         <p className="mt-3 text-xs text-(--status-warn)">
-          {t(
-            "Install scripts run arbitrary code as your user. pnpm blocks them by default; approving writes your choice to {{path}} and retries the install.",
-            { path: pending.workspaceYaml },
-          )}
+          {pending.workspaceYaml !== null
+            ? t(
+                "Install scripts run arbitrary code as your user. pnpm blocks them by default; approving writes your choice to {{path}} and retries the install.",
+                { path: pending.workspaceYaml },
+              )
+            : t(
+                "Install scripts run arbitrary code as your user. pnpm blocks them by default; approving lets DeepSeek Harness record your choice in its own profile and retries the install there.",
+              )}
         </p>
         <p className={`mt-2 ${MUTED}`}>
-          {t("If you cancel, no scripts run — the packages stay downloaded and you can approve them later.")}
+          {pending.workspaceYaml !== null
+            ? t("If you cancel, no scripts run — the packages stay downloaded and you can approve them later.")
+            : t("If you cancel, no scripts run and the plugin is not installed in DeepSeek Harness.")}
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <button className={BTN_OUTLINE} disabled={busy} onClick={dismiss} id="build-approval-cancel" autoFocus>
@@ -1234,7 +1444,8 @@ function ReleaseAgeConfirmDialog() {
   const confirm = useAppStore((s) => s.confirmMarketReleaseAge);
   const dismiss = useAppStore((s) => s.dismissMarketReleaseAge);
   if (!pending) return null;
-  const busy = updating === pending.name;
+  // 只有 web 档有这道确认（desktop 档的更新一律钉版本）
+  const busy = updating?.surface === "web" && updating.name === pending.name;
   const age = publishAgeLabel(pending.publishTime, t);
 
   return (
@@ -1293,14 +1504,27 @@ function ReleaseAgeConfirmDialog() {
 /// 推导而非只看本次调用返回：needsApproval 时 installing 已被清空、审批放行
 /// 后的重装又由 approveMarketBuilds 独立跑完（不经本对话框），store 态是
 /// 唯一能同时覆盖三条路径的事实——busy 中 installing 落空即本次结束（有锚定
-/// 错误为 failed，否则 done）；approval 态由审批去留下推
+/// 错误为 failed，否则 done）；approval 态由审批去留下推。
+/// 两档都纳管时先选装到哪（web / desktop / 两者，ADR 0012）——这也是桌面档装目录之外
+/// 插件的唯一入口（原桌面应用 tab 的「粘包规格」并入这里，不留两份安装入口）
 type CustomInstallPhase = "input" | "busy" | "approval" | "done" | "failed";
 
 function CustomInstallDialog({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
+  const surfaceLabel = useSurfaceLabel();
+  const { list: managed } = useManagedSurfaces();
   const [address, setAddress] = useState("");
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [phase, setPhase] = useState<CustomInstallPhase>("input");
+  // 装到哪几档：默认第一档；只纳管一档时就是它，不出选择
+  const [targets, setTargets] = useState<DshSurface[]>(() => managed.slice(0, 1));
+  const targetChoices: { key: string; surfaces: DshSurface[]; label: string }[] =
+    managed.length > 1
+      ? [
+          ...managed.map((surface) => ({ key: surface, surfaces: [surface], label: surfaceLabel(surface) })),
+          { key: "both", surfaces: managed, label: t("Both") },
+        ]
+      : [];
   const installPlugin = useAppStore((s) => s.installMarketPlugin);
   const installing = useAppStore((s) => s.marketInstalling);
   const installLog = useAppStore((s) => s.marketInstallLog);
@@ -1322,7 +1546,7 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
     } else if (phase === "approval") {
       // 放行：重装已由 approveMarketBuilds 启动（installing 重新挂上），
       // 回 busy 走同一终态推导；拒绝：回输入态（toast 已给出手动路径）
-      if (installing === submitted) setPhase("busy");
+      if (installing?.specifier === submitted) setPhase("busy");
       else if (pendingApproval === null && installing === null) setPhase("input");
     }
   }, [phase, installing, pendingApproval, installError, submitted]);
@@ -1332,7 +1556,7 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
     if (spec === null || installing !== null || busy) return;
     setSubmitted(spec);
     setPhase("busy");
-    void installPlugin(spec, spec);
+    void installPlugin(spec, spec, targets);
   };
 
   // 失败态随对话框关闭一并清（错误 + 留存明细），不留孤儿 store 态；
@@ -1359,6 +1583,22 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
             "Install from outside the curated catalog — same install gate, audit and build-script approval as catalog plugins.",
           )}
         </p>
+        {targetChoices.length > 0 && (
+          <div className="mt-3 flex items-center gap-2" id="custom-install-targets">
+            <span className={MUTED_STRONG}>{t("Install to")}</span>
+            {targetChoices.map((choice) => (
+              <FilterBtn
+                key={choice.key}
+                active={targets.join() === choice.surfaces.join()}
+                onClick={() => {
+                  if (!busy) setTargets(choice.surfaces);
+                }}
+              >
+                {choice.label}
+              </FilterBtn>
+            ))}
+          </div>
+        )}
         <div className="mt-3 flex items-center gap-2">
           <input
             className={`${INPUT_MONO} flex-1`}
@@ -1389,14 +1629,15 @@ function CustomInstallDialog({ onClose }: { onClose: () => void }) {
         )}
         {/* 安装进度/结果区：安装中流式明细、失败原因+留存明细+重试、成功回执；
             锚定本次提交的 specifier，与目录卡片共用同一 store 通道 */}
-        {(phase === "busy" || phase === "failed") && installLog?.specifier === submitted && (
+        {/* desktop 档没有流式明细：安装中只有按钮的 busy 态，失败只有原因 */}
+        {(phase === "busy" || phase === "failed") && (installLog?.specifier === submitted || phase === "failed") && (
           <div className="mt-3">
             {phase === "failed" && installError && (
               <p className="mb-2 text-xs text-destructive" id="custom-install-failed">
                 {t("Install failed: {{error}}", { error: installError.message })}
               </p>
             )}
-            <InstallLogView log={installLog} failed={phase === "failed"} />
+            {installLog?.specifier === submitted && <InstallLogView log={installLog} failed={phase === "failed"} />}
             {phase === "failed" && (
               <div className="mt-2 flex justify-end gap-2">
                 <button
@@ -1441,22 +1682,26 @@ function UpdateNotesDialog() {
   const { t } = useTranslation();
   const pending = useAppStore((s) => s.marketReleaseNotes);
   const updating = useAppStore((s) => s.marketUpdating);
-  const updates = useAppStore((s) => s.marketUpdates);
+  const updates = useAppStore((s) =>
+    s.marketReleaseNotes?.target.surface === "desktop" ? s.marketDesktopUpdates : s.marketUpdates,
+  );
   const installed = useAppStore((s) =>
-    s.marketReleaseNotes
-      ? (s.marketInstalled.find((p) => p.name === s.marketReleaseNotes?.name) ?? null)
+    s.marketReleaseNotes?.target.surface === "web"
+      ? (s.marketInstalled.find((p) => p.name === s.marketReleaseNotes?.target.name) ?? null)
       : null,
   );
   const confirm = useAppStore((s) => s.confirmMarketReleaseNotesUpdate);
   const dismiss = useAppStore((s) => s.dismissMarketReleaseNotes);
   if (!pending) return null;
-  const busy = updating === pending.name;
-  const info = updates?.[pending.name] ?? null;
-  // 本次更新的安装目标（与更新管线同源，见 updateSpecifierFor）
-  const target = updateSpecifierFor(pending.name, installed, info);
+  const { surface, name } = pending.target;
+  const busy = updating?.surface === surface && updating.name === name;
+  const info = updates?.[name] ?? null;
+  // 本次更新的安装目标（与更新管线同源，见 updateSpecifierFor / desktopUpdateSpecifierFor）
+  const target = surface === "web" ? updateSpecifierFor(name, installed, info) : desktopUpdateSpecifierFor(name, info);
   // 来源切换披露：落盘 spec 不是 GitHub 形态（本地路径 dev 安装等）而更新目标
-  // 是 GitHub 仓库——更新会把安装源从本地路径换成该仓库，更新前如实说明
-  const switchesSource = target.startsWith("github:") && githubRepoId(installed?.spec ?? "") === null;
+  // 是 GitHub 仓库——更新会把安装源从本地路径换成该仓库，更新前如实说明（web 档才有落盘 spec）
+  const switchesSource =
+    surface === "web" && !!target?.startsWith("github:") && githubRepoId(installed?.spec ?? "") === null;
 
   return (
     <div
@@ -1476,7 +1721,7 @@ function UpdateNotesDialog() {
               {info.installedVersion} <span className="opacity-60">→</span> {info.latestVersion ?? "?"}
             </>
           ) : (
-            (info?.latestVersion ?? pending.name)
+            (info?.latestVersion ?? name)
           )}
         </div>
         {switchesSource && (
@@ -1490,7 +1735,7 @@ function UpdateNotesDialog() {
         ) : pending.notes?.release ? (
           <div className="mt-3 max-h-64 overflow-y-auto rounded border border-border bg-muted/40 px-3 py-2">
             <p className="text-xs font-medium">
-              {pending.notes.release.name ?? pending.notes.release.tag ?? pending.name}
+              {pending.notes.release.name ?? pending.notes.release.tag ?? name}
             </p>
             <pre className={`mt-1 whitespace-pre-wrap break-words ${MUTED_STRONG}`}>
               {pending.notes.release.body}

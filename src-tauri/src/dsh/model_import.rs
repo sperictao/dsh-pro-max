@@ -9,11 +9,9 @@
 //!
 //! 扫描源缺失/损坏一律静默跳过：导入是便利功能，来源工具未装不是错误。
 
-use crate::config::home_dir;
+use crate::config::{home_dir, DshSurface};
 use crate::i18n::Message;
-use super::models::{
-    load_model_config_at, model_patch_path, save_model_config_at, ModelEntry, ProviderConfig,
-};
+use super::models::{load_model_config, save_model_config, ModelConfig, ModelEntry, ProviderConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use std::collections::BTreeSet;
@@ -784,11 +782,13 @@ fn matches_existing(candidate: &ImportCandidate, providers: &[ProviderConfig]) -
     })
 }
 
-/// 把选中候选合并进 profile 补丁的模型域（重新扫描后按 key 选择，保证与展示一致）
-pub(crate) fn run_at(
+/// 把选中候选合并进目标形态的模型域（重新扫描后按 key 选择，保证与展示一致）。
+/// 读写由调用方给出：导入不关心模型域落在哪个形态
+pub(crate) fn run_with(
     home: &Path,
-    patch: &Path,
     keys: &[String],
+    load: impl FnOnce() -> Result<ModelConfig, Message>,
+    save: impl FnOnce(&ModelConfig) -> Result<(), Message>,
 ) -> Result<ImportRunResult, Message> {
     let selected: Vec<ImportCandidate> = scan_at(home)
         .into_iter()
@@ -804,7 +804,7 @@ pub(crate) fn run_at(
     if selected.is_empty() {
         return Ok(result);
     }
-    let mut config = load_model_config_at(patch)?;
+    let mut config = load()?;
     let mut batch_routes: BTreeSet<String> = BTreeSet::new();
     for candidate in selected {
         if matches_existing(&candidate, &config.providers)
@@ -839,7 +839,7 @@ pub(crate) fn run_at(
         });
         result.imported += 1;
     }
-    save_model_config_at(patch, &config)?;
+    save(&config)?;
     Ok(result)
 }
 
@@ -847,8 +847,13 @@ fn import_scan() -> Result<Vec<ImportGroup>, Message> {
     Ok(scan_at(&home_dir()?))
 }
 
-fn import_run(keys: Vec<String>) -> Result<ImportRunResult, Message> {
-    run_at(&home_dir()?, &model_patch_path()?, &keys)
+fn import_run(surface: DshSurface, keys: Vec<String>) -> Result<ImportRunResult, Message> {
+    run_with(
+        &home_dir()?,
+        &keys,
+        || load_model_config(surface),
+        |config| save_model_config(surface, config),
+    )
 }
 
 #[tauri::command]
@@ -857,6 +862,9 @@ pub async fn model_config_import_scan() -> Result<Vec<ImportGroup>, Message> {
 }
 
 #[tauri::command]
-pub async fn model_config_import_run(keys: Vec<String>) -> Result<ImportRunResult, Message> {
-    super::ipc_blocking(move || import_run(keys)).await
+pub async fn model_config_import_run(
+    surface: DshSurface,
+    keys: Vec<String>,
+) -> Result<ImportRunResult, Message> {
+    super::ipc_blocking(move || import_run(surface, keys)).await
 }

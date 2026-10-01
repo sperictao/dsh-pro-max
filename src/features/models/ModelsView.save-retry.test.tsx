@@ -115,7 +115,7 @@ describe("ModelsView provider save recovery", () => {
     await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit provider" })).not.toBeInTheDocument());
 
-    const retried = save.mock.calls[1][0];
+    const retried = save.mock.calls[1][1];
     const provider = retried.providers.find((item) => item.route === "deepseek");
     expect(provider).toBeDefined();
     expect(provider?.displayName).toBe("DeepSeek Recovery");

@@ -13,6 +13,8 @@
 - **桥接插件（Bridge Plugin）** — 本应用发给桌面应用的 dsh 插件：用户在桌面应用内 Plugins 页装一次（npm 包 `@sperictao/dsh-pro-max-bridge`，钉本应用测过的精确版本，见 ADR 0011），此后由它把桌面应用**自己的** Plugin Manager / Config Editor 服务开放给本应用。
 - **桥接状态（Bridge States）** — 桌面形态的运行态：应用未运行 / 未装桥接插件 / 代次不符 / 已装未就绪 / 已连接。名字里不带数目是有意的：这个集合会长，而计数写进术语名就会在每次增删后说谎（这条已经栽过两次——三态写成四态、三条写成四条）。后三态各自是一态而不是笼统的「失败」：代次不符时界面直接说出「期望几、拿到几」；已装未就绪（插件激活了但没能建立 token，故能力路由一条都不注册）说的是真实原因与可查的位置，绝不报「未装」——报「未装」只会让人一直重装下去，而重装本身不改环境；先让人检查可写性、再重装重试才是对的下一步。
 - **桌面应用外部能力** — 不依赖桥接插件的能力：检测安装与版本、检测运行、打开/聚焦、退出（仅 macOS，见下）、新版本提示、打开日志目录。**它们是桌面形态的基础层，在所有桥接态下都可用**，不是桥接缺席时的兜底。
+- **目标形态（Target Surface）** — 一次插件或模型配置操作所作用的纳管形态（web 或 desktop）。同一界面、同一套交互，目标形态只决定读写后端。_避免_：双端、两套。
+- **形态角标（Surface Badge）** — 插件卡片/行上标明该插件装在哪个形态的标记，两档都装则并列。桌面档事实不可得（桥接未连接）时显示弱化的「未知」角标并给出桥接状态的去向，绝不缺省成「未安装」。
 - **桥接通道（Bridge Channel）** — 本应用与桥接插件之间的 HTTP 通道：`127.0.0.1:19387` 的 `/dsh-pro-max-bridge/*`（在 `/api` 之外，不参与连接插件的 capability 裁决），Bearer token 取自 `~/.dsh-pro-max/bridge-token`。应答是 `{ok, data}` / `{ok: false, error}`，业务结果在 data 里。
 - **授权插件（Auth Plugins）** — 两个 vendored npm 包（`vendor/dsh-client-connection-authz`、`vendor/dsh-auth-tailscale`），以 pin commit 的 tgz 打进安装包，运行时经 `dsh plugin --profile web add` 装入 web profile；连接鉴权 + Tailscale 身份授权都由它们承担。构建脚本为每个 tgz 产出同目录 `.sha256` 摘要并随 bundle resources 打包，装入前逐台复核（缺失或不符都按损坏拒绝）。
 - **本机会话（Local Session）** — Launcher 以本机身份访问 dsh 特权 API（`credentials/*` 等）所持的 `dsh-auth-*` cookie：从 `~/.dsh/dsh-web.log` 取当前实例打印的 launch token，经 `GET /?token=<token>` 的 303 换取，进程内缓存、被拒（401）重取一次，实现见 `src-tauri/src/dsh/session.rs`。授权插件在场时 loopback 直放，不产生也不使用它。
@@ -40,8 +42,10 @@
 - 桥接插件跑在用户的桌面应用进程里，因此必须永不产生未处理异常——未捕获异常会触发桌面应用的崩溃恢复（那条路径重置 bundle 列表并禁用第三方插件）；而普通的激活失败是被隔离的（stderr 一行，应用照常运行）。
 - 桥接插件只增路由，不接管连接服务：桌面 shell 启动时要向宿主根路径要一次 `303 + set-cookie` 换取 host cookie，替换 connection 会让这条握手失败并直接进崩溃恢复。
 - 桥接的 token 认证是纵深防御，不是安全边界：同用户的本地进程本就能直写 `~/.dsh/profiles/desktop`（上游只拦 CLI，不拦文件系统）。
-- **桌面档的插件与配置只在「插件 → 桌面应用」一个界面里管**，不在市场里做第二份：市场目录、发行说明、更新检测、凭据、模型导入都建在 web profile 的落盘状态上，桌面档没有对应物。模型域对桌面档同样不开专门界面——桥接给的是通用配置行，改它就是改应用自己 Config Editor 里的那一行；照搬一套模型域 UI 会是第二份实现。
-- **「未纳管的形态不进 UI」的精确边界**（`managed_surfaces` 关掉一档后）：桌面档关掉 → 首页桌面卡片、插件页「桌面应用」tab、「测试/打开/更新」等外部能力入口全部消失。web 档关掉 → 首页 dsh 卡片、插件页市场四页（发现/收藏/已装/诊断）、模型页、设置页的 dsh 版本 / 开机自启 / 远程授权三节全部消失。两侧都**保留**：插件页视图本身（它承载另一档的 tab）、设置页的「纳管形态」节（关掉之后再把开关找回来的唯一入口）。这条规则只影响界面可见性，不改任何落盘状态——重新纳管即恢复。
+- **桌面档与 web 档共用市场与模型页**（ADR 0012，取代原「桌面档只在桌面 tab 里管」的边界）：界面只有一份，按目标形态换读写后端；desktop 档的一切写入只经桥接、走应用自己的 Plugin Manager / Config Editor，不另造实现。远程访问、安装/修复/版本 pin、开机自启、授权插件属于 web 档的进程与连接，对桌面档不适用。
+- 桌面档变更返回「需重启」时只就近提示「重启桌面应用后生效」，不提供重启入口：macOS 的退出要过应用自己的确认框、Windows 无退出入口，一键重启在两个平台都给不出真实承诺。「被覆盖」「已取消」如实转述上游原因，不归为失败。
+- 补丁层的 `config` 对继承值是**整份替换、不合并**（loader 按键直接覆盖整行 config）：覆盖行一旦存在就是完整的生效配置，所以编辑任何一行都以 `current`（生效值）为底稿整份回写。「撤掉覆盖」＝回写 `inherited`——ConfigEditor 见到与继承值深相等即删掉 `config`、空壳行整行删除；写 `{}` 则是一份空的完整配置，会把继承值一并清掉。
+- **「未纳管的形态不进 UI」的精确边界**（`managed_surfaces` 关掉一档后）：桌面档关掉 → 首页桌面卡片、插件页「桌面应用」tab、「测试/打开/更新」等外部能力入口、市场与模型页里的 desktop 目标选项与角标全部消失。web 档关掉 → 首页 dsh 卡片、插件页诊断页（它诊断的是 web profile 的组合）、设置页的 dsh 版本 / 开机自启 / 远程授权三节、市场与模型页里的 web 目标选项与角标全部消失。发现/收藏/已安装与模型页任一档纳管即显示；只纳管一档时不出目标选择与形态切换，角标照常显示。两侧都**保留**：设置页的「纳管形态」节（关掉之后再把开关找回来的唯一入口）。这条规则只影响界面可见性，不改任何落盘状态——重新纳管即恢复。
 
 ## 界面多语言（i18n）
 
@@ -65,7 +69,7 @@
 
 ## 插件市场（Marketplace）
 
-功能域：浏览社区插件目录，一键安装/移除/更新 web profile 插件。导航项「Plugins」，二级导航「发现 / 收藏 / 已安装」；发现与收藏页只管浏览与安装（已装匹配卡只读呈现安装事实与启停状态），更新/移除/启停开关归已安装页。
+功能域：浏览社区插件目录，一键安装/移除/更新纳管形态的插件（按目标形态，见 ADR 0012）。导航项「Plugins」，二级导航「发现 / 收藏 / 已安装」；发现与收藏页只管浏览与安装（已装匹配卡只读呈现安装事实与启停状态），更新/移除/启停开关归已安装页。
 
 ### 术语
 
@@ -74,14 +78,14 @@
 - **目录快照（Catalog Snapshot）** — 最近一次成功拉取后落盘 app data dir 的投影目录（与前端消费同一份数据，亚 MB 级；不保存响应原文，旧契约快照按无快照处理、下次成功拉取自动重建）。市场首开直读快照秒显（`fromSnapshot` 如实标注、刷新进行中不出横幅），网络失败时继续展示快照并以横幅标注快照时间；快照自身损坏按无快照处理并回退原始网络错误（它不掩盖在线数据的问题）。
 - **弃用标记（Deprecated）** — 目录侧的 `deprecated` / `replacement` 字段原样透传：弃用条目展示「已弃用」徽章，给出替代建议时一并展示「建议改用 X」。目录不提供验证/审计数据，Launcher 不伪造任何安全徽标。
 - **一键安装（One-click Install）** — 安装标识从条目 `install` 命令串（如 `dsh plugin --profile web add <specifier>`）中解析 ` add ` 之后的 token，执行 `dsh plugin --profile web add <specifier>`（pnpm 转发，pnpm ≥10 默认拦截第三方生命周期脚本；识别出被拦包名即弹审批对话框（焦点默认取消、Esc 等价取消，放行重试期间挂起保留可重试；取消不动已落盘的半成品依赖，可后补放行重装），用户放行才把包名写入 profile `pnpm-workspace.yaml` 的 allowBuilds/onlyBuiltDependencies 双键并自动重跑——写入是用户决策，launcher 不静默代劳；解析不出包名的拦截只给精确到文件的指引，不改写文件）；解析不出合法 token 的条目只可浏览（Manual install only），安装前有内联二次确认。`install` 命令串是展示文本，绝不整条执行。
-- **安装回执（Install Receipt）** — 安装成功后回读 web profile 落盘事实（dependencies 键 + spec），toast 展示；其持久形态是已装列表里常驻的 name + spec 行（含精确版本，随时可查）；`github:` 重装等无法唯一定位落点的场景如实不回执。
+- **安装回执（Install Receipt）** — 安装成功后回读 web profile 落盘事实（dependencies 键 + spec），toast 展示；其持久形态是已装列表里常驻的 name + spec 行（含精确版本，随时可查）；`github:` 重装等无法唯一定位落点的场景如实不回执。desktop 档回读的是桥接 `/plugins` 里新出现的 bundle（name + version）。
 - **插件安装策略（Plugin Policy）** — `~/.dsh-pro-max/plugin-policy.json` 的白名单（`{"allowed": [...]}`，支持包名、`@scope/` 与 `github:owner/` 前缀、协议条目）。文件缺失或 `allowed` 缺席 = 不启用；`allowed` 存在即生效（空数组 = 全拒）。只约束安装，移除总能做；文件损坏按拒绝处理。
-- **插件审计台账（Plugin Audit Log）** — 市场视图安装/移除操作的 append-only JSONL（`plugin-audit.jsonl`，app log dir，含时间/动作/标识符/结果/两侧版本号，error 记本地化前的原始错误）；受管授权插件由 Launcher 修复/卸载流程管理，不走市场路径、不入台账；尽力而为写入，失败不回滚操作。
-- **受管插件（Managed Plugin）** — Launcher 自装的授权插件（`@dsh-external/*`），在已装列表中标记但不提供移除按钮，由 Launcher 的修复/卸载流程管理。
-- **已装匹配（Installed Match）** — npm 形态 specifier 的包名部分与 web profile `package.json` dependencies 键比对；带协议前缀的形态（`github:`、`npm:`、`file:` 等）安装后的键名无法从目录预知，不参与匹配。
+- **插件审计台账（Plugin Audit Log）** — 市场视图安装/移除操作的 append-only JSONL（`plugin-audit.jsonl`，app log dir，含时间/动作/标识符/结果/两侧版本号，error 记本地化前的原始错误）；受管授权插件由 Launcher 修复/卸载流程管理，不走市场路径、不入台账；尽力而为写入，失败不回滚操作。每条记录带目标形态；策略对两档同等生效。
+- **受管插件（Managed Plugin）** — Launcher 自装的授权插件（`@dsh-external/*`），在已装列表中标记但不提供移除按钮，由 Launcher 的修复/卸载流程管理。desktop 档的受管插件是桥接插件本身：同样标记、不给移除。
+- **已装匹配（Installed Match）** — npm 形态 specifier 的包名部分与 web profile `package.json` dependencies 键比对；带协议前缀的形态（`github:`、`npm:`、`file:` 等）安装后的键名无法从目录预知，不参与匹配。desktop 档以包名比对桥接返回的可移除 bundle（`npm:` 前缀剥去；协议形态没有可预知的包名，退到目录名；一律小写比较。内置 bundle 不进已装列表，其启停留在桌面应用 tab）；桥接未连接时该档事实未知，见形态角标。
 - **安装护栏（Install Guard）** — 安装 CLI 退出码 0 之后的保护序列：落盘校验（npm 形态键可预知，退出码成功但键未落盘即未生效；协议形态键名不可预知，依赖集合变化或 after 态已存在该仓库落点即生效——更新＝同键重装，pnpm 解析回同一 commit 时落盘逐字节不变，仍算落到盘上）→ 重复挂载剥离（CLI 的 bundle 对账把组合树里已由 patch 行挂载的包重新加进 `dsh.profile.bundles`，只剥「本次新增且已由 patch 行挂载」的条目并透传 notice）→ 重复入口 id 回滚（新包 claimed 的入口 id 撞上既有占用时经官方 remove 路径回滚新包，绝不写共享 disabled 行）→ `--dump-config` 启动预检（组合失败且输出牵连新包才回滚，无关失败如实报告不动任何东西）。协议形态重装无法唯一定位回滚目标，只校验与预检、不自动回滚——回滚目标可能正是用户既有插件。
 - **启停开关（Enable Toggle）** — 翻转插件的下次启动启用状态：在 profile `cordis.patch.yml` 写/删 `{id, name, disabled: true}` bare 覆盖行（判定范围 = 各包自带 bundle patch 声明的入口 id，无 bundle patch 的普通插件以包名自claim）。写入走行级编辑——serde_yaml 会静默剥掉 loader 依赖的 `!!js` 表达式标签，行级只增删覆盖行、其余字节原样保留。对运行中的 dsh 无影响，重启后生效；已安装页提供「重启 dsh web」一键入口（复用 Shell 域一键重启与其启动时间线，启停后就近生效）；重复启停内容未变化免写盘不记台账。受管插件不走此通道（由修复/卸载流程管理）；移除插件时清理其孤儿停用行（防重装继承停用态）。
-- **更新检测（Update Check）** — 已安装页对非受管、且有可检上游的插件自动比对上游最新版（进入市场页即查，可手动重跑）：当前版本优先读磁盘事实（profile `node_modules/<name>/package.json` 的 version，范围 spec `^ ~` 即靠它参与检测），磁盘不可得回退 spec 精确版本（`pkg@1.2.3` / `npm:pkg@1.0.0` / 裸版本）。上游 = 该安装的更新来源（已装记录的 `upstreamRepo`）：registry 形态（无协议前缀 / `npm:`）逐包查 `registry.npmjs.org/<name>/latest`；spec 认得 GitHub 形态（`github:owner/repo`、pnpm 规范化的 `git+https://github.com/...`）或本地路径安装（`file:` 等，包自述的 `repository` 归一为 GitHub 仓库，声明了 monorepo `directory` 的按不可比不采信）则查远端默认分支 manifest `raw.githubusercontent.com/<owner>/<repo>/HEAD/package.json`；两者皆无的协议形态如实不检（不猜，卡片也不显版本，不放大成"已是最新"）。语义版本比对，部分包查询失败不放大为整体失败（如实无 latest、不出按钮），全部可检包都失败才报错。更新动作 = 有 GitHub 上游的按 `github:owner/repo` 重装（pnpm 重新解析默认分支 HEAD，本地路径 dev 安装因此切到该仓库，更新说明对话框先披露来源切换）；其余以 `name@latest` 重装；latest 落在 pnpm minimumReleaseAge 保护窗口内（pnpm 11 内置默认 24h，检测侧经 registry packument 发布时间判定并标记 `latestInReleaseAgeWindow`、透传 `latestPublishTime`）时先弹供应链确认框（展示版本过渡与发布新鲜度，Esc/焦点默认取消），用户知情确认后才以钉版本 `name@<latestVersion>` 重装（pnpm 认的知情通道，自动写 `minimumReleaseAgeExclude`）——窗口内 `@latest` 会被静默拦回旧版且退出码仍为 0，不设确认框即假成功；窗口规则只适用于 registry 通道。检测取回的目标 manifest（registry `/latest` 或远端 HEAD）还承载兼容门禁：目标包 manifest 声明了 `dsh.engines.dsh`（回退顶层 `engines.dsh`，仅认 `>=X.Y.Z` 形态）而宿主 dsh 不满足、或声明形态/宿主版本无法核实（fail closed）时，更新按钮禁用并排除出批量更新。与一键安装同一 dsh 闸门、策略、审计与构建脚本审批路径；批量更新顺序执行（共享同一 profile，pnpm 并发会争锁），中途撞上审批挂起即停，剩余项待放行后重试。
+- **更新检测（Update Check）** — 已安装页对非受管、且有可检上游的插件自动比对上游最新版（进入市场页即查，可手动重跑）：当前版本优先读磁盘事实（profile `node_modules/<name>/package.json` 的 version，范围 spec `^ ~` 即靠它参与检测），磁盘不可得回退 spec 精确版本（`pkg@1.2.3` / `npm:pkg@1.0.0` / 裸版本）。上游 = 该安装的更新来源（已装记录的 `upstreamRepo`）：registry 形态（无协议前缀 / `npm:`）逐包查 `registry.npmjs.org/<name>/latest`；spec 认得 GitHub 形态（`github:owner/repo`、pnpm 规范化的 `git+https://github.com/...`）或本地路径安装（`file:` 等，包自述的 `repository` 归一为 GitHub 仓库，声明了 monorepo `directory` 的按不可比不采信）则查远端默认分支 manifest `raw.githubusercontent.com/<owner>/<repo>/HEAD/package.json`；两者皆无的协议形态如实不检（不猜，卡片也不显版本，不放大成"已是最新"）。语义版本比对，部分包查询失败不放大为整体失败（如实无 latest、不出按钮），全部可检包都失败才报错。更新动作 = 有 GitHub 上游的按 `github:owner/repo` 重装（pnpm 重新解析默认分支 HEAD，本地路径 dev 安装因此切到该仓库，更新说明对话框先披露来源切换）；其余以 `name@latest` 重装；latest 落在 pnpm minimumReleaseAge 保护窗口内（pnpm 11 内置默认 24h，检测侧经 registry packument 发布时间判定并标记 `latestInReleaseAgeWindow`、透传 `latestPublishTime`）时先弹供应链确认框（展示版本过渡与发布新鲜度，Esc/焦点默认取消），用户知情确认后才以钉版本 `name@<latestVersion>` 重装（pnpm 认的知情通道，自动写 `minimumReleaseAgeExclude`）——窗口内 `@latest` 会被静默拦回旧版且退出码仍为 0，不设确认框即假成功；窗口规则只适用于 registry 通道。检测取回的目标 manifest（registry `/latest` 或远端 HEAD）还承载兼容门禁：目标包 manifest 声明了 `dsh.engines.dsh`（回退顶层 `engines.dsh`，仅认 `>=X.Y.Z` 形态）而宿主 dsh 不满足、或声明形态/宿主版本无法核实（fail closed）时，更新按钮禁用并排除出批量更新。与一键安装同一 dsh 闸门、策略、审计与构建脚本审批路径；批量更新顺序执行（共享同一 profile，pnpm 并发会争锁），中途撞上审批挂起即停，剩余项待放行后重试。desktop 档拿不到安装 spec，只按包名查 registry latest（查不到即如实不检），更新＝经桥接安装 `name@<精确版本>`——tag 与范围会被 pnpm 静默解析到旧版（ADR 0011）。
 
 ### 语义边界
 
@@ -93,11 +97,11 @@
 
 ## 模型配置（Model Configuration）
 
-功能域：编辑 web profile 补丁层里模型域两行的配置。导航项「Models」。
+功能域：按目标形态编辑模型域两行的配置——web 档落在 profile 补丁层，desktop 档经桥接写应用 Config Editor 的同名行（见 ADR 0012）。导航项「Models」。
 
 ### 术语
 
-- **模型域（Model Domain）** — profile 补丁（`~/.dsh/profiles/web/cordis.patch.yml`）中 `agent-default-model`（默认模型选择）与 `llm-pi-ai`（自定义提供商路由）两条目的 `config`。两者都是 dsh settings 的命名空间（`settings/describe` 的 `namespaces` 可见同名条目），保存以 UI 状态整体重建这两块 config，其余行（别人的覆盖行、注释、`!!js` 表达式）逐字节保留。dsh 0.1.7 起设置不再落 `~/.dsh/settings.yaml`：那份文件只被一次性导入，首次写入前改名 `settings.yaml.imported`。
+- **模型域（Model Domain）** — profile 补丁（`~/.dsh/profiles/web/cordis.patch.yml`）中 `agent-default-model`（默认模型选择）与 `llm-pi-ai`（自定义提供商路由）两条目的 `config`。两者都是 dsh settings 的命名空间（`settings/describe` 的 `namespaces` 可见同名条目），保存以 UI 状态整体重建这两块 config，其余行（别人的覆盖行、注释、`!!js` 表达式）逐字节保留。dsh 0.1.7 起设置不再落 `~/.dsh/settings.yaml`：那份文件只被一次性导入，首次写入前改名 `settings.yaml.imported`。desktop 档的模型域是桥接配置行里同 id 两行的 `override`（即桌面补丁层），与 web 档读写补丁层同一口径，撤掉＝回写该行 `inherited`；凭据两档共用，导入写入当前目标形态。
 - **提供商路由（Provider Route）** — `llm-pi-ai.providers` 的一个键，承载 displayName / baseURL / api（wire 协议：openai-completions | openai-responses | anthropic-messages）/ apiKeyEnv / models 列表；UI 管理 5 个字段之外的高级字段经 `extra` 原样透传保存，`extra` 混入管理键时一律以 UI 为准丢弃。
 - **凭据引用（Credential Ref）** — `apiKeyEnv` 只保存环境变量名，密钥值永不进配置文件（dsh 运行时经 credentials 机制逐请求解析）。
 - **思考等级（Reasoning Effort）** — 默认模型的可选思考等级：off | minimal | low | medium | high | xhigh | max；不设置时从该行 config 删除该字段。
@@ -108,6 +112,7 @@
 - 写盘按补丁的行级纪律：只替换本域两行的 `config` 块，行内其它键（`disabled` 等）与其它行逐字节保留——loader 依赖 `!!js` 表达式，serde_yaml 会静默剥掉标签，所以禁止整文件往返重写。
 - 默认模型 provider/model 必填：缺任一保存时撤掉该行的 config（而非写半份配置）；提供商列表为空时撤掉 `llm-pi-ai` 行的 config（dsh schema 中空 dict 与缺席等价）。撤掉后只剩 id/name 的空壳行整行删除，不留无意义覆盖行。
 - 本域不管理 `llm-deepseek`（内置 deepseek 路由的覆写，由 dsh 自身 UI/引导负责）。
+- desktop 档的写入由应用的 Config Editor 先按插件 schema 校验再落盘：校验不过即整次拒绝、文件不动，原因原样回到界面（实测：目录不认识的自定义路由必须列出模型，空列表被拒）。web 档写补丁文件时没有这道前置校验，同样的配置要等 dsh 热重载才暴露。
 
 ## 应用壳（Shell）
 

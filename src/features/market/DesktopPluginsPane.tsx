@@ -1,17 +1,17 @@
-// 桌面应用 tab：管理官方桌面应用那个 profile 的插件与配置，全部经它自己加载的桥接插件
-// （调它自己的 Plugin Manager / Config Editor，而不是在应用背后直写 profile，见 ADR 0011）。
+// 桌面应用 tab：官方桌面应用那个 profile 里 web 档没有对应物的部分，全部经它自己加载的
+// 桥接插件（调它自己的 Plugin Manager / Config Editor，而不是在应用背后直写 profile，
+// 见 ADR 0011）：桥接连接状态与一次性安装引导、内置 bundle 与插件行的开关、全部配置行的
+// 原始 JSON 编辑。
 //
-// 这里只呈现桥接真正提供的能力，不假装有市场那套体验：市场目录、发行说明、更新检测都
-// 建在 web profile 的落盘状态上，桌面档没有对应物。安装入口按「包规格」走——上游的
-// installBundle 就收这个（npm 名 / github: 规格 / tarball URL / 绝对路径），市场里的
-// 安装规格同样能粘进来。
+// 用户装的插件不在这里：它们的安装、更新、启停、移除归市场（发现/收藏/已安装三页按目标
+// 形态参数化，见 ADR 0012），这里再列一份就是第二个事实来源。
 
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/shared/store";
 import { renderMessage } from "@/shared/i18n/error";
 import * as cmd from "@/shared/commands";
-import { BTN_OUTLINE, BTN_SM, INPUT_MONO, MUTED, PANEL, TEXTAREA, TOGGLE } from "@/shared/lib/ui";
+import { BTN_OUTLINE, MUTED, PANEL, TEXTAREA, TOGGLE } from "@/shared/lib/ui";
 import type { BridgeStatus, ChangeOutcome, ConfigRow, DesktopPlugins, DesktopStatus } from "@/shared/types";
 import { BridgeNotice } from "@/features/integration/BridgeNotice";
 
@@ -22,10 +22,7 @@ export function DesktopPluginsPane() {
   const [bridge, setBridge] = useState<BridgeStatus | null>(null);
   const [plugins, setPlugins] = useState<DesktopPlugins | null>(null);
   const [config, setConfig] = useState<ConfigRow[] | null>(null);
-  const [spec, setSpec] = useState("");
   const [busy, setBusy] = useState(false);
-  // 上一次安装被拦下的构建脚本包名：非空时再点一次就是放行这批并重跑
-  const [pendingBuilds, setPendingBuilds] = useState<string[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -72,19 +69,16 @@ export function DesktopPluginsPane() {
       try {
         const outcome = await action();
         if (outcome === null) {
-          setPendingBuilds([]);
           toast(t("Applied"), "info");
           await load();
           return;
         }
-        setPendingBuilds(outcome.pendingBuilds);
         if (outcome.application === "applied") toast(t("Applied"), "info");
         else if (outcome.application === "restart-required") toast(t("Restart DeepSeek Harness to apply this change."), "info");
         else if (outcome.application === "overridden") toast(t("A higher-priority layer overrides this change; it is not in effect."), "error");
         else if (outcome.application === "cancelled") toast(t("The change was cancelled."), "error");
         else toast(t("The change failed: {{reason}}", { reason: outcome.errorDiagnostic ?? outcome.errorCode ?? "" }), "error");
-        // 待批构建脚本时这次安装没完成，重新拉列表只会看到旧状态
-        if (outcome.pendingBuilds.length === 0) await load();
+        await load();
       } catch (e) {
         toast(renderMessage(e), "error");
       } finally {
@@ -115,42 +109,6 @@ export function DesktopPluginsPane() {
 
       {bridge?.state === "connected" && (
         <>
-          <section className="flex flex-col gap-2">
-            <h3 className="text-sm font-medium">{t("Install a plugin")}</h3>
-            <p className={MUTED}>
-              {t("Paste a package spec: an npm name, a github: shorthand, a tarball URL, or an absolute path. The desktop app installs it into its own profile.")}{" "}
-              {t("Installs run the app's own package manager and can take a few minutes; there is no progress or cancel here.")}
-            </p>
-            <div className="flex items-center gap-2">
-              <input
-                className={INPUT_MONO}
-                value={spec}
-                disabled={busy}
-                placeholder="@scope/plugin  |  github:owner/repo  |  https://…​/pkg.tgz"
-                onChange={(e) => {
-                  setSpec(e.target.value);
-                  // 待批构建脚本属于上一个规格：换了规格还留着它，会让「放行并安装」
-                  // 把新规格连旧批准一起发出去，上游按「必须仍待批」直接拒
-                  setPendingBuilds([]);
-                }}
-              />
-              <button
-                className={BTN_OUTLINE}
-                disabled={busy || spec.trim() === ""}
-                onClick={() =>
-                  void run(() => cmd.desktopBridgeInstall(spec.trim(), pendingBuilds.length > 0 ? pendingBuilds : undefined))
-                }
-              >
-                {pendingBuilds.length > 0 ? t("Approve build scripts and install") : t("Install")}
-              </button>
-            </div>
-            {pendingBuilds.length > 0 && (
-              <p className={MUTED}>
-                {t("These packages want to run install scripts: {{packages}}. Approving lets them run for the desktop profile.", { packages: pendingBuilds.join(", ") })}
-              </p>
-            )}
-          </section>
-
           <section className="flex flex-col gap-2">
             <h3 className="text-sm font-medium">{t("Plugins")}</h3>
             <div className={`${PANEL} divide-y divide-border`}>
@@ -183,19 +141,20 @@ export function DesktopPluginsPane() {
           </section>
 
           <section className="flex flex-col gap-2">
-            <h3 className="text-sm font-medium">{t("Bundles")}</h3>
+            <h3 className="text-sm font-medium">{t("Built-in bundles")}</h3>
+            <p className={MUTED}>{t("Plugins you installed are managed on the Installed tab, side by side with the web profile.")}</p>
             <div className={`${PANEL} divide-y divide-border`}>
-              {plugins?.bundles.map((row) => (
-                <div key={row.name} className="flex items-center justify-between gap-3 p-3">
-                  <span className="flex min-w-0 flex-col gap-0.5">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="truncate font-mono text-xs">{row.name}</span>
-                      {row.version && <span className="shrink-0 font-mono text-xs opacity-70">{row.version}</span>}
+              {plugins?.bundles
+                .filter((row) => !row.removable)
+                .map((row) => (
+                  <div key={row.name} className="flex items-center justify-between gap-3 p-3">
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-mono text-xs">{row.name}</span>
+                        {row.version && <span className="shrink-0 font-mono text-xs opacity-70">{row.version}</span>}
+                      </span>
+                      {row.description && <span className={MUTED}>{row.description}</span>}
                     </span>
-                    {row.description && <span className={MUTED}>{row.description}</span>}
-                    {!row.removable && <span className={MUTED}>{t("Ships with dsh; it cannot be removed.")}</span>}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2">
                     <input
                       type="checkbox"
                       className={TOGGLE}
@@ -204,16 +163,8 @@ export function DesktopPluginsPane() {
                       aria-label={row.name}
                       onChange={(e) => void run(() => cmd.desktopBridgeSetEnabled({ bundleName: row.name }, e.target.checked))}
                     />
-                    <button
-                      className={BTN_SM}
-                      disabled={busy || !row.removable}
-                      onClick={() => void run(() => cmd.desktopBridgeRemove(row.name))}
-                    >
-                      {t("Remove")}
-                    </button>
-                  </span>
-                </div>
-              ))}
+                  </div>
+                ))}
             </div>
           </section>
 

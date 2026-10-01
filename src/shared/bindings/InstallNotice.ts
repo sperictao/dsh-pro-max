@@ -4,4 +4,4 @@
  * 安装护栏透出的事实。结构化载荷而非拼好的句子：语言由前端词典组装，
  * 不随 Rust 侧字符串漂移
  */
-export type InstallNotice = { "kind": "strippedDuplicateBundle", name: string, };
+export type InstallNotice = { "kind": "strippedDuplicateBundle", name: string, } | { "kind": "desktopRestartRequired" } | { "kind": "desktopOverridden" };

@@ -11,9 +11,9 @@
  */
 export type PluginUpdateInfo = { name: string, 
 /**
- * 落盘 spec 原文（file:/github: 等形态如实展示）
+ * 落盘 spec 原文（file:/github: 等形态如实展示）；desktop 档拿不到安装 spec，为 None
  */
-spec: string, managed: boolean, 
+spec: string | null, managed: boolean, 
 /**
  * 实际安装版本：磁盘事实（node_modules/<name>/package.json）优先，
  * spec 精确版本次之；npm 形态按此，GitHub 仓库形态只有磁盘事实一途，

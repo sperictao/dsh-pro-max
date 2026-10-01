@@ -69,7 +69,7 @@ describe("ModelsView inherited catalog defaults", () => {
     await user.click(option);
 
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
-    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
+    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][1];
     expect(saved.defaultProvider).toBe("openai");
     expect(saved.defaultModel).toBe(firstInheritedModel);
     expect(saved.providers[0].models).toEqual([]);
@@ -93,7 +93,7 @@ describe("ModelsView inherited catalog defaults", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save provider" }));
 
     await waitFor(() => expect(cmd.modelConfigSave).toHaveBeenCalledOnce());
-    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][0];
+    const saved = vi.mocked(cmd.modelConfigSave).mock.calls[0][1];
     expect(saved.defaultProvider).toBe("openai");
     expect(saved.defaultModel).toBe(secondInheritedModel);
     expect(saved.providers[0].models).toEqual([]);

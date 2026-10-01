@@ -24,6 +24,7 @@ use super::setup::{
 };
 use super::update::remove_web_profile_compat_entry;
 use super::{RemoteRpcAccess, RemoteUrlAccess, REMOTE_BLOCKED_BODY, REMOTE_BLOCKED_MOUNT, SUPPORTED_DSH_VERSION};
+use crate::config::DshSurface;
 use crate::i18n::{set_current, Message};
 use crate::version::parse_version;
 use std::path::Path;
@@ -1710,6 +1711,83 @@ use super::models::{
     ReasoningEfforts,
 };
 
+/// 桥接配置行夹具：current 是生效值（有覆盖即覆盖，无覆盖即继承）
+fn config_row(id: &str, inherited: serde_json::Value, over: serde_json::Value) -> super::bridge::ConfigRow {
+    let empty = over.as_object().is_some_and(|o| o.is_empty());
+    super::bridge::ConfigRow {
+        id: id.to_string(),
+        name: format!("@deepseek-ai/dsh-{id}"),
+        current: Some(if empty { inherited.clone() } else { over.clone() }),
+        inherited,
+        override_config: over,
+    }
+}
+
+/// desktop 档没有选默认模型时撤掉覆盖 = 回写继承值，不是写 `{}`：补丁层 config 对继承值
+/// 整份替换，写 `{}` 会把桌面应用自带的默认模型一并清空（2026-10-01 读上游源码 + 真机核实）
+#[test]
+fn desktop_model_clear_writes_back_the_inherited_layer() {
+    let inherited = serde_json::json!({"provider": "deepseek-official", "model": "deepseek-flash"});
+    let rows = vec![
+        config_row(
+            "agent-default-model",
+            inherited.clone(),
+            serde_json::json!({"provider": "mine", "model": "m1"}),
+        ),
+        config_row("llm-pi-ai", serde_json::json!({}), serde_json::json!({})),
+    ];
+    let edits = super::models::desktop_model_edits(&ModelConfig::default(), &rows).unwrap();
+    assert_eq!(edits, vec![("agent-default-model".to_string(), inherited)]);
+}
+
+/// 写入的是 UI 状态重建出的整份 config；与生效值相同的行不写（不去触发应用的重载）
+#[test]
+fn desktop_model_edits_only_rows_that_change() {
+    let rows = vec![
+        config_row(
+            "agent-default-model",
+            serde_json::json!({}),
+            serde_json::json!({"provider": "p", "model": "m"}),
+        ),
+        config_row("llm-pi-ai", serde_json::json!({}), serde_json::json!({})),
+    ];
+    let config = ModelConfig {
+        default_provider: Some("p".into()),
+        default_model: Some("m".into()),
+        default_reasoning_effort: None,
+        providers: vec![ProviderConfig {
+            route: "p".into(),
+            display_name: Some("P".into()),
+            base_url: Some("https://example.com/v1".into()),
+            api: Some("openai-completions".into()),
+            api_key_env: Some("P_API_KEY".into()),
+            models: vec![],
+            headers: None,
+            timeout_ms: None,
+            reasoning: None,
+            extra: serde_json::Value::Null,
+        }],
+    };
+    let edits = super::models::desktop_model_edits(&config, &rows).unwrap();
+    assert_eq!(edits.len(), 1, "默认模型未变，只写提供商那一行：{edits:?}");
+    assert_eq!(edits[0].0, "llm-pi-ai");
+    assert_eq!(edits[0].1["providers"]["p"]["baseURL"], "https://example.com/v1");
+    assert_eq!(edits[0].1["providers"]["p"]["apiKeyEnv"], "P_API_KEY");
+}
+
+/// 桌面应用里找不到模型域的行：如实报错，不静默跳过（跳过会让保存假成功）
+#[test]
+fn desktop_model_edits_require_both_rows() {
+    let rows = vec![config_row("agent-default-model", serde_json::json!({}), serde_json::json!({}))];
+    let config = ModelConfig {
+        providers: vec![],
+        default_provider: Some("p".into()),
+        default_model: Some("m".into()),
+        default_reasoning_effort: None,
+    };
+    assert!(super::models::desktop_model_edits(&config, &rows).is_err());
+}
+
 /// 空 shadow 字段的纯 id 模型条目（测试夹具）
 fn plain_model() -> ModelEntry {
     ModelEntry {
@@ -2760,7 +2838,7 @@ fn merge_allow_builds_overwrites_interactive_placeholder() {
 fn install_outcome_serializes_tagged() {
     let out = InstallOutcome::NeedsApproval {
         packages: vec!["node-pty".to_string()],
-        workspace_yaml: "/p/pnpm-workspace.yaml".to_string(),
+        workspace_yaml: Some("/p/pnpm-workspace.yaml".to_string()),
     };
     let v: serde_json::Value = serde_json::to_value(&out).unwrap();
     assert_eq!(v["status"], "needsApproval");
@@ -3182,8 +3260,9 @@ fn specifier_to_catalog_name_mirrors_frontend_semantics() {
 
 #[test]
 fn audit_line_shape_is_stable_jsonl() {
-    let line = audit_line("add", "pkg@1.0", Some("0.1.2-alpha.2".into()), None);
+    let line = audit_line(DshSurface::Web, "add", "pkg@1.0", Some("0.1.2-alpha.2".into()), None);
     let v: serde_json::Value = serde_json::from_str(&line).expect("jsonl");
+    assert_eq!(v["surface"], "web");
     assert_eq!(v["action"], "add");
     assert_eq!(v["identifier"], "pkg@1.0");
     assert_eq!(v["result"], "ok");
@@ -3192,8 +3271,9 @@ fn audit_line_shape_is_stable_jsonl() {
     assert!(v["launcherVersion"].as_str().unwrap().starts_with("0."));
     assert!(v["ts"].as_str().unwrap().contains('T'));
 
-    let failed = audit_line("remove", "pkg", None, Some("boom"));
+    let failed = audit_line(DshSurface::Desktop, "remove", "pkg", None, Some("boom"));
     let v: serde_json::Value = serde_json::from_str(&failed).expect("jsonl");
+    assert_eq!(v["surface"], "desktop");
     assert_eq!(v["result"], "failed");
     assert_eq!(v["error"], "boom");
     assert_eq!(v["dshVersion"], serde_json::Value::Null);
@@ -3462,7 +3542,7 @@ fn install_decision_elevates_blocked_builds_to_needs_approval() {
             workspace_yaml,
         } => {
             assert_eq!(packages, vec!["node-pty"]);
-            assert_eq!(workspace_yaml, "/p/pnpm-workspace.yaml");
+            assert_eq!(workspace_yaml.as_deref(), Some("/p/pnpm-workspace.yaml"));
         }
         _ => panic!("expected needsApproval"),
     }
@@ -4487,7 +4567,7 @@ fn fetch_remote_models_requires_env_value() {
 
 // ============ 模型配置导入（model_import.rs）============
 
-use super::model_import::{parse_cc_switch, parse_claude_code, parse_codex, parse_opencode, parse_pi, run_at, scan_at};
+use super::model_import::{parse_cc_switch, parse_claude_code, parse_codex, parse_opencode, parse_pi, run_with, scan_at};
 use serde_json::json;
 
 fn j(value: serde_json::Value) -> serde_json::Value {
@@ -4650,7 +4730,7 @@ fn import_scan_and_run_merge_into_patch_then_dedupe() {
     std::fs::write(&settings, "- id: ui-theme\n  config:\n    theme: vercel\n").unwrap();
 
     // 空 keys：结构化返回且不动补丁
-    let result = run_at(&home, &settings, &[]).unwrap();
+    let result = run_with(&home, &[], || load_model_config_at(&settings), |c| save_model_config_at(&settings, c)).unwrap();
     assert_eq!(result.imported, 0);
 
     let groups = scan_at(&home);
@@ -4658,7 +4738,7 @@ fn import_scan_and_run_merge_into_patch_then_dedupe() {
     assert_eq!(codex.entries.len(), 1);
     let key = codex.entries[0].key.clone();
 
-    let result = run_at(&home, &settings, &[key]).unwrap();
+    let result = run_with(&home, &[key], || load_model_config_at(&settings), |c| save_model_config_at(&settings, c)).unwrap();
     assert_eq!(result.imported, 1);
     assert_eq!(result.literal, 0);
     let text = std::fs::read_to_string(&settings).unwrap();
@@ -4670,7 +4750,7 @@ fn import_scan_and_run_merge_into_patch_then_dedupe() {
     // 重复导入：端点+凭据引用全同 → skipped
     let groups = scan_at(&home);
     let key = groups.iter().find(|g| g.source == "codex").unwrap().entries[0].key.clone();
-    let result = run_at(&home, &settings, &[key]).unwrap();
+    let result = run_with(&home, &[key], || load_model_config_at(&settings), |c| save_model_config_at(&settings, c)).unwrap();
     assert_eq!(result.imported, 0);
     assert_eq!(result.skipped, 1);
 

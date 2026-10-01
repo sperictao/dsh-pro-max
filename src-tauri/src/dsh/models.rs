@@ -1,4 +1,6 @@
-//! 模型配置：读写 web profile 补丁层里模型域两行的 `config`。
+//! 模型配置：按目标形态读写模型域两行的 `config`——web 档写自己 profile 的补丁层，
+//! desktop 档经桥接写应用 Config Editor 的同名行（ADR 0012）。下文的行级纪律说的是
+//! web 档；desktop 档的写盘由应用自己的 Config Editor 负责。
 //!
 //! dsh 0.1.7 起设置不再落 `~/.dsh/settings.yaml`：那份文件只被一次性导入
 //! （首次写入前改名 `settings.yaml.imported`），设置的真身是活动 profile 的
@@ -16,7 +18,9 @@
 //! 分别经 extra 原样透传，编辑不丢失。凭据只存环境变量名（apiKeyEnv），
 //! 密钥永不进配置文件。
 
+use super::bridge::{self, ConfigRow};
 use super::market::{is_empty_patch, profile_patch_path, top_level_item_ranges, yaml_scalar};
+use crate::config::DshSurface;
 use crate::i18n::Message;
 use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value as Yaml};
@@ -279,8 +283,17 @@ pub(crate) fn load_model_config_at(path: &Path) -> Result<ModelConfig, Message> 
             .find(|item| item.get("id").and_then(Yaml::as_str) == Some(id))?
             .get("config")
     };
-    let default = row_config(DEFAULT_MODEL_KEY).and_then(Yaml::as_mapping);
-    let providers = row_config(PI_AI_KEY)
+    Ok(model_config_from_rows(
+        row_config(DEFAULT_MODEL_KEY),
+        row_config(PI_AI_KEY),
+    ))
+}
+
+/// 模型域两行的 config → UI 状态。两档共用：web 档取自补丁文件里的行，desktop 档取自
+/// 桥接配置行的 `override`（同为补丁层，同一口径）。缺席与空对象都按未设置处理
+fn model_config_from_rows(default: Option<&Yaml>, pi_ai: Option<&Yaml>) -> ModelConfig {
+    let default = default.and_then(Yaml::as_mapping);
+    let providers = pi_ai
         .and_then(|v| v.get(Yaml::String("providers".into())))
         .and_then(Yaml::as_mapping)
         .map(|pm| {
@@ -289,12 +302,12 @@ pub(crate) fn load_model_config_at(path: &Path) -> Result<ModelConfig, Message> 
                 .collect()
         })
         .unwrap_or_default();
-    Ok(ModelConfig {
+    ModelConfig {
         default_provider: yaml_str(default, "provider"),
         default_model: yaml_str(default, "model"),
         default_reasoning_effort: yaml_str(default, "reasoningEffort"),
         providers,
-    })
+    }
 }
 
 // ============ save ============
@@ -457,6 +470,26 @@ pub(crate) fn save_model_config_at(path: &Path, config: &ModelConfig) -> Result<
             ));
         }
     };
+    let (default_config, pi_ai_config) = model_rows_from_config(config)?;
+    let default_block = default_config
+        .as_ref()
+        .map(|value| config_block_lines(value, path))
+        .transpose()?;
+    let pi_ai_block = pi_ai_config
+        .as_ref()
+        .map(|value| config_block_lines(value, path))
+        .transpose()?;
+    let text = set_row_config(&raw, DEFAULT_MODEL_KEY, default_block.as_deref())?;
+    let text = set_row_config(&text, PI_AI_KEY, pi_ai_block.as_deref())?;
+    if text == raw {
+        return Ok(());
+    }
+    write_atomic(path, &text)
+}
+
+/// UI 状态 → 模型域两行的 config（两档共用）。None 表示撤掉该行的覆盖：默认模型
+/// provider/model 缺任一（缺省即未设置），或提供商列表为空
+fn model_rows_from_config(config: &ModelConfig) -> Result<(Option<Yaml>, Option<Yaml>), Message> {
     let default_config = match (
         non_empty(&config.default_provider),
         non_empty(&config.default_model),
@@ -495,20 +528,77 @@ pub(crate) fn save_model_config_at(path: &Path, config: &ModelConfig) -> Result<
         pi_ai.insert(Yaml::String("providers".into()), Yaml::Mapping(providers));
         Some(Yaml::Mapping(pi_ai))
     };
-    let default_block = default_config
-        .as_ref()
-        .map(|value| config_block_lines(value, path))
-        .transpose()?;
-    let pi_ai_block = pi_ai_config
-        .as_ref()
-        .map(|value| config_block_lines(value, path))
-        .transpose()?;
-    let text = set_row_config(&raw, DEFAULT_MODEL_KEY, default_block.as_deref())?;
-    let text = set_row_config(&text, PI_AI_KEY, pi_ai_block.as_deref())?;
-    if text == raw {
-        return Ok(());
+    Ok((default_config, pi_ai_config))
+}
+
+// ============ desktop 档（经桥接）============
+
+/// desktop 档的模型域：桥接配置行里同 id 两行的 `override`（桌面补丁层）
+fn load_desktop_model_config() -> Result<ModelConfig, Message> {
+    let rows = bridge::config_rows()?;
+    let layer = |id: &str| {
+        rows.iter()
+            .find(|row| row.id == id)
+            .map(|row| yaml_from_json(&row.override_config))
+    };
+    let default = layer(DEFAULT_MODEL_KEY);
+    let pi_ai = layer(PI_AI_KEY);
+    Ok(model_config_from_rows(default.as_ref(), pi_ai.as_ref()))
+}
+
+fn save_desktop_model_config(config: &ModelConfig) -> Result<(), Message> {
+    for (id, next) in desktop_model_edits(config, &bridge::config_rows()?)? {
+        bridge::config_edit(&id, next)?;
     }
-    write_atomic(path, &text)
+    Ok(())
+}
+
+/// desktop 档要写的行与值（纯决策，IO 在调用方）。补丁层 config 对继承值是整份替换、
+/// 不合并，所以「撤掉覆盖」= 回写该行的 `inherited`（ConfigEditor 见到与继承值深相等
+/// 即删掉覆盖、空壳行整行删除）；写 `{}` 会是一份空的完整配置，把继承值一并清掉。
+/// 与当前生效值相同的行不写：没有变化就不去触发应用的重载
+pub(crate) fn desktop_model_edits(
+    config: &ModelConfig,
+    rows: &[ConfigRow],
+) -> Result<Vec<(String, serde_json::Value)>, Message> {
+    let (default, pi_ai) = model_rows_from_config(config)?;
+    let mut edits = Vec::new();
+    for (id, next) in [(DEFAULT_MODEL_KEY, default), (PI_AI_KEY, pi_ai)] {
+        let row = rows.iter().find(|row| row.id == id).ok_or_else(|| {
+            Message::localized(
+                "DeepSeek Harness has no configuration entry {{id}}",
+                &[("id", id.to_string())],
+            )
+        })?;
+        let next = match next {
+            Some(value) => serde_json::to_value(&value).map_err(|e| Message::key(e.to_string()))?,
+            None => row.inherited.clone(),
+        };
+        let effective = row
+            .current
+            .clone()
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        if next != effective {
+            edits.push((id.to_string(), next));
+        }
+    }
+    Ok(edits)
+}
+
+/// 按目标形态读模型域（模型导入与 IPC 共用）
+pub(crate) fn load_model_config(surface: DshSurface) -> Result<ModelConfig, Message> {
+    match surface {
+        DshSurface::Web => load_model_config_at(&model_patch_path()?),
+        DshSurface::Desktop => load_desktop_model_config(),
+    }
+}
+
+/// 按目标形态写模型域（模型导入与 IPC 共用）
+pub(crate) fn save_model_config(surface: DshSurface, config: &ModelConfig) -> Result<(), Message> {
+    match surface {
+        DshSurface::Web => save_model_config_at(&model_patch_path()?, config),
+        DshSurface::Desktop => save_desktop_model_config(config),
+    }
 }
 
 /// 补丁里写一行 id 的 config：只替换/插入/移除该行的 `config:` 块，行内其它键与
@@ -660,13 +750,13 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), Message> {
 // ============ IPC ============
 
 #[tauri::command]
-pub fn model_config_load() -> Result<ModelConfig, Message> {
-    load_model_config_at(&model_patch_path()?)
+pub async fn model_config_load(surface: DshSurface) -> Result<ModelConfig, Message> {
+    super::ipc_blocking(move || load_model_config(surface)).await
 }
 
 #[tauri::command]
-pub fn model_config_save(config: ModelConfig) -> Result<(), Message> {
-    save_model_config_at(&model_patch_path()?, &config)
+pub async fn model_config_save(surface: DshSurface, config: ModelConfig) -> Result<(), Message> {
+    super::ipc_blocking(move || save_model_config(surface, &config)).await
 }
 
 // ============ 模型目录（models.dev 全量快照）============

@@ -5,13 +5,16 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BTN, BTN_PRIMARY, BTN_SM, INPUT, MODAL_OVERLAY, MODAL_PANEL, MUTED, MUTED_STRONG } from "@/shared/lib/ui";
 import * as cmd from "@/shared/commands";
-import type { ImportGroup, ImportRunResult } from "@/shared/types";
+import type { DshSurface, ImportGroup, ImportRunResult } from "@/shared/types";
 import { tErr } from "@/shared/i18n/error";
 
 export function ImportDialog({
+  surface,
   onClose,
   onImported,
 }: {
+  /** 导入写入的目标形态：页面当前选中的那档 */
+  surface: DshSurface;
   onClose: () => void;
   onImported: (result: ImportRunResult) => void;
 }) {
@@ -75,7 +78,7 @@ export function ImportDialog({
   const run = async () => {
     setRunning(true);
     try {
-      const result = await cmd.modelConfigImportRun([...selected]);
+      const result = await cmd.modelConfigImportRun(surface, [...selected]);
       // 成功提示由父视图 toast（含导入计数），此处直接关闭
       onImported(result);
       onClose();

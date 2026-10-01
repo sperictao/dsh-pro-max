@@ -7,12 +7,15 @@ import type {
   BridgeStatus,
   ChangeOutcome,
   ConfigRow,
+  DesktopApplication,
+  DesktopInstalledPlugin,
   DesktopPlugins,
   DesktopStatus,
   DesktopUpdate,
   DshLatestInfo,
   DshStatus,
   DshStepEvent,
+  DshSurface,
   DiscoveryCompat,
   InstalledPlugin,
   InstallOutcome,
@@ -83,10 +86,8 @@ export const desktopLogDir = () => invokeTyped<string>("desktop_log_dir");
 export const desktopBridgeStatus = () => invokeTyped<BridgeStatus>("desktop_bridge_status");
 // 桌面档的插件与配置（经应用里的桥接插件）。写操作把管理失败折叠进返回值而不是抛出：
 // 判断成败看 outcome.application，不是有没有 reject
+// 用户插件的装卸与启停归市场（marketDesktop*），这里只剩内置 bundle 与插件行的开关
 export const desktopBridgePlugins = () => invokeTyped<DesktopPlugins>("desktop_bridge_plugins");
-export const desktopBridgeInstall = (spec: string, approvedBuilds?: string[]) =>
-  invokeTyped<ChangeOutcome>("desktop_bridge_install", { spec, approvedBuilds });
-export const desktopBridgeRemove = (name: string) => invokeTyped<ChangeOutcome>("desktop_bridge_remove", { name });
 // 插件行按 entryId、bundle 按包名；上游是两套开关，所以「恰好给一个」——用联合类型把它变成
 // 编译期约束（Rust 侧仍按边界再拒一次，那是跨进程的护栏）
 export const desktopBridgeSetEnabled = (
@@ -133,9 +134,24 @@ export const marketReleaseNotes = (repo: string) =>
 // 深度诊断（G7）：dsh --dump-config 组合事实（重复入口 id / 孤儿 patch 行）
 export const marketDiagnostics = () => invokeTyped<MarketDiagnostics>("market_diagnostics");
 
+// ============ 插件市场 · desktop 档（经桥接，ADR 0012）============
+// 与 web 档共用策略、审计与更新检测核；写入走桌面应用自己的 Plugin Manager。
+// 已装列表 reject = 桥接不可用、事实未知（不是「没装」）
+export const marketDesktopInstalled = () => invokeTyped<DesktopInstalledPlugin[]>("market_desktop_installed");
+// approvedBuilds 有值即审批放行后的重装；结果与 web 档安装同构（审批时 workspaceYaml 为 null）
+export const marketDesktopInstall = (specifier: string, approvedBuilds?: string[]) =>
+  invokeTyped<InstallOutcome>("market_desktop_install", { specifier, approvedBuilds });
+export const marketDesktopRemove = (name: string) =>
+  invokeTyped<DesktopApplication>("market_desktop_remove", { name });
+export const marketDesktopSetEnabled = (name: string, enabled: boolean) =>
+  invokeTyped<DesktopApplication>("market_desktop_set_enabled", { name, enabled });
+export const marketDesktopCheckUpdates = () => invokeTyped<PluginUpdateInfo[]>("market_desktop_check_updates");
+
 // ============ 模型配置 ============
-export const modelConfigLoad = () => invokeTyped<ModelConfig>("model_config_load");
-export const modelConfigSave = (config: ModelConfig) => invokeTyped<void>("model_config_save", { config });
+// 按目标形态读写模型域：web 档写自己的 profile 补丁，desktop 档经桥接写应用的 Config Editor
+export const modelConfigLoad = (surface: DshSurface) => invokeTyped<ModelConfig>("model_config_load", { surface });
+export const modelConfigSave = (surface: DshSurface, config: ModelConfig) =>
+  invokeTyped<void>("model_config_save", { surface, config });
 // models.dev 全量目录：load 读本地快照（缺失/损坏为 null），refresh 拉取并落快照
 export const modelCatalogLoad = () => invokeTyped<ModelCatalogFile | null>("model_catalog_load");
 export const modelCatalogRefresh = () => invokeTyped<ModelCatalogFile>("model_catalog_refresh");
@@ -190,8 +206,8 @@ export const modelRemoteList = (
   invokeTyped<string[]>("model_remote_list_with_headers", { baseUrl: baseURL, api, apiKeyEnv, headers, apiKey });
 // 配置导入：扫描本机其他工具的 provider 声明（缺失来源静默为空组），按 key 导入
 export const modelConfigImportScan = () => invokeTyped<ImportGroup[]>("model_config_import_scan");
-export const modelConfigImportRun = (keys: string[]) =>
-  invokeTyped<ImportRunResult>("model_config_import_run", { keys });
+export const modelConfigImportRun = (surface: DshSurface, keys: string[]) =>
+  invokeTyped<ImportRunResult>("model_config_import_run", { surface, keys });
 
 // ============ 更新 ============
 export const getUpdaterConfigHealth = () => invokeTyped<UpdaterConfigHealth>("get_updater_config_health");
