@@ -69,8 +69,9 @@ for (const src of resourceEntries) {
 // 桥接 pin：包名与版本的唯一事实来源是 bridge.rs 的两个常量，这里只读不抄。
 // 锚点抽不到必须报错——静默跳过就等于这道校验不存在
 const bridgeSource = read("src-tauri/src/dsh/bridge.rs");
-const bridgePackage = bridgeSource.match(/^const BRIDGE_PACKAGE: &str = "([^"]+)";$/m)?.[1];
-const bridgeVersion = bridgeSource.match(/^pub\(crate\) const BRIDGE_VERSION: &str = "([^"]+)";$/m)?.[1];
+// 可见性不进匹配条件：常量被别的模块引用而改成 pub(crate) 时，校验不该跟着失明
+const bridgePackage = bridgeSource.match(/^(?:pub\(crate\) )?const BRIDGE_PACKAGE: &str = "([^"]+)";$/m)?.[1];
+const bridgeVersion = bridgeSource.match(/^(?:pub\(crate\) )?const BRIDGE_VERSION: &str = "([^"]+)";$/m)?.[1];
 if (!bridgePackage || !bridgeVersion) {
   failures.push("src-tauri/src/dsh/bridge.rs 找不到 BRIDGE_PACKAGE / BRIDGE_VERSION 常量");
 } else {
