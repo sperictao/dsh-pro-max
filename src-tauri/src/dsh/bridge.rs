@@ -39,6 +39,16 @@ const BRIDGE_READ_TIMEOUT_SECS: u64 = 30;
 /// 安装时报一个假失败，用户重试还可能撞上并发安装。
 const BRIDGE_WRITE_TIMEOUT_SECS: u64 = 900;
 
+/// 写操作的客户端超时必须比应用自己的预算更宽：锁等待 2 分钟 + pnpm 静默 10 分钟才
+/// 终止（应用内嵌 PluginManager 的 lockWaitMs / idleTimeoutMs 默认值）。窄了就会在应用
+/// 仍在安装时报假失败，用户重试还可能撞上并发安装。编译期断言：改窄了直接编不过
+const _: () = {
+    const LOCK_WAIT_SECS: u64 = 120;
+    const PNPM_IDLE_SECS: u64 = 600;
+    assert!(BRIDGE_WRITE_TIMEOUT_SECS > LOCK_WAIT_SECS + PNPM_IDLE_SECS);
+    assert!(BRIDGE_READ_TIMEOUT_SECS < BRIDGE_WRITE_TIMEOUT_SECS);
+};
+
 /// 桥接的可用状态。界面按每种状态给不同去向，不显示「失败」了事。
 /// 不写数目：这个集合会长，写进来的数字会在增删后说谎（这条已经栽过两次）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
@@ -491,17 +501,6 @@ mod tests {
             parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())),
             "版本 {BRIDGE_VERSION} 不是精确版本"
         );
-    }
-
-    /// 写操作的客户端超时必须比应用自己的预算更宽：锁等待 2 分钟 + pnpm 静默 10 分钟才
-    /// 终止（应用内嵌 PluginManager 的 lockWaitMs / idleTimeoutMs 默认值）。窄了就会在应用
-    /// 仍在安装时报假失败，用户重试还可能撞上并发安装。
-    #[test]
-    fn write_timeout_covers_the_apps_own_pnpm_budgets() {
-        const LOCK_WAIT_SECS: u64 = 120;
-        const PNPM_IDLE_SECS: u64 = 600;
-        assert!(BRIDGE_WRITE_TIMEOUT_SECS > LOCK_WAIT_SECS + PNPM_IDLE_SECS);
-        assert!(BRIDGE_READ_TIMEOUT_SECS < BRIDGE_WRITE_TIMEOUT_SECS);
     }
 
     /// ping 的宽松取值：只要身份与代次还在，就不该因为 ready 的形状认不出而报「未安装」
